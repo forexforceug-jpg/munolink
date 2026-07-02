@@ -48,11 +48,10 @@ export default function Splash({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <ImageBackground
-        source={require('../../assets/images/splash-bg.png')}
-        style={styles.background}
-        resizeMode="cover"
-      >
+      <LinearGradient
+  colors={['#006B3F', '#004D2C']}
+  style={styles.container}
+>
         {/* Transparent dark overlay */}
         <View style={styles.overlay} />
 
@@ -101,7 +100,7 @@ export default function Splash({ navigation }) {
             <Text style={styles.iconLabel}>Save</Text>
           </View>
         </Animated.View>
-      </ImageBackground>
+      </LinearGradient>
     </View>
   );
 }
