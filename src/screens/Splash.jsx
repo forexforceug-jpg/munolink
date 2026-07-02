@@ -1,8 +1,6 @@
-import { View, Text, StyleSheet, Animated, Image, ImageBackground, Dimensions } from 'react-native';
-import { useEffect, useRef } from 'react';
-import { Ionicons } from '@expo/vector-icons';
-
-const { width, height } = Dimensions.get('window');
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function Splash({ navigation }) {
   const fadeIn = useRef(new Animated.Value(0)).current;
@@ -15,27 +13,26 @@ export default function Splash({ navigation }) {
       Animated.timing(fadeIn, {
         toValue: 1,
         duration: 800,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.timing(slideUp, {
         toValue: 0,
         duration: 800,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.spring(scale, {
         toValue: 1,
         friction: 6,
         tension: 40,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
     ]).start();
 
-    // Bottom icons appear slightly after the logo
     setTimeout(() => {
       Animated.timing(bottomFadeIn, {
         toValue: 1,
         duration: 600,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }, 400);
 
@@ -47,89 +44,66 @@ export default function Splash({ navigation }) {
   }, []);
 
   return (
-    <View style={styles.container}>
-      <LinearGradient
-  colors={['#006B3F', '#004D2C']}
-  style={styles.container}
->
-        {/* Transparent dark overlay */}
-        <View style={styles.overlay} />
+    <LinearGradient
+      colors={['#1a1a2e', '#16213e']}
+      style={styles.container}
+    >
+      <Animated.View
+        style={[
+          styles.content,
+          {
+            opacity: fadeIn,
+            transform: [
+              { translateY: slideUp },
+              { scale: scale },
+            ],
+          },
+        ]}
+      >
+        <Animated.Image
+          source={require('../assets/images/logo.png')}
+          style={styles.logo}
+        />
+      </Animated.View>
 
-        {/* Logo and content */}
-        <Animated.View
-          style={[
-            styles.content,
-            {
-              opacity: fadeIn,
-              transform: [
-                { translateY: slideUp },
-                { scale: scale },
-              ],
-            },
-          ]}
-        >
-          <Animated.Image
-            source={require('../../assets/images/logo.png')}
-            style={styles.logo}
-          />
-        </Animated.View>
-
-        {/* Bottom Icons Row */}
-        <Animated.View style={[styles.bottomRow, { opacity: bottomFadeIn }]}>
-          {/* Find */}
-          <View style={styles.iconItem}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="search" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.iconLabel}>Find</Text>
+      <Animated.View style={[styles.bottomRow, { opacity: bottomFadeIn }]}>
+        <View style={styles.iconItem}>
+          <View style={styles.iconCircle}>
+            <Text style={styles.iconText}>🔍</Text>
           </View>
-
-          {/* Trust */}
-          <View style={styles.iconItem}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="shield-checkmark" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.iconLabel}>Trust</Text>
+          <Text style={styles.iconLabel}>Find</Text>
+        </View>
+        <View style={styles.iconItem}>
+          <View style={styles.iconCircle}>
+            <Text style={styles.iconText}>🛡️</Text>
           </View>
-
-          {/* Save */}
-          <View style={styles.iconItem}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="pricetag" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.iconLabel}>Save</Text>
+          <Text style={styles.iconLabel}>Trust</Text>
+        </View>
+        <View style={styles.iconItem}>
+          <View style={styles.iconCircle}>
+            <Text style={styles.iconText}>💰</Text>
           </View>
-        </Animated.View>
-      </LinearGradient>
-    </View>
+          <Text style={styles.iconLabel}>Save</Text>
+        </View>
+      </Animated.View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    overflow: 'hidden',
-  },
-  background: {
-    width: width,
-    height: height,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-  },
   content: {
     alignItems: 'center',
-    zIndex: 1,
   },
   logo: {
     width: 220,
     height: 220,
     marginBottom: 24,
     resizeMode: 'contain',
-    zIndex: 1,
   },
   bottomRow: {
     position: 'absolute',
@@ -138,7 +112,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     alignItems: 'center',
     width: '80%',
-    zIndex: 1,
   },
   iconItem: {
     alignItems: 'center',
@@ -147,17 +120,20 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: 'rgba(21, 111, 185, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: 'rgba(10, 43, 87, 0.3)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  iconText: {
+    fontSize: 20,
   },
   iconLabel: {
-    fontSize: 14,
-    color: '#1b72c4',
-    fontWeight: '900',
+    fontSize: 12,
+    color: '#FFFFFF',
+    fontWeight: '600',
     letterSpacing: 1,
   },
 });
