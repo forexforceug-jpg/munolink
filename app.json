@@ -15,13 +15,12 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#006B3F"
-      }
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
+      },
+      "package": "com.forexforceug.munolink"
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-location",
+      "expo-notifications"
     ]
   }
 }
