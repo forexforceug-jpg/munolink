@@ -12,7 +12,7 @@ import Personalization from './src/screens/Personalization';
 import SignIn from './src/screens/SignIn';
 import EnterSignInPin from './src/screens/EnterSignInPin';
 import Home from './src/screens/home';
-import Categories from './src/screens/Categories';
+import Categories from './Unused Screens/Categories';
 import Groceries from './src/screens/Groceries';
 import ProductDetails from './src/screens/ProductDetails';
 import MyCart from './src/screens/MyCart';
@@ -46,6 +46,10 @@ import TopUp from './src/screens/TopUp';
 import AddProduct from './src/screens/AddProduct';
 import SetPriceStock from './src/screens/SetPriceStock';
 import ReviewPublish from './src/screens/ReviewPublish';
+import Messages from './src/screens/Messages';
+import RouteNavigation from './src/screens/RouteNavigation';
+import Notifications from './src/screens/Notifications';
+import Connections from './src/screens/Connections';
 const Stack = createNativeStackNavigator();
 
 export default function App() {
@@ -54,7 +58,7 @@ export default function App() {
       <SafeAreaProvider>
         <NavigationContainer>
           <Stack.Navigator
-            initialRouteName="Splash"
+            initialRouteName="MyOrders"
             screenOptions={{ headerShown: false }}
           >
             <Stack.Screen name="Splash" component={Splash} />
@@ -101,9 +105,14 @@ export default function App() {
             <Stack.Screen name="AddProduct" component={AddProduct} />
             <Stack.Screen name="SetPriceStock" component={SetPriceStock} />
             <Stack.Screen name="ReviewPublish" component={ReviewPublish} />
+            <Stack.Screen name="Messages" component={Messages} />
+            <Stack.Screen name="RouteNavigation" component={RouteNavigation} />
+            <Stack.Screen name="Notifications" component={Notifications} />
+            <Stack.Screen name="Connections" component={Connections} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
     </AuthProvider>
   );
 }
+

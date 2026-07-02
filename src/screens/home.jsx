@@ -342,10 +342,10 @@ export default function Home({ navigation, route }) {
           <Text style={styles.navLabel}>Categories</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.scanButton}
-          onPress={() => navigation.navigate('PaymentConfirm')}
-        >
-          <Ionicons name="camera-outline" size={26} color="#FFFFFF" />
+          style={styles.scanButton}>
+          onPress={() => navigation.navigate('Connections')}
+        <Ionicons name="people" size={22} color="#006B3F" />
+        <Text style={[styles.navLabel, styles.navLabelActive]}>Connections</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.navItem}

@@ -219,26 +219,28 @@ export default function Account({ navigation }) {
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Home')}>
-          <Ionicons name="home-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Home</Text>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('MyWallet')}>
+            <Ionicons name="grid-outline" size={22} color="#888" />
+            <Text style={styles.navLabel}>Wallet</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('MyOrders')}>
+             <Ionicons name="calendar-outline" size={22} color="#888" />
+             <Text style={styles.navLabel}>Orders.</Text>
+           </TouchableOpacity>
+  <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Connections')}>
+            <Ionicons name="people-outline" size={22} color="#888" />
+            <Text style={styles.navLabel}>Connections</Text>
+          </TouchableOpacity>
+      <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Messages')}>
+          <Ionicons name="chatbubbles-outline" size={22} color="#888" />
+          <View style={styles.navBadge}>
+            <Text style={styles.navBadgeText}>3</Text>
+          </View>
+          <Text style={styles.navLabel}>Messages</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="briefcase-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Services</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.payNavButton}
-          onPress={() => navigation.navigate('PaymentConfirm')}
-        >
-          <Ionicons name="card-outline" size={26} color="#FFFFFF" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="bookmark-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>My Shops</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="person" size={22} color="#006B3F" />
+          <Ionicons name="person-outline" size={22} color="#006B3F" />
+
           <Text style={[styles.navLabel, styles.navLabelActive]}>Account</Text>
         </TouchableOpacity>
       </View>
@@ -378,6 +380,11 @@ const styles = StyleSheet.create({
   navItem: { alignItems: 'center', gap: 2 },
   navLabel: { fontSize: 10, color: '#888', fontWeight: '500' },
   navLabelActive: { color: '#006B3F', fontWeight: '700' },
+    navBadge: {
+    position: 'absolute', top: -6, right: 6,
+    width: 16, height: 16, borderRadius: 8, backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center',
+  },
+  navBadgeText: { fontSize: 9, fontWeight: '800', color: '#FFFFFF' },
   payNavButton: {
     width: 50, height: 50, borderRadius: 25, backgroundColor: '#006B3F',
     justifyContent: 'center', alignItems: 'center', marginTop: -20,
