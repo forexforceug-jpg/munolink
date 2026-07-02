@@ -6,9 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "backgroundColor": "#006B3F"
-    },
     "ios": {
       "supportsTablet": true
     },
@@ -17,20 +14,12 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#006B3F"
       },
-      "package": "com.forexforceug.munolink",
-      "permissions": [
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      "package": "com.forexforceug.munolink"
     },
     "plugins": [
       "expo-location",
-      "expo-notifications"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "bfaef68b-9092-42d7-86ae-1f4e3dcd05b6"
-      }
-    }
+      "expo-notifications",
+      "expo-font"
+    ]
   }
 }
