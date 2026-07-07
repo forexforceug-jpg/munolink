@@ -1,146 +1,94 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 export default function Notifications({ navigation }) {
+  const { user } = useAuth();
   const [activeCategory, setActiveCategory] = useState('All');
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const categories = [
-    { name: 'All', count: 32 },
-    { name: 'Messages', count: 7 },
-    { name: 'Bookings', count: 6 },
-    { name: 'Orders', count: 8 },
-    { name: 'Payments', count: 5 },
-    { name: 'Promotions', count: 6 },
+    { name: 'All', count: 0 },
+    { name: 'Messages', count: 0 },
+    { name: 'Bookings', count: 0 },
+    { name: 'Orders', count: 0 },
+    { name: 'Payments', count: 0 },
+    { name: 'Promotions', count: 0 },
   ];
 
-  const todayNotifications = [
-    {
-      id: 1,
-      type: 'message',
-      icon: 'chatbubble-outline',
-      color: '#006B3F',
-      bg: '#E8F5E9',
-      title: 'New message from Bright Electricals',
-      subtitle: 'Perfect! See you on Friday at 10 AM.',
-      time: '2 min ago',
-      unread: true,
-      hasThumb: true,
-    },
-    {
-      id: 2,
-      type: 'booking',
-      icon: 'calendar-outline',
-      color: '#1976D2',
-      bg: '#E3F2FD',
-      title: 'Booking confirmed',
-      subtitle: 'CoolFix Services · Friday, 10:00 AM',
-      time: '15 min ago',
-      unread: true,
-      hasThumb: false,
-    },
-    {
-      id: 3,
-      type: 'order',
-      icon: 'cube-outline',
-      color: '#F57C00',
-      bg: '#FFF3E0',
-      title: 'Order is out for delivery',
-      subtitle: 'Order #MUNO-0629-001 · Track your order',
-      time: '1 hour ago',
-      unread: true,
-      hasThumb: false,
-      action: 'Track',
-    },
-    {
-      id: 4,
-      type: 'payment',
-      icon: 'card-outline',
-      color: '#9C27B0',
-      bg: '#F3E5F5',
-      title: 'Payment received',
-      subtitle: 'UGX 120,000 from Hardware World · Order #MUNO-0628-003',
-      time: '2 hours ago',
-      unread: false,
-      hasThumb: false,
-    },
-  ];
+  const loadNotifications = useCallback(async () => {
+    if (!user?.id) {
+      // Show demo notifications for unauthenticated users
+      setNotifications([
+        { id: 1, type: 'welcome', icon: 'hand-left-outline', color: '#006B3F', bg: '#E8F5E9', title: 'Welcome to Munolink!', subtitle: 'Discover shops, services, and great deals near you.', time: 'Just now', unread: true, section: 'today' },
+        { id: 2, type: 'promotion', icon: 'pricetag-outline', color: '#4CAF50', bg: '#E8F5E9', title: 'Sign up to get started', subtitle: 'Create a free account to access wallet, orders, and messages.', time: 'Just now', unread: true, section: 'today', action: 'Sign Up', actionRoute: 'AccountType' },
+      ]);
+      setLoading(false);
+      return;
+    }
 
-  const yesterdayNotifications = [
-    {
-      id: 5,
-      type: 'review',
-      icon: 'star-outline',
-      color: '#FFB300',
-      bg: '#FFF8E1',
-      title: 'GreenLeaf Farms left a 5-star review',
-      subtitle: '⭐⭐⭐⭐⭐ "Great service and fresh products!"',
-      time: 'Yesterday, 6:30 PM',
-      unread: false,
-      hasThumb: false,
-    },
-    {
-      id: 6,
-      type: 'promotion',
-      icon: 'pricetag-outline',
-      color: '#4CAF50',
-      bg: '#E8F5E9',
-      title: 'Special offer for you!',
-      subtitle: 'Get 15% off all plumbing services this weekend.',
-      time: 'Yesterday, 3:15 PM',
-      unread: false,
-      hasThumb: false,
-      action: 'View Offer',
-    },
-    {
-      id: 7,
-      type: 'verification',
-      icon: 'shield-checkmark-outline',
-      color: '#00897B',
-      bg: '#E0F2F1',
-      title: 'Verification update',
-      subtitle: 'Your business verification is under review.',
-      time: 'Yesterday, 10:00 AM',
-      unread: false,
-      hasThumb: false,
-      action: 'View Status',
-    },
-  ];
+    // Get real transactions as notifications
+    const { data: txns } = await supabase
+      .from('transactions')
+      .select('*, shops(name)')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
 
-  const weekNotifications = [
-    {
-      id: 8,
-      type: 'deal',
-      icon: 'flash-outline',
-      color: '#D32F2F',
-      bg: '#FFEBEE',
-      title: 'Flash Deal Alert!',
-      subtitle: 'Don\'t miss amazing deals near you. Limited time offers!',
-      time: 'Monday, 2:00 PM',
-      unread: false,
-      hasThumb: false,
-      action: 'Explore Deals',
-    },
-    {
-      id: 9,
-      type: 'event',
-      icon: 'calendar-outline',
-      color: '#6D4C41',
-      bg: '#EFEBE9',
-      title: 'Event Reminder',
-      subtitle: 'Jinja Trade Fair is happening this weekend!',
-      time: 'Sunday, 9:00 AM',
-      unread: false,
-      hasThumb: false,
-      action: 'View Event',
-    },
-  ];
+    if (txns && txns.length > 0) {
+      const now = new Date();
+      const formatted = txns.map((txn, index) => {
+        const txnDate = new Date(txn.created_at);
+        const diffDays = Math.floor((now - txnDate) / (1000 * 60 * 60 * 24));
+        let section = 'today';
+        if (diffDays === 1) section = 'yesterday';
+        else if (diffDays > 1 && diffDays <= 7) section = 'week';
+        else if (diffDays > 7) section = 'older';
+
+        const timeStr = diffDays === 0
+          ? new Date(txn.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+          : diffDays === 1 ? 'Yesterday'
+          : `${diffDays}d ago`;
+
+        return {
+          id: txn.id,
+          type: txn.type === 'payment' ? 'payment' : 'order',
+          icon: txn.type === 'payment' ? 'card-outline' : 'cube-outline',
+          color: txn.type === 'payment' ? '#9C27B0' : '#F57C00',
+          bg: txn.type === 'payment' ? '#F3E5F5' : '#FFF3E0',
+          title: txn.type === 'payment' ? 'Payment made' : 'Order placed',
+          subtitle: `${txn.shops?.name || 'Shop'} · UGX ${(txn.amount || 0).toLocaleString()}`,
+          time: timeStr,
+          unread: index < 3,
+          section: section,
+        };
+      });
+      setNotifications(formatted);
+    }
+
+    setLoading(false);
+    setRefreshing(false);
+  }, [user?.id]);
+
+  useEffect(() => { loadNotifications(); }, [loadNotifications]);
+  const onRefresh = () => { setRefreshing(true); loadNotifications(); };
+
+  const filteredNotifications = activeCategory === 'All'
+    ? notifications
+    : notifications.filter(n => n.type === activeCategory.toLowerCase() || n.type === 'payment' && activeCategory === 'Payments');
+
+  const sections = {
+    today: filteredNotifications.filter(n => n.section === 'today'),
+    yesterday: filteredNotifications.filter(n => n.section === 'yesterday'),
+    week: filteredNotifications.filter(n => n.section === 'week'),
+    older: filteredNotifications.filter(n => n.section === 'older'),
+  };
 
   const renderNotification = (notification) => (
     <View key={notification.id} style={styles.notifCard}>
@@ -154,187 +102,92 @@ export default function Notifications({ navigation }) {
         </View>
         <Text style={styles.notifSubtitle}>{notification.subtitle}</Text>
         {notification.action && (
-          <TouchableOpacity style={styles.notifAction}>
-            <Text style={[styles.notifActionText, { color: notification.color }]}>
-              {notification.action}
-            </Text>
+          <TouchableOpacity
+            style={styles.notifAction}
+            onPress={() => notification.actionRoute && navigation.navigate(notification.actionRoute)}
+          >
+            <Text style={[styles.notifActionText, { color: notification.color }]}>{notification.action}</Text>
           </TouchableOpacity>
         )}
       </View>
       <View style={styles.notifRight}>
         <Text style={styles.notifTime}>{notification.time}</Text>
-        {notification.hasThumb && (
-          <View style={styles.notifThumb}>
-            <Ionicons name="flash-outline" size={16} color="#006B3F" />
-          </View>
-        )}
       </View>
     </View>
   );
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity>
-          <Ionicons name="menu-outline" size={26} color="#212121" />
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#212121" />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.logo}>MUNOLINK</Text>
-          <Text style={styles.tagline}>For Better Connections</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="notifications-outline" size={24} color="#212121" />
-            <View style={styles.notifBadge}>
-              <Text style={styles.notifBadgeText}>5</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity>
-            <View style={styles.profilePic}>
-              <Ionicons name="person" size={20} color="#FFFFFF" />
-              <View style={styles.onlineDot} />
-            </View>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.headerTitle}>Notifications</Text>
+        <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Title */}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#006B3F']} />}>
         <View style={styles.titleRow}>
-          <View>
-            <Text style={styles.pageTitle}>Notifications</Text>
-            <Text style={styles.pageSubtitle}>Stay updated with everything that matters.</Text>
-          </View>
+          <Text style={styles.pageSubtitle}>Stay updated with everything that matters.</Text>
           <TouchableOpacity style={styles.markAllBtn}>
             <Ionicons name="checkmark-done-outline" size={16} color="#006B3F" />
             <Text style={styles.markAllText}>Mark all as read</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Category Cards */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesScroll}>
           {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.name}
-              style={[styles.categoryCard, activeCategory === cat.name && styles.categoryCardActive]}
-              onPress={() => setActiveCategory(cat.name)}
-            >
-              <Text style={[styles.categoryName, activeCategory === cat.name && styles.categoryNameActive]}>
-                {cat.name}
-              </Text>
-              <View style={[styles.categoryBadge, activeCategory === cat.name && styles.categoryBadgeActive]}>
-                <Text style={[styles.categoryBadgeText, activeCategory === cat.name && styles.categoryBadgeTextActive]}>
-                  {cat.count}
-                </Text>
-              </View>
+            <TouchableOpacity key={cat.name} style={[styles.categoryCard, activeCategory === cat.name && styles.categoryCardActive]} onPress={() => setActiveCategory(cat.name)}>
+              <Text style={[styles.categoryName, activeCategory === cat.name && styles.categoryNameActive]}>{cat.name}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
 
-        {/* Today */}
-        <Text style={styles.sectionTitle}>Today</Text>
-        {todayNotifications.map(renderNotification)}
-
-        {/* Yesterday */}
-        <Text style={styles.sectionTitle}>Yesterday</Text>
-        {yesterdayNotifications.map(renderNotification)}
-
-        {/* This Week */}
-        <Text style={styles.sectionTitle}>This Week</Text>
-        {weekNotifications.map(renderNotification)}
-
-        <View style={{ height: 90 }} />
-      </ScrollView>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Home')}>
-          <Ionicons name="grid-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Overview</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="calendar-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Bookings</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="people-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Connections</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Messages')}>
-          <Ionicons name="chatbubbles-outline" size={22} color="#888" />
-          <View style={styles.navBadge}>
-            <Text style={styles.navBadgeText}>3</Text>
+        {loading ? <Text style={styles.loadingText}>Loading notifications...</Text> : filteredNotifications.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="notifications-off-outline" size={48} color="#CCC" />
+            <Text style={styles.emptyTitle}>No notifications</Text>
+            <Text style={styles.emptySubtitle}>You're all caught up!</Text>
           </View>
-          <Text style={styles.navLabel}>Messages</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="person-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
+        ) : (
+          <>
+            {sections.today.length > 0 && <Text style={styles.sectionTitle}>Today</Text>}
+            {sections.today.map(renderNotification)}
+            {sections.yesterday.length > 0 && <Text style={styles.sectionTitle}>Yesterday</Text>}
+            {sections.yesterday.map(renderNotification)}
+            {sections.week.length > 0 && <Text style={styles.sectionTitle}>This Week</Text>}
+            {sections.week.map(renderNotification)}
+            {sections.older.length > 0 && <Text style={styles.sectionTitle}>Earlier</Text>}
+            {sections.older.map(renderNotification)}
+          </>
+        )}
+        <View style={{ height: 30 }} />
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12,
-  },
-  headerCenter: { alignItems: 'center' },
-  logo: { fontSize: 18, fontWeight: '800', color: '#006B3F', letterSpacing: 2 },
-  tagline: { fontSize: 9, color: '#888' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  headerIcon: { position: 'relative' },
-  notifBadge: {
-    position: 'absolute', top: -4, right: -6,
-    width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center',
-  },
-  notifBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
-  profilePic: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#006B3F', justifyContent: 'center', alignItems: 'center',
-    position: 'relative',
-  },
-  onlineDot: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: '#4CAF50', borderWidth: 2, borderColor: '#FFFFFF',
-  },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12 },
+  headerTitle: { fontSize: 20, fontWeight: '800', color: '#212121' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
-  titleRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16,
-  },
-  pageTitle: { fontSize: 26, fontWeight: '800', color: '#212121' },
-  pageSubtitle: { fontSize: 13, color: '#888', marginTop: 2 },
+  loadingText: { fontSize: 14, color: '#888', textAlign: 'center', paddingVertical: 30 },
+  emptyState: { alignItems: 'center', paddingVertical: 40 },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#555', marginTop: 12, marginBottom: 4 },
+  emptySubtitle: { fontSize: 13, color: '#888' },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  pageSubtitle: { fontSize: 13, color: '#888' },
   markAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   markAllText: { fontSize: 13, color: '#006B3F', fontWeight: '700' },
   categoriesScroll: { marginBottom: 20 },
-  categoryCard: {
-    alignItems: 'center', backgroundColor: '#F8F8F8',
-    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 16, marginRight: 8,
-    borderWidth: 1.5, borderColor: '#ECECEC', minWidth: 80,
-  },
+  categoryCard: { alignItems: 'center', backgroundColor: '#F8F8F8', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 16, marginRight: 8, borderWidth: 1.5, borderColor: '#ECECEC', minWidth: 70 },
   categoryCardActive: { borderColor: '#006B3F', backgroundColor: '#FAFFFA' },
-  categoryName: { fontSize: 12, fontWeight: '600', color: '#888', marginBottom: 4 },
+  categoryName: { fontSize: 12, fontWeight: '600', color: '#888' },
   categoryNameActive: { color: '#006B3F' },
-  categoryBadge: {
-    backgroundColor: '#F0F0F0', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8,
-  },
-  categoryBadgeActive: { backgroundColor: '#006B3F' },
-  categoryBadgeText: { fontSize: 11, fontWeight: '700', color: '#888' },
-  categoryBadgeTextActive: { color: '#FFFFFF' },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: '#888', marginBottom: 10, marginTop: 4, letterSpacing: 1 },
-  notifCard: {
-    flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, marginBottom: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
-  },
-  notifIcon: {
-    width: 42, height: 42, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 10,
-  },
+  notifCard: { flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 14, padding: 12, marginBottom: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  notifIcon: { width: 42, height: 42, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   notifContent: { flex: 1 },
   notifHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
   notifTitle: { fontSize: 13, fontWeight: '700', color: '#212121', flex: 1 },
@@ -344,21 +197,4 @@ const styles = StyleSheet.create({
   notifActionText: { fontSize: 12, fontWeight: '700' },
   notifRight: { alignItems: 'flex-end', gap: 6, marginLeft: 8 },
   notifTime: { fontSize: 10, color: '#AAA' },
-  notifThumb: {
-    width: 34, height: 34, borderRadius: 8,
-    backgroundColor: '#F5F5F5', justifyContent: 'center', alignItems: 'center',
-  },
-  bottomNav: {
-    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
-    backgroundColor: '#FFFFFF', paddingVertical: 8, paddingBottom: 25,
-    borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-  },
-  navItem: { alignItems: 'center', gap: 2, position: 'relative' },
-  navBadge: {
-    position: 'absolute', top: -6, right: 6,
-    width: 16, height: 16, borderRadius: 8, backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center',
-  },
-  navBadgeText: { fontSize: 9, fontWeight: '800', color: '#FFFFFF' },
-  navLabel: { fontSize: 10, color: '#888', fontWeight: '500' },
 });

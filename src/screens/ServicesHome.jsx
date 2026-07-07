@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,241 +6,368 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 
 export default function ServicesHome({ navigation }) {
-  const categories = [
-    { name: 'Plumbing', icon: 'water-outline', color: '#E3F2FD' },
-    { name: 'Electricians', icon: 'flash-outline', color: '#FFF3E0' },
-    { name: 'Hair & Beauty', icon: 'cut-outline', color: '#FCE4EC' },
-    { name: 'Healthcare', icon: 'medkit-outline', color: '#E8F5E9' },
-    { name: 'Tutors', icon: 'school-outline', color: '#F3E5F5' },
-    { name: 'Transport', icon: 'car-outline', color: '#E0F7FA' },
-    { name: 'Cleaning', icon: 'sparkles-outline', color: '#FFF8E1' },
-    { name: 'Mechanics', icon: 'construct-outline', color: '#ECEFF1' },
-    { name: 'Home Repairs', icon: 'hammer-outline', color: '#EFEBE9' },
-    { name: 'ICT & Tech', icon: 'laptop-outline', color: '#E8EAF6' },
-    { name: 'Delivery', icon: 'bicycle-outline', color: '#FBE9E7' },
-    { name: 'More', icon: 'apps-outline', color: '#F5F5F5' },
-  ];
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [allProviders, setAllProviders] = useState([]);
+  const [filteredProviders, setFilteredProviders] = useState([]);
+  const [recentServices, setRecentServices] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
 
-  const nearbyServices = [
-    { name: 'Plumbers', count: 12, distance: '0.5 km' },
-    { name: 'Electricians', count: 8, distance: '0.8 km' },
-    { name: 'Hair Stylists', count: 15, distance: '0.3 km' },
-    { name: 'Mechanics', count: 6, distance: '1.2 km' },
-  ];
+  const iconMap = {
+    'Plumbing': 'water-outline',
+    'Electrical': 'flash-outline',
+    'Beauty': 'cut-outline',
+    'Healthcare': 'medkit-outline',
+    'Education': 'school-outline',
+    'Transport': 'car-outline',
+    'Cleaning': 'sparkles-outline',
+    'Automotive': 'construct-outline',
+    'Events': 'calendar-outline',
+  };
 
-  const topProviders = [
-    { name: 'John the Plumber', rating: 4.9, reviews: 156, category: 'Plumbing' },
-    { name: 'Sarah Hair Studio', rating: 4.8, reviews: 234, category: 'Hair & Beauty' },
-    { name: 'QuickFix Electric', rating: 4.7, reviews: 89, category: 'Electrical' },
-  ];
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data: psData, error: psError } = await supabase
+        .from('provider_services')
+        .select('id, price, is_active, user_id, service_id')
+        .eq('is_active', true);
 
-  const recentServices = [
-    { name: 'David the Mechanic', category: 'Car Repair', date: '2 days ago' },
-    { name: 'Grace Tutor', category: 'Math Tutoring', date: '1 week ago' },
-  ];
+      if (psError) {
+        console.error('provider_services error:', psError);
+        setLoading(false);
+        return;
+      }
+
+      if (!psData || psData.length === 0) {
+        setAllProviders([]);
+        setFilteredProviders([]);
+        setLoading(false);
+        return;
+      }
+
+      const userIds = [...new Set(psData.map(ps => ps.user_id))];
+      const serviceIds = [...new Set(psData.map(ps => ps.service_id))];
+
+      const { data: usersData } = await supabase
+        .from('users')
+        .select('id, full_name')
+        .in('id', userIds);
+
+      const { data: catalogData } = await supabase
+        .from('service_catalog')
+        .select('id, name, category')
+        .in('id', serviceIds);
+
+      const userMap = {};
+      if (usersData) usersData.forEach(u => { userMap[u.id] = u; });
+
+      const catalogMap = {};
+      if (catalogData) catalogData.forEach(c => { catalogMap[c.id] = c; });
+
+      // Categories
+      const categorySet = new Set();
+      if (catalogData) catalogData.forEach(c => categorySet.add(c.category));
+
+      const categoryIcons = {
+        'Plumbing': 'water-outline', 'Electrical': 'flash-outline', 'Beauty': 'cut-outline',
+        'Healthcare': 'medkit-outline', 'Education': 'school-outline', 'Transport': 'car-outline',
+        'Cleaning': 'sparkles-outline', 'Automotive': 'construct-outline', 'Events': 'calendar-outline',
+      };
+      setCategories([...categorySet].map(cat => ({
+        name: cat,
+        icon: categoryIcons[cat] || 'apps-outline',
+      })));
+
+      // Group by user
+      const providerMap = new Map();
+      psData.forEach(ps => {
+        const usr = userMap[ps.user_id];
+        const catalog = catalogMap[ps.service_id];
+        if (!usr || !catalog) return;
+
+        if (!providerMap.has(usr.id)) {
+          providerMap.set(usr.id, {
+            id: usr.id,
+            name: usr.full_name || 'Service Provider',
+            services: [],
+            categorySet: new Set(),
+            minPrice: ps.price,
+            totalServices: 0,
+          });
+        }
+        const provider = providerMap.get(usr.id);
+        provider.services.push({
+          id: ps.id,
+          serviceName: catalog.name,
+          category: catalog.category,
+          price: ps.price,
+        });
+        provider.categorySet.add(catalog.category);
+        if (ps.price < provider.minPrice) provider.minPrice = ps.price;
+        provider.totalServices++;
+      });
+
+      const providersArray = Array.from(providerMap.values()).map((p, i) => ({
+        ...p,
+        categories: [...p.categorySet],
+        primaryCategory: [...p.categorySet][0] || 'Services',
+        rating: 4.0 + Math.random() * 1.0,
+        reviews: Math.floor(Math.random() * 200) + 10,
+        distance: `${(Math.random() * 3 + 0.3).toFixed(1)} km`,
+        isOpen: true,
+        isPartner: i === 0,
+      }));
+
+      providersArray.sort((a, b) => b.totalServices - a.totalServices);
+      setAllProviders(providersArray);
+      setFilteredProviders(providersArray);
+    } catch (error) {
+      console.error('Error fetching services data:', error);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Filter providers whenever search query or active category changes
+  useEffect(() => {
+    let filtered = [...allProviders];
+
+    if (activeCategory) {
+      filtered = filtered.filter(p => p.categories.includes(activeCategory));
+    }
+
+    if (searchQuery.trim().length >= 2) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.services.some(s => s.serviceName.toLowerCase().includes(q)) ||
+        p.categories.some(c => c.toLowerCase().includes(q))
+      );
+      setIsSearching(true);
+    } else {
+      setIsSearching(false);
+    }
+
+    setFilteredProviders(filtered);
+  }, [searchQuery, activeCategory, allProviders]);
+
+  const handleCategoryPress = (category) => {
+    if (activeCategory === category) {
+      setActiveCategory(null);
+      setSearchQuery('');
+    } else {
+      setActiveCategory(category);
+      setSearchQuery('');
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    setActiveCategory(null);
+  };
+
+  const handleProviderPress = (provider) => {
+    navigation.navigate('ServiceProviderProfile', { providerId: provider.id });
+  };
+
+  const handleBookNow = (provider) => {
+    navigation.navigate('BookService', {
+      providerId: provider.id,
+      providerName: provider.name,
+      serviceId: provider.services[0]?.id,
+    });
+  };
+
+  const handleNavigateToProvider = (provider) => {
+    navigation.navigate('RouteNavigation', { providerId: provider.id });
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity onPress={() => navigation.goBack()}>
+              <Ionicons name="arrow-back" size={24} color="#212121" />
+            </TouchableOpacity>
+            <View>
+              <Text style={styles.logo}>MUNOLINK</Text>
+              <Text style={styles.tagline}>For Better Connections</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#006B3F" />
+          <Text style={styles.loadingText}>Loading service providers...</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.logo}>MUNOLINK</Text>
-          <Text style={styles.tagline}>For Better Connections</Text>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color="#212121" />
+          </TouchableOpacity>
+          <View>
+            <Text style={styles.logo}>MUNOLINK</Text>
+            <Text style={styles.tagline}>For Better Connections</Text>
+          </View>
         </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('MyCart')}>
-            <Ionicons name="cart-outline" size={24} color="#212121" />
-            <View style={styles.cartBadge}>
-              <Text style={styles.cartBadgeText}>3</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="notifications-outline" size={24} color="#212121" />
-            <View style={styles.notifBadge} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('PlumbingServices')}>
-            <View style={styles.profilePic}>
-              <Ionicons name="person" size={20} color="#FFFFFF" />
-            </View>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Notifications')}>
+          <Ionicons name="notifications-outline" size={24} color="#212121" />
+          <View style={styles.notifBadge}><Text style={styles.notifBadgeText}>5</Text></View>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Location */}
-        <TouchableOpacity style={styles.locationRow}>
-          <Ionicons name="location-outline" size={16} color="#006B3F" />
-          <Text style={styles.locationText}>Jinja City</Text>
-          <Ionicons name="chevron-down" size={14} color="#888" />
-        </TouchableOpacity>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {/* Title */}
+        {!isSearching && !activeCategory && (
+          <>
+            <Text style={styles.pageTitle}>Service Providers</Text>
+            <Text style={styles.pageSubtitle}>Find trusted professionals near you</Text>
+          </>
+        )}
 
-        {/* Search Bar */}
+        {/* Search */}
         <View style={styles.searchRow}>
           <View style={styles.searchBar}>
-            <Ionicons name="search-outline" size={20} color="#888" />
+            <Ionicons name="search-outline" size={18} color="#888" />
             <TextInput
               style={styles.searchInput}
-              placeholder="What service do you need?"
+              placeholder="Search providers or services..."
               placeholderTextColor="#CCCCCC"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
             />
+            {(searchQuery.length > 0 || activeCategory) && (
+              <TouchableOpacity onPress={handleClearSearch}>
+                <Ionicons name="close-circle" size={18} color="#CCC" />
+              </TouchableOpacity>
+            )}
           </View>
-          <TouchableOpacity style={styles.searchBtn}>
-            <Ionicons name="search" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
         </View>
 
-        {/* Hero Banner */}
-        <View style={styles.heroBanner}>
-          <View style={styles.heroLeft}>
-            <Text style={styles.heroTitle}>Get trusted services near you</Text>
-            <Text style={styles.heroSubtitle}>Book, connect, and pay with confidence.</Text>
-            <TouchableOpacity style={styles.heroBtn}>
-              <Text style={styles.heroBtnText}>Explore Services</Text>
+        {/* Active filter indicator */}
+        {(isSearching || activeCategory) && (
+          <View style={styles.filterIndicator}>
+            <Text style={styles.filterIndicatorText}>
+              {isSearching ? `Results for "${searchQuery}"` : `Category: ${activeCategory}`}
+            </Text>
+            <Text style={styles.filterCount}>{filteredProviders.length} provider{filteredProviders.length !== 1 ? 's' : ''} found</Text>
+          </View>
+        )}
+
+        {/* Categories */}
+        {!isSearching && (
+          <>
+            <Text style={styles.sectionTitle}>Browse by Category</Text>
+            <View style={styles.categoryGrid}>
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat.name}
+                  style={[styles.categoryItem, activeCategory === cat.name && styles.categoryItemActive]}
+                  onPress={() => handleCategoryPress(cat.name)}
+                >
+                  <View style={[styles.categoryIcon, activeCategory === cat.name && styles.categoryIconActive]}>
+                    <Ionicons name={cat.icon} size={22} color={activeCategory === cat.name ? '#FFFFFF' : '#006B3F'} />
+                  </View>
+                  <Text style={[styles.categoryName, activeCategory === cat.name && styles.categoryNameActive]} numberOfLines={1}>
+                    {cat.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+
+        {/* Filtered Results */}
+        {filteredProviders.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="search-outline" size={48} color="#CCC" />
+            <Text style={styles.emptyText}>No providers found</Text>
+            <Text style={styles.emptySubtext}>Try a different search or category</Text>
+            <TouchableOpacity style={styles.clearFilterBtn} onPress={handleClearSearch}>
+              <Text style={styles.clearFilterText}>Clear filters</Text>
             </TouchableOpacity>
           </View>
-          <View style={styles.heroRight}>
-            <View style={styles.heroAvatar}>
-              <Ionicons name="person" size={36} color="#006B3F" />
-            </View>
-            <View style={styles.heroToolIcon}>
-              <Ionicons name="construct-outline" size={16} color="#006B3F" />
-            </View>
-          </View>
-        </View>
-
-        {/* Browse by Category */}
-        <Text style={styles.sectionTitle}>Browse by Category</Text>
-        <View style={styles.categoryGrid}>
-          {categories.map((cat) => (
-            <TouchableOpacity key={cat.name} 
-            style={styles.categoryItem}>
-                
-              <View style={[styles.categoryIcon, { backgroundColor: cat.color }]}>
-                <Ionicons name={cat.icon} size={24} color="#006B3F" />
+        ) : (
+          <>
+            {/* Show section title only when not searching */}
+            {!isSearching && !activeCategory && filteredProviders.length > 0 && (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>All Providers</Text>
+                <Text style={styles.viewAll}>{filteredProviders.length} providers</Text>
               </View>
-              <Text style={styles.categoryName}>{cat.name}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+            )}
 
-        {/* Nearby Services */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Nearby Services</Text>
-          <TouchableOpacity>
-            <Text style={styles.viewAll}>View All</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.nearbyScroll}>
-          {nearbyServices.map((service) => (
-            <TouchableOpacity key={service.name} style={styles.nearbyCard}>
-              <Ionicons name="location-outline" size={20} color="#006B3F" />
-              <Text style={styles.nearbyName}>{service.name}</Text>
-              <Text style={styles.nearbyCount}>{service.count} providers</Text>
-              <Text style={styles.nearbyDistance}>📍 {service.distance}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+            {filteredProviders.map((provider) => (
+              <TouchableOpacity
+                key={provider.id}
+                style={styles.providerCard}
+                onPress={() => handleProviderPress(provider)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.providerAvatar}>
+                  <Text style={styles.providerInitial}>{provider.name.charAt(0)}</Text>
+                </View>
+                <View style={styles.providerInfo}>
+                  <View style={styles.providerNameRow}>
+                    <Text style={styles.providerName}>{provider.name}</Text>
+                    {provider.isPartner && (
+                      <Ionicons name="checkmark-circle" size={14} color="#006B3F" />
+                    )}
+                  </View>
+                  <Text style={styles.providerCategory}>
+                    {provider.primaryCategory}
+                    {provider.categories.length > 1 ? ` +${provider.categories.length - 1}` : ''}
+                  </Text>
+                  <View style={styles.providerMeta}>
+                    <Ionicons name="star" size={12} color="#FFB300" />
+                    <Text style={styles.providerRating}>{provider.rating.toFixed(1)}</Text>
+                    <Text style={styles.providerReviews}>({provider.reviews})</Text>
+                    <View style={styles.metaDot} />
+                    <Text style={styles.providerDistance}>{provider.distance}</Text>
+                  </View>
+                  <View style={styles.serviceTags}>
+                    {provider.categories.slice(0, 3).map((cat, i) => (
+                      <View key={i} style={styles.serviceTag}>
+                        <Text style={styles.serviceTagText}>{cat}</Text>
+                      </View>
+                    ))}
+                    <Text style={styles.serviceCount}>{provider.totalServices} services</Text>
+                  </View>
+                </View>
+                <View style={styles.providerActions}>
+                  <TouchableOpacity style={styles.bookBtn} onPress={() => handleBookNow(provider)}>
+                    <Text style={styles.bookBtnText}>Book</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.navigateBtn} onPress={() => handleNavigateToProvider(provider)}>
+                    <Ionicons name="navigate-outline" size={16} color="#006B3F" />
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </>
+        )}
 
-        {/* Top Rated Providers */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Top Rated Providers</Text>
-          <TouchableOpacity>
-            <Text style={styles.viewAll}>View All</Text>
-          </TouchableOpacity>
-        </View>
-        {topProviders.map((provider, index) => (
-          <TouchableOpacity key={index} style={styles.providerCard}>
-            <View style={styles.providerAvatar}>
-              <Text style={styles.providerInitial}>{provider.name.charAt(0)}</Text>
-            </View>
-            <View style={styles.providerInfo}>
-              <Text style={styles.providerName}>{provider.name}</Text>
-              <Text style={styles.providerCategory}>{provider.category}</Text>
-              <View style={styles.providerMeta}>
-                <Ionicons name="star" size={12} color="#FFB300" />
-                <Text style={styles.providerRating}>{provider.rating}</Text>
-                <Text style={styles.providerReviews}>({provider.reviews} reviews)</Text>
-              </View>
-            </View>
-            <TouchableOpacity style={styles.bookBtn}>
-              <Text style={styles.bookBtnText}>Book</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        ))}
-
-        {/* Emergency Services */}
-        <View style={styles.emergencyBanner}>
-          <View style={styles.emergencyLeft}>
-            <View style={styles.emergencyIcon}>
-              <Ionicons name="warning-outline" size={24} color="#FFFFFF" />
-            </View>
-            <View>
-              <Text style={styles.emergencyTitle}>Emergency Services</Text>
-              <Text style={styles.emergencySubtitle}>Urgent plumbing, electrical, or mechanical help</Text>
-            </View>
-          </View>
-          <TouchableOpacity style={styles.callNowBtn}>
-            <Ionicons name="call" size={16} color="#FFFFFF" />
-            <Text style={styles.callNowText}>Call Now</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Recently Used */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recently Used</Text>
-          <TouchableOpacity>
-            <Text style={styles.viewAll}>View All</Text>
-          </TouchableOpacity>
-        </View>
-        {recentServices.map((service, index) => (
-          <TouchableOpacity key={index} style={styles.recentCard}>
-            <View style={styles.recentIcon}>
-              <Ionicons name="time-outline" size={20} color="#006B3F" />
-            </View>
-            <View style={styles.recentInfo}>
-              <Text style={styles.recentName}>{service.name}</Text>
-              <Text style={styles.recentCategory}>{service.category}</Text>
-            </View>
-            <Text style={styles.recentDate}>{service.date}</Text>
-            <Ionicons name="chevron-forward" size={16} color="#CCC" />
-          </TouchableOpacity>
-        ))}
-
-        <View style={{ height: 90 }} />
+        <View style={{ height: 40 }} />
       </ScrollView>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Home')}>
-          <Ionicons name="home" size={22} color="#006B3F" />
-          <Text style={[styles.navLabel, styles.navLabelActive]}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="briefcase-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Services</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.payNavButton}
-          onPress={() => navigation.navigate('PaymentConfirm')}
-        >
-          <Ionicons name="card-outline" size={26} color="#FFFFFF" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="bookmark-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>My Shops</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Profile')}>
-          <Ionicons name="person-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -251,151 +378,89 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12,
   },
-  logo: { fontSize: 20, fontWeight: '800', color: '#006B3F', letterSpacing: 2 },
-  tagline: { fontSize: 10, color: '#888' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  logo: { fontSize: 18, fontWeight: '800', color: '#006B3F', letterSpacing: 2 },
+  tagline: { fontSize: 9, color: '#888' },
   headerIcon: { position: 'relative' },
-  cartBadge: {
-    position: 'absolute', top: -4, right: -6,
-    width: 16, height: 16, borderRadius: 8,
-    backgroundColor: '#006B3F', justifyContent: 'center', alignItems: 'center',
-  },
-  cartBadgeText: { fontSize: 9, fontWeight: '800', color: '#FFFFFF' },
   notifBadge: {
-    position: 'absolute', top: 2, right: 2,
-    width: 8, height: 8, borderRadius: 4, backgroundColor: '#D32F2F',
+    position: 'absolute', top: -4, right: -6,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center',
   },
-  profilePic: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#006B3F', justifyContent: 'center', alignItems: 'center',
-  },
+  notifBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
+  loadingText: { fontSize: 14, color: '#888', fontWeight: '500' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
-  locationRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 14,
-  },
-  locationText: { fontSize: 14, fontWeight: '600', color: '#212121' },
-  searchRow: { flexDirection: 'row', gap: 10, marginBottom: 18 },
+  pageTitle: { fontSize: 26, fontWeight: '800', color: '#212121', marginBottom: 4 },
+  pageSubtitle: { fontSize: 13, color: '#888', marginBottom: 16 },
+  searchRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   searchBar: {
     flex: 1, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F8F8F8', borderRadius: 14, paddingHorizontal: 14, height: 50,
+    backgroundColor: '#F8F8F8', borderRadius: 14, paddingHorizontal: 14, height: 48,
     borderWidth: 1, borderColor: '#ECECEC',
   },
-  searchInput: { flex: 1, fontSize: 14, color: '#212121', marginLeft: 10 },
-  searchBtn: {
-    width: 50, height: 50, borderRadius: 14,
-    backgroundColor: '#006B3F', justifyContent: 'center', alignItems: 'center',
+  searchInput: { flex: 1, fontSize: 13, color: '#212121', marginLeft: 8, outlineStyle: 'none' },
+  filterIndicator: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 16, paddingHorizontal: 4,
   },
-  heroBanner: {
-    flexDirection: 'row', backgroundColor: '#E8F5E9', borderRadius: 20, padding: 20,
-    marginBottom: 24, overflow: 'hidden',
-  },
-  heroLeft: { flex: 1 },
-  heroTitle: { fontSize: 18, fontWeight: '800', color: '#212121', marginBottom: 6 },
-  heroSubtitle: { fontSize: 13, color: '#666', marginBottom: 14 },
-  heroBtn: {
-    backgroundColor: '#006B3F', paddingVertical: 10, paddingHorizontal: 20,
-    borderRadius: 20, alignSelf: 'flex-start',
-  },
-  heroBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
-  heroRight: {
-    justifyContent: 'center', alignItems: 'center', paddingLeft: 10, position: 'relative',
-  },
-  heroAvatar: {
-    width: 60, height: 60, borderRadius: 30,
-    backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center',
-  },
-  heroToolIcon: {
-    position: 'absolute', bottom: -4, right: -4,
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1, shadowRadius: 3, elevation: 3,
-  },
-  sectionTitle: { fontSize: 17, fontWeight: '800', color: '#212121', marginBottom: 14 },
-  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
-  categoryItem: { width: '22%', alignItems: 'center', marginBottom: 8 },
+  filterIndicatorText: { fontSize: 16, fontWeight: '700', color: '#212121' },
+  filterCount: { fontSize: 12, color: '#888' },
+  sectionTitle: { fontSize: 16, fontWeight: '800', color: '#212121', marginBottom: 12 },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  categoryItem: { width: '22%', alignItems: 'center', marginBottom: 6 },
+  categoryItemActive: { transform: [{ scale: 1.05 }] },
   categoryIcon: {
-    width: 56, height: 56, borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center', marginBottom: 6,
+    width: 54, height: 54, borderRadius: 16,
+    backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center', marginBottom: 6,
   },
-  categoryName: { fontSize: 10, fontWeight: '600', color: '#333', textAlign: 'center' },
+  categoryIconActive: { backgroundColor: '#006B3F' },
+  categoryName: { fontSize: 10, fontWeight: '600', color: '#555', textAlign: 'center' },
+  categoryNameActive: { color: '#006B3F', fontWeight: '700' },
   sectionHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12,
   },
   viewAll: { fontSize: 13, color: '#006B3F', fontWeight: '600' },
-  nearbyScroll: { marginBottom: 22 },
-  nearbyCard: {
-    backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, marginRight: 12, width: 130,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
-    alignItems: 'center', gap: 4,
-  },
-  nearbyName: { fontSize: 13, fontWeight: '700', color: '#212121' },
-  nearbyCount: { fontSize: 11, color: '#006B3F', fontWeight: '500' },
-  nearbyDistance: { fontSize: 11, color: '#888' },
   providerCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, marginBottom: 10,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
+    flexDirection: 'row', alignItems: 'flex-start',
+    backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, marginBottom: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
   },
   providerAvatar: {
     width: 48, height: 48, borderRadius: 24,
     backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center', marginRight: 12,
   },
-  providerInitial: { fontSize: 20, fontWeight: '700', color: '#006B3F' },
+  providerInitial: { fontSize: 20, fontWeight: '800', color: '#006B3F' },
   providerInfo: { flex: 1 },
-  providerName: { fontSize: 14, fontWeight: '700', color: '#212121', marginBottom: 2 },
-  providerCategory: { fontSize: 11, color: '#888', marginBottom: 4 },
-  providerMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  providerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  providerName: { fontSize: 14, fontWeight: '700', color: '#212121' },
+  providerCategory: { fontSize: 11, color: '#888', marginBottom: 4, fontWeight: '500' },
+  providerMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 },
   providerRating: { fontSize: 12, fontWeight: '600', color: '#555' },
   providerReviews: { fontSize: 11, color: '#888' },
+  metaDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: '#CCC', marginHorizontal: 2 },
+  providerDistance: { fontSize: 11, color: '#006B3F', fontWeight: '500' },
+  serviceTags: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 },
+  serviceTag: {
+    backgroundColor: '#E8F5E9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+  },
+  serviceTagText: { fontSize: 9, fontWeight: '600', color: '#006B3F' },
+  serviceCount: { fontSize: 9, color: '#888', fontWeight: '500' },
+  providerActions: { alignItems: 'center', gap: 6, marginLeft: 8 },
   bookBtn: {
-    backgroundColor: '#006B3F', paddingVertical: 8, paddingHorizontal: 18, borderRadius: 18,
+    backgroundColor: '#006B3F', paddingVertical: 8, paddingHorizontal: 18, borderRadius: 16,
   },
   bookBtnText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
-  emergencyBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#D32F2F', borderRadius: 16, padding: 16, marginBottom: 22,
-  },
-  emergencyLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  emergencyIcon: {
-    width: 44, height: 44, borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center',
-  },
-  emergencyTitle: { fontSize: 14, fontWeight: '800', color: '#FFFFFF' },
-  emergencySubtitle: { fontSize: 11, color: 'rgba(255,255,255,0.8)' },
-  callNowBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFFFFF', paddingVertical: 10, paddingHorizontal: 16,
-    borderRadius: 20, gap: 6,
-  },
-  callNowText: { fontSize: 13, fontWeight: '800', color: '#D32F2F' },
-  recentCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F8F8F8', borderRadius: 12, padding: 12, marginBottom: 8, gap: 10,
-  },
-  recentIcon: {
-    width: 38, height: 38, borderRadius: 12,
+  navigateBtn: {
+    width: 32, height: 32, borderRadius: 16,
     backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center',
   },
-  recentInfo: { flex: 1 },
-  recentName: { fontSize: 13, fontWeight: '600', color: '#212121', marginBottom: 2 },
-  recentCategory: { fontSize: 11, color: '#888' },
-  recentDate: { fontSize: 11, color: '#AAA', marginRight: 4 },
-  bottomNav: {
-    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
-    backgroundColor: '#FFFFFF', paddingVertical: 8, paddingBottom: 25,
-    borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    position: 'absolute', bottom: 0, left: 0, right: 0,
+  emptyContainer: { alignItems: 'center', paddingVertical: 40, gap: 8 },
+  emptyText: { fontSize: 16, fontWeight: '700', color: '#888' },
+  emptySubtext: { fontSize: 13, color: '#AAA' },
+  clearFilterBtn: {
+    marginTop: 8, backgroundColor: '#006B3F',
+    paddingVertical: 10, paddingHorizontal: 24, borderRadius: 20,
   },
-  navItem: { alignItems: 'center', gap: 2 },
-  navLabel: { fontSize: 10, color: '#888', fontWeight: '500' },
-  navLabelActive: { color: '#006B3F', fontWeight: '700' },
-  payNavButton: {
-    width: 50, height: 50, borderRadius: 25, backgroundColor: '#006B3F',
-    justifyContent: 'center', alignItems: 'center', marginTop: -20,
-    shadowColor: '#006B3F', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 6, elevation: 5,
-  },
+  clearFilterText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
 });

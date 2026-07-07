@@ -110,7 +110,7 @@ export default function Personalization({ navigation, route }) {
 
     // Route based on role
     if (role === 'customer') {
-      navigation.navigate('Home', {
+      navigation.navigate('Connections', {
         phoneNumber: phoneNumber,
         firstName: firstName.trim(),
       });

@@ -232,7 +232,7 @@ export default function Groceries({ navigation }) {
             </TouchableOpacity>
           ))}
         </View>
-
+  
         {/* Features Strip */}
         <View style={styles.featuresStrip}>
           <View style={styles.featureItem}>

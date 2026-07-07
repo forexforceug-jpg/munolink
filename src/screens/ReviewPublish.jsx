@@ -1,124 +1,118 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
-export default function ReviewPublish({ navigation }) {
+export default function ReviewPublish({ navigation, route }) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [shopId, setShopId] = useState(null);
 
-  // Mock data from previous steps (in real app, passed via route params)
-  const productData = {
+  // Get data from previous screens (with fallback defaults)
+  const productData = route?.params?.productData || {
     name: 'Wireless Earbuds Pro',
     category: 'Electronics',
     subcategory: 'Audio',
     sku: 'ML-EB-PRO-001',
-    specifications: {
-      color: 'Black',
-      condition: 'New',
-      warranty: '6 Months',
-      packaging: 'Original Box',
-    },
-    pricing: {
-      costPrice: 90000,
-      sellingPrice: 150000,
-      comparePrice: 200000,
-      profit: 60000,
-      profitMargin: 40,
-    },
-    stock: {
-      quantity: 24,
-      lowStockAlert: 5,
-    },
-    delivery: {
-      processingTime: '1-2 Days',
-      domesticDelivery: 'Available',
-      returnPolicy: '7 Days Return',
-    },
+    specifications: { color: 'Black', condition: 'New', warranty: '6 Months', packaging: 'Original Box' },
+    pricing: { costPrice: 90000, sellingPrice: 150000, comparePrice: 200000 },
+    stock: { quantity: 24, lowStockAlert: 5 },
+    delivery: { processingTime: '1-2 Days', domesticDelivery: 'Available', returnPolicy: '7 Days Return' },
   };
 
-  const handlePublish = async () => {
-    setLoading(true);
+  useEffect(() => {
+    loadShop();
+  }, []);
 
-    // Find seller's shop
+  const loadShop = async () => {
+    if (!user?.id) return;
     const { data: shop } = await supabase
       .from('shops')
       .select('id')
-      .eq('owner_id', user?.id)
+      .eq('owner_id', user.id)
       .single();
+    if (shop) setShopId(shop.id);
+  };
 
-    if (!shop) {
-      Alert.alert('Error', 'No shop found for your account.');
-      setLoading(false);
+  const handlePublish = async () => {
+    if (!shopId) {
+      Alert.alert('Error', 'No shop found. Please set up your shop first.');
       return;
     }
 
-    // Find catalog entry (or create if custom)
-    const { data: catalogEntry } = await supabase
+    setLoading(true);
+
+    // Check if product exists in catalog
+    const { data: existingCatalog } = await supabase
       .from('catalog')
       .select('id')
       .eq('name', productData.name)
       .single();
 
-    const catalogId = catalogEntry?.id;
+    let catalogId = existingCatalog?.id;
 
+    // If not in catalog, add it
     if (!catalogId) {
-      // Product not in catalog — insert it
-      const { data: newCatalog } = await supabase
+      const { data: newCatalog, error: catalogError } = await supabase
         .from('catalog')
         .insert({
           name: productData.name,
           category: productData.category,
-          description: `${productData.name} - ${productData.subcategory}`,
+          description: `${productData.name} - ${productData.subcategory || ''}`,
           specifications: productData.specifications,
         })
         .select('id')
         .single();
 
-      if (!newCatalog) {
+      if (catalogError) {
         Alert.alert('Error', 'Failed to add product to catalog.');
         setLoading(false);
         return;
       }
+      catalogId = newCatalog?.id;
+    }
 
-      // Use the new catalog ID
-      const { error: insertError } = await supabase
+    // Check if already in shop_products
+    const { data: existing } = await supabase
+      .from('shop_products')
+      .select('id')
+      .eq('shop_id', shopId)
+      .eq('catalog_id', catalogId)
+      .single();
+
+    if (existing) {
+      // Update existing
+      const { error } = await supabase
         .from('shop_products')
-        .insert({
-          shop_id: shop.id,
-          catalog_id: newCatalog.id,
+        .update({
           regular_price: productData.pricing.sellingPrice,
           in_stock: productData.stock.quantity > 0,
           seller_specifications: productData.specifications,
-        });
+        })
+        .eq('id', existing.id);
 
-      if (insertError) {
-        Alert.alert('Error', 'Failed to publish product: ' + insertError.message);
+      if (error) {
+        Alert.alert('Error', 'Failed to update product.');
         setLoading(false);
         return;
       }
     } else {
-      // Product exists in catalog — add to shop
-      const { error: insertError } = await supabase
+      // Insert new
+      const { error } = await supabase
         .from('shop_products')
         .insert({
-          shop_id: shop.id,
+          shop_id: shopId,
           catalog_id: catalogId,
           regular_price: productData.pricing.sellingPrice,
           in_stock: productData.stock.quantity > 0,
           seller_specifications: productData.specifications,
         });
 
-      if (insertError) {
-        Alert.alert('Error', 'Failed to publish product: ' + insertError.message);
+      if (error) {
+        Alert.alert('Error', 'Failed to publish product: ' + error.message);
         setLoading(false);
         return;
       }
@@ -128,37 +122,27 @@ export default function ReviewPublish({ navigation }) {
     Alert.alert(
       'Product Published! 🎉',
       `${productData.name} is now live on Munolink. Customers can find and purchase it.`,
-      [{ text: 'OK', onPress: () => navigation.navigate('SellerProducts') }]
+      [{ text: 'View Products', onPress: () => navigation.navigate('SellerProducts') }]
     );
   };
+
+  const profit = (productData.pricing?.sellingPrice || 0) - (productData.pricing?.costPrice || 0);
+  const margin = (productData.pricing?.costPrice || 0) > 0
+    ? Math.round((profit / (productData.pricing?.sellingPrice || 1)) * 100)
+    : 0;
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color="#212121" />
-          </TouchableOpacity>
-          <View>
-            <Text style={styles.logo}>MUNOLINK</Text>
-            <Text style={styles.tagline}>For Better Connections</Text>
-          </View>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#212121" />
+        </TouchableOpacity>
+        <View style={styles.headerCenter}>
+          <Text style={styles.logo}>MUNOLINK</Text>
+          <Text style={styles.tagline}>For Better Connections</Text>
         </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="notifications-outline" size={24} color="#212121" />
-            <View style={styles.notifBadge}>
-              <Text style={styles.notifBadgeText}>5</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity>
-            <View style={styles.profilePic}>
-              <Ionicons name="person" size={20} color="#FFFFFF" />
-              <View style={styles.onlineDot} />
-            </View>
-          </TouchableOpacity>
-        </View>
+        <View style={{ width: 24 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -174,21 +158,23 @@ export default function ReviewPublish({ navigation }) {
                 {index < 2 ? (
                   <Ionicons name="checkmark" size={12} color="#FFFFFF" />
                 ) : (
-                  <Text style={[styles.progressDotText, styles.progressDotTextActive]}>3</Text>
+                  <Text style={styles.progressDotTextActive}>3</Text>
                 )}
               </View>
-              <Text style={[styles.progressLabel, index === 2 && styles.progressLabelActive]}>{step}</Text>
-              {index < 2 && <View style={styles.progressLine} />}
+              <Text style={[styles.progressLabel, index === 2 && styles.progressLabelActive]}>
+                {step}
+              </Text>
+              {index < 2 && <View style={styles.progressLineDone} />}
             </View>
           ))}
         </View>
 
-        {/* Product Info Card */}
+        {/* Product Information */}
         <View style={styles.reviewCard}>
           <Text style={styles.reviewSectionTitle}>Product Information</Text>
           <View style={styles.reviewRow}>
             <View style={styles.productImageLarge}>
-              <Ionicons name="headset-outline" size={40} color="#006B3F" />
+              <Ionicons name="cube-outline" size={40} color="#006B3F" />
             </View>
             <View style={styles.reviewInfo}>
               <Text style={styles.reviewProductName}>{productData.name}</Text>
@@ -196,9 +182,11 @@ export default function ReviewPublish({ navigation }) {
                 <View style={styles.reviewCatBadge}>
                   <Text style={styles.reviewCatText}>{productData.category}</Text>
                 </View>
-                <View style={styles.reviewCatBadge}>
-                  <Text style={styles.reviewCatText}>{productData.subcategory}</Text>
-                </View>
+                {productData.subcategory ? (
+                  <View style={styles.reviewCatBadge}>
+                    <Text style={styles.reviewCatText}>{productData.subcategory}</Text>
+                  </View>
+                ) : null}
               </View>
               <Text style={styles.reviewSku}>SKU: {productData.sku}</Text>
             </View>
@@ -208,7 +196,7 @@ export default function ReviewPublish({ navigation }) {
           <View style={styles.reviewDivider} />
           <Text style={styles.reviewSubtitle}>Specifications</Text>
           <View style={styles.specsGrid}>
-            {Object.entries(productData.specifications).map(([key, value]) => (
+            {Object.entries(productData.specifications || {}).map(([key, value]) => (
               <View key={key} style={styles.specItem}>
                 <Text style={styles.specKey}>{key}</Text>
                 <Text style={styles.specValue}>{value}</Text>
@@ -217,59 +205,67 @@ export default function ReviewPublish({ navigation }) {
           </View>
         </View>
 
-        {/* Pricing Card */}
+        {/* Pricing */}
         <View style={styles.reviewCard}>
           <Text style={styles.reviewSectionTitle}>Pricing</Text>
           <View style={styles.pricingGrid}>
             <View style={styles.pricingItem}>
               <Text style={styles.pricingLabel}>Cost Price</Text>
-              <Text style={styles.pricingValue}>UGX {productData.pricing.costPrice.toLocaleString()}</Text>
+              <Text style={styles.pricingValue}>
+                UGX {productData.pricing?.costPrice?.toLocaleString() || '0'}
+              </Text>
             </View>
             <View style={styles.pricingItem}>
               <Text style={styles.pricingLabel}>Selling Price</Text>
-              <Text style={styles.pricingValueHighlight}>UGX {productData.pricing.sellingPrice.toLocaleString()}</Text>
+              <Text style={styles.pricingValueHighlight}>
+                UGX {productData.pricing?.sellingPrice?.toLocaleString() || '0'}
+              </Text>
             </View>
-            <View style={styles.pricingItem}>
-              <Text style={styles.pricingLabel}>Compare at</Text>
-              <Text style={[styles.pricingValue, styles.pricingStrikethrough]}>UGX {productData.pricing.comparePrice.toLocaleString()}</Text>
-            </View>
+            {productData.pricing?.comparePrice > 0 && (
+              <View style={styles.pricingItem}>
+                <Text style={styles.pricingLabel}>Compare at</Text>
+                <Text style={[styles.pricingValue, styles.pricingStrikethrough]}>
+                  UGX {productData.pricing?.comparePrice?.toLocaleString() || '0'}
+                </Text>
+              </View>
+            )}
           </View>
           <View style={styles.reviewDivider} />
           <View style={styles.profitRow}>
             <View style={styles.profitMini}>
               <Ionicons name="trending-up" size={14} color="#006B3F" />
-              <Text style={styles.profitMiniText}>Profit: UGX {productData.pricing.profit.toLocaleString()}</Text>
+              <Text style={styles.profitMiniText}>Profit: UGX {profit.toLocaleString()}</Text>
             </View>
             <View style={styles.profitMini}>
               <Ionicons name="pie-chart" size={14} color="#006B3F" />
-              <Text style={styles.profitMiniText}>Margin: {productData.pricing.profitMargin}%</Text>
+              <Text style={styles.profitMiniText}>Margin: {margin}%</Text>
             </View>
           </View>
         </View>
 
-        {/* Stock Card */}
+        {/* Stock & Delivery */}
         <View style={styles.reviewCard}>
           <Text style={styles.reviewSectionTitle}>Stock & Delivery</Text>
           <View style={styles.stockGrid}>
             <View style={styles.stockItem}>
               <Text style={styles.stockLabel}>Stock Quantity</Text>
-              <Text style={styles.stockValue}>{productData.stock.quantity} units</Text>
+              <Text style={styles.stockValue}>{productData.stock?.quantity || 0} units</Text>
             </View>
             <View style={styles.stockItem}>
               <Text style={styles.stockLabel}>Low Stock Alert</Text>
-              <Text style={styles.stockValue}>{productData.stock.lowStockAlert} units</Text>
+              <Text style={styles.stockValue}>{productData.stock?.lowStockAlert || 0} units</Text>
             </View>
             <View style={styles.stockItem}>
-              <Text style={styles.stockLabel}>Processing</Text>
-              <Text style={styles.stockValue}>{productData.delivery.processingTime}</Text>
+              <Text style={styles.stockLabel}>Processing Time</Text>
+              <Text style={styles.stockValue}>{productData.delivery?.processingTime || 'N/A'}</Text>
             </View>
             <View style={styles.stockItem}>
-              <Text style={styles.stockLabel}>Delivery</Text>
-              <Text style={styles.stockValue}>{productData.delivery.domesticDelivery}</Text>
+              <Text style={styles.stockLabel}>Domestic Delivery</Text>
+              <Text style={styles.stockValue}>{productData.delivery?.domesticDelivery || 'N/A'}</Text>
             </View>
             <View style={styles.stockItem}>
               <Text style={styles.stockLabel}>Return Policy</Text>
-              <Text style={styles.stockValue}>{productData.delivery.returnPolicy}</Text>
+              <Text style={styles.stockValue}>{productData.delivery?.returnPolicy || 'N/A'}</Text>
             </View>
           </View>
         </View>
@@ -292,32 +288,8 @@ export default function ReviewPublish({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        <View style={{ height: 90 }} />
+        <View style={{ height: 30 }} />
       </ScrollView>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ShopOwnerDashboard')}>
-          <Ionicons name="grid-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Overview</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="calendar-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Bookings</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="cube" size={22} color="#006B3F" />
-          <Text style={[styles.navLabel, styles.navLabelActive]}>Catalog</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="wallet-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Earnings</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="person-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -328,27 +300,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerCenter: { alignItems: 'center' },
   logo: { fontSize: 18, fontWeight: '800', color: '#006B3F', letterSpacing: 2 },
   tagline: { fontSize: 9, color: '#888' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  headerIcon: { position: 'relative' },
-  notifBadge: {
-    position: 'absolute', top: -4, right: -6,
-    width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center',
-  },
-  notifBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
-  profilePic: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#006B3F', justifyContent: 'center', alignItems: 'center',
-    position: 'relative',
-  },
-  onlineDot: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: '#4CAF50', borderWidth: 2, borderColor: '#FFFFFF',
-  },
   scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
   pageTitle: { fontSize: 26, fontWeight: '800', color: '#212121', marginBottom: 4 },
   pageSubtitle: { fontSize: 13, color: '#888', marginBottom: 16 },
@@ -361,11 +315,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#E0E0E0', justifyContent: 'center', alignItems: 'center',
   },
   progressDotDone: { backgroundColor: '#006B3F' },
-  progressDotText: { fontSize: 11, fontWeight: '700', color: '#888' },
-  progressDotTextActive: { color: '#FFFFFF' },
+  progressDotTextActive: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
   progressLabel: { fontSize: 10, color: '#888', fontWeight: '500', marginLeft: 4 },
   progressLabelActive: { color: '#006B3F', fontWeight: '700' },
-  progressLine: { width: 40, height: 2, backgroundColor: '#006B3F', marginHorizontal: 4 },
+  progressLineDone: { width: 40, height: 2, backgroundColor: '#006B3F', marginHorizontal: 4 },
   reviewCard: {
     backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 14,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
@@ -393,8 +346,11 @@ const styles = StyleSheet.create({
   },
   specKey: { fontSize: 10, color: '#888', textTransform: 'capitalize', marginBottom: 2 },
   specValue: { fontSize: 13, fontWeight: '700', color: '#212121' },
-  pricingGrid: { flexDirection: 'row', gap: 8, marginBottom: 4 },
-  pricingItem: { flex: 1, alignItems: 'center', backgroundColor: '#F8F8F8', borderRadius: 10, padding: 10 },
+  pricingGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
+  pricingItem: {
+    flex: 1, minWidth: '30%', alignItems: 'center',
+    backgroundColor: '#F8F8F8', borderRadius: 10, padding: 10,
+  },
   pricingLabel: { fontSize: 10, color: '#888', marginBottom: 4 },
   pricingValue: { fontSize: 14, fontWeight: '700', color: '#212121' },
   pricingValueHighlight: { fontSize: 16, fontWeight: '800', color: '#006B3F' },
@@ -409,7 +365,7 @@ const styles = StyleSheet.create({
   },
   stockLabel: { fontSize: 12, color: '#888' },
   stockValue: { fontSize: 13, fontWeight: '700', color: '#212121' },
-  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8, marginBottom: 16 },
+  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
   backBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     borderWidth: 1.5, borderColor: '#006B3F', paddingVertical: 14, paddingHorizontal: 20,
@@ -422,13 +378,4 @@ const styles = StyleSheet.create({
   },
   publishBtnDisabled: { opacity: 0.6 },
   publishBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
-  bottomNav: {
-    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
-    backgroundColor: '#FFFFFF', paddingVertical: 8, paddingBottom: 25,
-    borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-  },
-  navItem: { alignItems: 'center', gap: 2 },
-  navLabel: { fontSize: 10, color: '#888', fontWeight: '500' },
-  navLabelActive: { color: '#006B3F', fontWeight: '700' },
 });

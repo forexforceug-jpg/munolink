@@ -121,9 +121,9 @@ export default function CreatePin({ navigation, route }) {
     if (role === 'customer') {
       navigation.navigate('Personalization', { phoneNumber, role });
     } else if (role === 'shop_owner') {
-      navigation.navigate('Personalization', { phoneNumber, role });
+      navigation.navigate('ShopSetup', { phoneNumber, role });
     } else if (role === 'service_provider') {
-      navigation.navigate('Personalization', { phoneNumber, role });
+      navigation.navigate('ProviderSetup', { phoneNumber, role });
     }
   };
 
@@ -170,24 +170,12 @@ export default function CreatePin({ navigation, route }) {
           : 'Enter the same PIN again to confirm.'}
       </Text>
 
-      {error && (
-        <Text style={styles.errorText}>PINs don't match. Try again.</Text>
-      )}
-
-      {loading && (
-        <Text style={styles.loadingText}>Saving your PIN...</Text>
-      )}
+      {error && <Text style={styles.errorText}>PINs don't match. Try again.</Text>}
+      {loading && <Text style={styles.loadingText}>Saving your PIN...</Text>}
 
       <Animated.View style={[styles.pinDots, { transform: [{ translateX: shakeAnim }] }]}>
         {[0, 1, 2, 3].map((i) => (
-          <View
-            key={i}
-            style={[
-              styles.dot,
-              i < pin.length && styles.dotFilled,
-              error && styles.dotError,
-            ]}
-          />
+          <View key={i} style={[styles.dot, i < pin.length && styles.dotFilled, error && styles.dotError]} />
         ))}
       </Animated.View>
 
@@ -195,37 +183,22 @@ export default function CreatePin({ navigation, route }) {
         {keys.map((row, rowIndex) => (
           <View key={rowIndex} style={styles.row}>
             {row.map((key, colIndex) => {
-              if (key === '') {
-                return <View key={`empty-${colIndex}`} style={styles.key} />;
-              }
+              if (key === '') return <View key={`empty-${colIndex}`} style={styles.key} />;
               if (key === 'delete') {
                 return (
-                  <TouchableOpacity
-                    key={`del-${colIndex}`}
-                    style={styles.key}
-                    onPress={handleDelete}
-                    activeOpacity={0.5}
-                    disabled={loading}
-                  >
+                  <TouchableOpacity key={`del-${colIndex}`} style={styles.key} onPress={handleDelete} activeOpacity={0.5} disabled={loading}>
                     <Ionicons name="backspace-outline" size={24} color="#888" />
                   </TouchableOpacity>
                 );
               }
               return (
-                <TouchableOpacity
-                  key={key}
-                  style={styles.key}
-                  onPress={() => handlePress(key)}
-                  activeOpacity={0.5}
-                  disabled={loading}
-                >
+                <TouchableOpacity key={key} style={styles.key} onPress={() => handlePress(key)} activeOpacity={0.5} disabled={loading}>
                   <Text style={styles.keyText}>{key}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
         ))}
-
         <TouchableOpacity style={styles.fingerprintButton} activeOpacity={0.5}>
           <Ionicons name="finger-print" size={28} color="#006B3F" />
         </TouchableOpacity>
@@ -235,113 +208,20 @@ export default function CreatePin({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-  backButton: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    zIndex: 10,
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  shieldCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#E8F5E9',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 90,
-    marginBottom: 28,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#212121',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#888888',
-    textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 20,
-    marginBottom: 6,
-  },
-  errorText: {
-    fontSize: 13,
-    color: '#D32F2F',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  loadingText: {
-    fontSize: 13,
-    color: '#006B3F',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  pinDots: {
-    flexDirection: 'row',
-    gap: 16,
-    marginTop: 28,
-    marginBottom: 56,
-  },
-  dot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#D0D0D0',
-    backgroundColor: '#FFFFFF',
-  },
-  dotFilled: {
-    backgroundColor: '#006B3F',
-    borderColor: '#006B3F',
-  },
-  dotError: {
-    backgroundColor: '#D32F2F',
-    borderColor: '#D32F2F',
-  },
-  keypad: {
-    width: '100%',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-    marginBottom: 14,
-  },
-  key: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 1.5,
-    borderColor: '#E0E0E0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  keyText: {
-    fontSize: 26,
-    fontWeight: '600',
-    color: '#212121',
-  },
-  fingerprintButton: {
-    marginTop: 8,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  container: { flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', paddingHorizontal: 24 },
+  backButton: { position: 'absolute', top: 50, left: 20, zIndex: 10, width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  shieldCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center', marginTop: 90, marginBottom: 28 },
+  heading: { fontSize: 24, fontWeight: '800', color: '#212121', textAlign: 'center', marginBottom: 8 },
+  subtitle: { fontSize: 14, color: '#888888', textAlign: 'center', lineHeight: 20, paddingHorizontal: 20, marginBottom: 6 },
+  errorText: { fontSize: 13, color: '#D32F2F', fontWeight: '600', marginBottom: 6 },
+  loadingText: { fontSize: 13, color: '#006B3F', fontWeight: '600', marginBottom: 6 },
+  pinDots: { flexDirection: 'row', gap: 16, marginTop: 28, marginBottom: 56 },
+  dot: { width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: '#D0D0D0', backgroundColor: '#FFFFFF' },
+  dotFilled: { backgroundColor: '#006B3F', borderColor: '#006B3F' },
+  dotError: { backgroundColor: '#D32F2F', borderColor: '#D32F2F' },
+  keypad: { width: '100%', alignItems: 'center', paddingHorizontal: 16 },
+  row: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginBottom: 14 },
+  key: { width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: '#E0E0E0', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' },
+  keyText: { fontSize: 26, fontWeight: '600', color: '#212121' },
+  fingerprintButton: { marginTop: 8, width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center' },
 });

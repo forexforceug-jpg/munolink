@@ -1,94 +1,162 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  Switch,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Switch, RefreshControl, Alert, Modal, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 export default function ServiceProviderServices({ navigation }) {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('All Services');
   const [searchQuery, setSearchQuery] = useState('');
+  const [services, setServices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [catalogServices, setCatalogServices] = useState([]);
+  const [addingService, setAddingService] = useState(null);
 
-  const tabs = [
-    { name: 'All Services', count: 6 },
-    { name: 'Active', count: 5, color: '#4CAF50' },
-    { name: 'Inactive', count: 1, color: '#F57C00' },
-    { name: 'Draft', count: 0, color: '#888' },
-  ];
+  const tabs = ['All Services', 'Active', 'Inactive'];
 
-  const services = [
-    {
-      id: 1, name: 'Civil Engineering Consultation', price: 'UGX 150,000',
-      desc: 'Consultation for building projects and structural designs.',
-      duration: '2 hours', format: 'Online / In-Person', location: 'Kampala, Uganda',
-      status: 'Active', active: true,
-      icon: 'construct-outline', color: '#006B3F', bg: '#E8F5E9',
-    },
-    {
-      id: 2, name: 'Electrical Installation', price: 'UGX 200,000',
-      desc: 'Wiring, repairs, and maintenance services for homes and businesses.',
-      duration: '3-5 hours', format: 'In-Person', location: 'Jinja City',
-      status: 'Active', active: true,
-      icon: 'flash-outline', color: '#F57C00', bg: '#FFF3E0',
-    },
-    {
-      id: 3, name: 'Transport Services', price: 'UGX 120,000',
-      desc: 'Passenger and goods transport within and outside the city.',
-      duration: 'Varies', format: 'In-Person', location: 'Kampala & Jinja',
-      status: 'Active', active: true,
-      icon: 'car-outline', color: '#1976D2', bg: '#E3F2FD',
-    },
-    {
-      id: 4, name: 'Event MC Services', price: 'UGX 300,000',
-      desc: 'Professional MC services for weddings, corporate events, and parties.',
-      duration: '4-8 hours', format: 'In-Person', location: 'Kampala, Uganda',
-      status: 'Active', active: true,
-      icon: 'mic-outline', color: '#9C27B0', bg: '#F3E5F5',
-    },
-    {
-      id: 5, name: 'Event Planning Package', price: 'UGX 500,000',
-      desc: 'Complete event planning and coordination for all occasions.',
-      duration: 'Full day', format: 'In-Person', location: 'Kampala, Uganda',
-      status: 'Inactive', active: false,
-      icon: 'calendar-outline', color: '#F57C00', bg: '#FFF3E0',
-    },
-    {
-      id: 6, name: 'Medical Consultation', price: 'UGX 100,000',
-      desc: 'General consultation and diagnosis. Clinic and online appointments.',
-      duration: '30-60 min', format: 'Online / In-Person', location: 'Kampala, Uganda',
-      status: 'Active', active: true,
-      icon: 'medkit-outline', color: '#00897B', bg: '#E0F2F1',
-    },
-  ];
+  const iconMap = {
+    'Plumbing': 'water-outline',
+    'Electrical': 'flash-outline',
+    'Beauty': 'cut-outline',
+    'Healthcare': 'medkit-outline',
+    'Education': 'school-outline',
+    'Transport': 'car-outline',
+    'Cleaning': 'sparkles-outline',
+    'Automotive': 'construct-outline',
+    'Events': 'calendar-outline',
+  };
+
+  const loadServices = useCallback(async () => {
+    if (!user?.id) { setLoading(false); return; }
+
+    // Fetch provider_services
+    const { data: providerServices, error: psError } = await supabase
+      .from('provider_services')
+      .select('id, service_id, price, is_active, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (psError) {
+      console.error('Services error:', psError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (providerServices && providerServices.length > 0) {
+      // Fetch service_catalog entries
+      const serviceIds = [...new Set(providerServices.map(s => s.service_id))];
+      const { data: catalogData } = await supabase
+        .from('service_catalog')
+        .select('id, name, category')
+        .in('id', serviceIds);
+
+      const catalogMap = {};
+      if (catalogData) catalogData.forEach(c => { catalogMap[c.id] = c; });
+
+      setServices(providerServices.map(s => ({
+        id: s.id,
+        serviceName: catalogMap[s.service_id]?.name || 'Service',
+        category: catalogMap[s.service_id]?.category || 'General',
+        icon: iconMap[catalogMap[s.service_id]?.category] || 'briefcase-outline',
+        price: Number(s.price),
+        isActive: s.is_active,
+      })));
+    } else {
+      setServices([]);
+    }
+
+    setLoading(false);
+    setRefreshing(false);
+  }, [user?.id]);
+
+  const loadCatalogForAdd = async () => {
+    const { data } = await supabase
+      .from('service_catalog')
+      .select('id, name, category')
+      .order('category');
+
+    if (data) {
+      // Get existing service_ids to mark as already added
+      const existingIds = new Set(services.map(s => s.serviceName));
+      setCatalogServices(data.map(c => ({
+        ...c,
+        icon: iconMap[c.category] || 'briefcase-outline',
+        alreadyAdded: services.some(s => s.serviceName === c.name),
+      })));
+    }
+    setShowAddModal(true);
+  };
+
+  const handleAddService = async (catalogItem) => {
+    if (!user?.id) return;
+
+    setAddingService(catalogItem.id);
+
+    const { error } = await supabase
+      .from('provider_services')
+      .insert({
+        user_id: user.id,
+        service_id: catalogItem.id,
+        price: 50000,
+        is_active: true,
+      });
+
+    setAddingService(null);
+
+    if (error) {
+      Alert.alert('Error', 'Failed to add service: ' + error.message);
+      return;
+    }
+
+    Alert.alert('Success', `${catalogItem.name} added to your services!`);
+    setShowAddModal(false);
+    loadServices();
+  };
+
+  useEffect(() => { loadServices(); }, [loadServices]);
+
+  const onRefresh = () => { setRefreshing(true); loadServices(); };
+
+  const toggleService = async (serviceId, currentStatus) => {
+    const { error } = await supabase
+      .from('provider_services')
+      .update({ is_active: !currentStatus })
+      .eq('id', serviceId);
+
+    if (!error) {
+      setServices(prev => prev.map(s => s.id === serviceId ? { ...s, isActive: !currentStatus } : s));
+    } else {
+      Alert.alert('Error', 'Failed to update service status.');
+    }
+  };
+
+  const activeCount = services.filter(s => s.isActive).length;
+  const inactiveCount = services.filter(s => !s.isActive).length;
+
+  const filteredServices = services.filter(s => {
+    const matchesSearch = s.serviceName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      s.category?.toLowerCase().includes(searchQuery.toLowerCase());
+    if (activeTab === 'Active') return s.isActive && matchesSearch;
+    if (activeTab === 'Inactive') return !s.isActive && matchesSearch;
+    return matchesSearch;
+  });
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity>
-          <Ionicons name="menu-outline" size={26} color="#212121" />
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#212121" />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.logo}>MUNOLINK</Text>
-          <Text style={styles.tagline}>For Better Connections</Text>
-        </View>
+        <View style={styles.headerCenter}><Text style={styles.logo}>MUNOLINK</Text><Text style={styles.tagline}>For Better Connections</Text></View>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon}>
+          <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Notifications')}>
             <Ionicons name="notifications-outline" size={24} color="#212121" />
-            <View style={styles.notifBadge}>
-              <Text style={styles.notifBadgeText}>5</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity>
-            <View style={styles.profilePic}>
-              <Ionicons name="person" size={20} color="#FFFFFF" />
-              <View style={styles.onlineDot} />
-            </View>
+            <View style={styles.notifBadge}><Text style={styles.notifBadgeText}>5</Text></View>
           </TouchableOpacity>
         </View>
       </View>
@@ -96,39 +164,37 @@ export default function ServiceProviderServices({ navigation }) {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#006B3F']} />}
       >
-        {/* Title */}
         <View style={styles.titleRow}>
           <View>
             <Text style={styles.pageTitle}>Services</Text>
             <Text style={styles.pageSubtitle}>Manage the services you offer to customers.</Text>
           </View>
-          <TouchableOpacity style={styles.addServiceBtn}>
+          <TouchableOpacity style={styles.addServiceBtn} onPress={loadCatalogForAdd}>
             <Ionicons name="add" size={18} color="#006B3F" />
-            <Text style={styles.addServiceText}>Add New Service</Text>
+            <Text style={styles.addServiceText}>Add Service</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Status Tabs */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsScroll}>
-          {tabs.map((tab) => (
+          {[
+            { name: 'All Services', count: services.length },
+            { name: 'Active', count: activeCount, color: '#4CAF50' },
+            { name: 'Inactive', count: inactiveCount, color: '#F57C00' },
+          ].map((tab) => (
             <TouchableOpacity
               key={tab.name}
               style={[styles.tab, activeTab === tab.name && styles.tabActive]}
               onPress={() => setActiveTab(tab.name)}
             >
               {tab.color && <View style={[styles.tabDot, { backgroundColor: tab.color }]} />}
-              <Text style={[styles.tabText, activeTab === tab.name && styles.tabTextActive]}>
-                {tab.name}
-              </Text>
-              <Text style={[styles.tabCountText, activeTab === tab.name && styles.tabCountActive]}>
-                ({tab.count})
-              </Text>
+              <Text style={[styles.tabText, activeTab === tab.name && styles.tabTextActive]}>{tab.name}</Text>
+              <Text style={[styles.tabCountText, activeTab === tab.name && styles.tabCountActive]}>({tab.count})</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
 
-        {/* Search + Sort */}
         <View style={styles.searchRow}>
           <View style={styles.searchBar}>
             <Ionicons name="search-outline" size={18} color="#888" />
@@ -140,99 +206,126 @@ export default function ServiceProviderServices({ navigation }) {
               placeholderTextColor="#CCCCCC"
             />
           </View>
-          <TouchableOpacity style={styles.sortBtn}>
-            <Ionicons name="swap-vertical-outline" size={18} color="#006B3F" />
-            <Text style={styles.sortBtnText}>Sort</Text>
-          </TouchableOpacity>
         </View>
 
-        {/* Service Cards */}
-        {services.map((service) => (
-          <View key={service.id} style={[styles.serviceCard, !service.active && styles.serviceCardInactive]}>
-            <View style={styles.serviceTop}>
-              <View style={[styles.serviceIcon, { backgroundColor: service.bg }]}>
-                <Ionicons name={service.icon} size={28} color={service.color} />
-              </View>
-              <View style={styles.serviceInfo}>
-                <Text style={styles.serviceName}>{service.name}</Text>
-                <Text style={styles.servicePrice}>{service.price}</Text>
-                <Text style={styles.serviceDesc}>{service.desc}</Text>
-                <View style={styles.serviceChips}>
-                  <View style={styles.chip}>
-                    <Ionicons name="time-outline" size={10} color="#888" />
-                    <Text style={styles.chipText}>{service.duration}</Text>
-                  </View>
-                  <View style={styles.chip}>
-                    <Ionicons name="videocam-outline" size={10} color="#888" />
-                    <Text style={styles.chipText}>{service.format}</Text>
-                  </View>
-                  <View style={styles.chip}>
-                    <Ionicons name="location-outline" size={10} color="#888" />
-                    <Text style={styles.chipText}>{service.location}</Text>
-                  </View>
-                </View>
-              </View>
-              <View style={styles.serviceRight}>
-                <View style={[styles.statusBadge, { backgroundColor: service.active ? '#E8F5E9' : '#FFF3E0' }]}>
-                  <Text style={[styles.statusText, { color: service.active ? '#4CAF50' : '#F57C00' }]}>
-                    {service.status}
-                  </Text>
-                </View>
-                <TouchableOpacity style={styles.menuBtn}>
-                  <Ionicons name="ellipsis-vertical" size={18} color="#888" />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <View style={styles.serviceBottom}>
-              <Switch
-                value={service.active}
-                trackColor={{ false: '#E0E0E0', true: '#A5D6A7' }}
-                thumbColor={service.active ? '#4CAF50' : '#CCC'}
-              />
-            </View>
+        {loading ? (
+          <ActivityIndicator size="large" color="#006B3F" style={{ paddingVertical: 30 }} />
+        ) : filteredServices.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="briefcase-outline" size={48} color="#CCC" />
+            <Text style={styles.emptyTitle}>No services yet</Text>
+            <Text style={styles.emptySubtitle}>Add services from the catalog to start receiving bookings.</Text>
+            <TouchableOpacity style={styles.emptyAddBtn} onPress={loadCatalogForAdd}>
+              <Text style={styles.emptyAddText}>Browse Service Catalog</Text>
+            </TouchableOpacity>
           </View>
-        ))}
+        ) : (
+          filteredServices.map((service) => (
+            <View key={service.id} style={[styles.serviceCard, !service.isActive && styles.serviceCardInactive]}>
+              <View style={styles.serviceTop}>
+                <View style={styles.serviceIcon}>
+                  <Ionicons name={service.icon} size={24} color="#006B3F" />
+                </View>
+                <View style={styles.serviceInfo}>
+                  <Text style={styles.serviceName}>{service.serviceName}</Text>
+                  <Text style={styles.servicePrice}>UGX {service.price?.toLocaleString() || '0'}</Text>
+                  <Text style={styles.serviceCategory}>{service.category}</Text>
+                </View>
+                <View style={styles.serviceRight}>
+                  <View style={[styles.statusBadge, { backgroundColor: service.isActive ? '#E8F5E9' : '#FFF3E0' }]}>
+                    <Text style={[styles.statusText, { color: service.isActive ? '#4CAF50' : '#F57C00' }]}>
+                      {service.isActive ? 'Active' : 'Inactive'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.serviceBottom}>
+                <Switch
+                  value={service.isActive}
+                  onValueChange={() => toggleService(service.id, service.isActive)}
+                  trackColor={{ false: '#E0E0E0', true: '#A5D6A7' }}
+                  thumbColor={service.isActive ? '#4CAF50' : '#CCC'}
+                />
+              </View>
+            </View>
+          ))
+        )}
 
-        {/* Boost Banner */}
         <View style={styles.boostBanner}>
           <View style={styles.boostLeft}>
-            <View style={styles.boostIcon}>
-              <Ionicons name="ribbon-outline" size={28} color="#006B3F" />
-            </View>
+            <View style={styles.boostIcon}><Ionicons name="ribbon-outline" size={28} color="#006B3F" /></View>
             <View>
               <Text style={styles.boostTitle}>Boost Your Visibility</Text>
               <Text style={styles.boostSubtitle}>Promote your services and reach more customers.</Text>
             </View>
           </View>
           <TouchableOpacity style={styles.boostBtn}>
-            <Text style={styles.boostBtnText}>Promote Services</Text>
+            <Text style={styles.boostBtnText}>Promote</Text>
           </TouchableOpacity>
         </View>
-
         <View style={{ height: 90 }} />
       </ScrollView>
 
-      {/* Service Provider Bottom Navigation */}
+      {/* Add Service Modal */}
+      <Modal visible={showAddModal} animationType="slide" transparent onRequestClose={() => setShowAddModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Service</Text>
+              <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                <Ionicons name="close" size={24} color="#212121" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>Select a service from the catalog to add to your profile.</Text>
+            <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
+              {catalogServices.map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[styles.catalogItem, item.alreadyAdded && styles.catalogItemAdded]}
+                  onPress={() => !item.alreadyAdded && handleAddService(item)}
+                  disabled={item.alreadyAdded || addingService === item.id}
+                >
+                  <View style={[styles.catalogIcon, { backgroundColor: '#E8F5E9' }]}>
+                    <Ionicons name={item.icon} size={20} color="#006B3F" />
+                  </View>
+                  <View style={styles.catalogInfo}>
+                    <Text style={styles.catalogName}>{item.name}</Text>
+                    <Text style={styles.catalogCategory}>{item.category}</Text>
+                  </View>
+                  {item.alreadyAdded ? (
+                    <View style={styles.addedBadge}>
+                      <Ionicons name="checkmark-circle" size={18} color="#4CAF50" />
+                      <Text style={styles.addedText}>Added</Text>
+                    </View>
+                  ) : addingService === item.id ? (
+                    <ActivityIndicator size="small" color="#006B3F" />
+                  ) : (
+                    <TouchableOpacity style={styles.addCatalogBtn} onPress={() => handleAddService(item)}>
+                      <Ionicons name="add-circle-outline" size={22} color="#006B3F" />
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.bottomNav}>
         <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ServiceProviderDashboard')}>
-          <Ionicons name="grid-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Overview</Text>
+          <Ionicons name="grid-outline" size={22} color="#888" /><Text style={styles.navLabel}>Overview</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ServiceProviderBookings')}>
-          <Ionicons name="calendar-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Bookings</Text>
+          <Ionicons name="calendar-outline" size={22} color="#888" /><Text style={styles.navLabel}>Bookings</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="briefcase" size={22} color="#006B3F" />
-          <Text style={[styles.navLabel, styles.navLabelActive]}>Services</Text>
+          <Ionicons name="briefcase" size={22} color="#006B3F" /><Text style={[styles.navLabel, styles.navLabelActive]}>Services</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="wallet-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Earnings</Text>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ServiceProviderEarnings')}>
+          <Ionicons name="wallet-outline" size={22} color="#888" /><Text style={styles.navLabel}>Earnings</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="person-outline" size={22} color="#888" />
-          <Text style={styles.navLabel}>Profile</Text>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ServiceProviderProfileScreen')}>
+          <Ionicons name="person-outline" size={22} color="#888" /><Text style={styles.navLabel}>Profile</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -241,50 +334,27 @@ export default function ServiceProviderServices({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12,
-  },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12 },
   headerCenter: { alignItems: 'center' },
   logo: { fontSize: 18, fontWeight: '800', color: '#006B3F', letterSpacing: 2 },
   tagline: { fontSize: 9, color: '#888' },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   headerIcon: { position: 'relative' },
-  notifBadge: {
-    position: 'absolute', top: -4, right: -6,
-    width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center',
-  },
+  notifBadge: { position: 'absolute', top: -4, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center' },
   notifBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
-  profilePic: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#006B3F', justifyContent: 'center', alignItems: 'center',
-    position: 'relative',
-  },
-  onlineDot: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: '#4CAF50', borderWidth: 2, borderColor: '#FFFFFF',
-  },
   scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
-  titleRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16,
-  },
+  emptyState: { alignItems: 'center', paddingVertical: 40 },
+  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#555', marginTop: 12, marginBottom: 4 },
+  emptySubtitle: { fontSize: 13, color: '#888', marginBottom: 16 },
+  emptyAddBtn: { backgroundColor: '#006B3F', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 25 },
+  emptyAddText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   pageTitle: { fontSize: 26, fontWeight: '800', color: '#212121' },
   pageSubtitle: { fontSize: 13, color: '#888', marginTop: 2 },
-  addServiceBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#006B3F',
-    paddingVertical: 10, paddingHorizontal: 16, borderRadius: 22, gap: 6,
-  },
+  addServiceBtn: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#006B3F', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 22, gap: 6 },
   addServiceText: { fontSize: 13, fontWeight: '700', color: '#006B3F' },
   tabsScroll: { marginBottom: 14 },
-  tab: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 20, marginRight: 8, gap: 4,
-    borderWidth: 1, borderColor: '#E0E0E0',
-  },
+  tab: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, gap: 4, borderWidth: 1, borderColor: '#E0E0E0' },
   tabActive: { backgroundColor: '#006B3F', borderColor: '#006B3F' },
   tabDot: { width: 8, height: 8, borderRadius: 4 },
   tabText: { fontSize: 13, fontWeight: '600', color: '#888' },
@@ -292,64 +362,44 @@ const styles = StyleSheet.create({
   tabCountText: { fontSize: 11, fontWeight: '600', color: '#888' },
   tabCountActive: { color: '#FFFFFF' },
   searchRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  searchBar: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F8F8F8', borderRadius: 14, paddingHorizontal: 12, height: 44,
-    borderWidth: 1, borderColor: '#ECECEC',
-  },
+  searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F8F8', borderRadius: 14, paddingHorizontal: 12, height: 44, borderWidth: 1, borderColor: '#ECECEC' },
   searchInput: { flex: 1, fontSize: 13, color: '#212121', marginLeft: 8 },
-  sortBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    borderWidth: 1, borderColor: '#E0E0E0', borderRadius: 14, paddingHorizontal: 14, gap: 4,
-  },
-  sortBtnText: { fontSize: 13, fontWeight: '600', color: '#006B3F' },
-  serviceCard: {
-    backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, marginBottom: 10,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2,
-  },
+  serviceCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
   serviceCardInactive: { opacity: 0.7 },
   serviceTop: { flexDirection: 'row', marginBottom: 10 },
-  serviceIcon: {
-    width: 56, height: 56, borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center', marginRight: 10,
-  },
+  serviceIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   serviceInfo: { flex: 1 },
   serviceName: { fontSize: 15, fontWeight: '800', color: '#212121', marginBottom: 2 },
   servicePrice: { fontSize: 15, fontWeight: '800', color: '#006B3F', marginBottom: 4 },
-  serviceDesc: { fontSize: 12, color: '#888', lineHeight: 17, marginBottom: 8 },
-  serviceChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F5F5F5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, gap: 4,
-  },
-  chipText: { fontSize: 10, color: '#888', fontWeight: '500' },
+  serviceCategory: { fontSize: 12, color: '#888' },
   serviceRight: { alignItems: 'flex-end', gap: 6 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   statusText: { fontSize: 11, fontWeight: '700' },
-  menuBtn: { padding: 4 },
   serviceBottom: { alignItems: 'flex-end' },
-  boostBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#E8F5E9', borderRadius: 18, padding: 16, marginTop: 8,
-  },
+  boostBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#E8F5E9', borderRadius: 18, padding: 16, marginTop: 8 },
   boostLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  boostIcon: {
-    width: 48, height: 48, borderRadius: 14,
-    backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center',
-  },
+  boostIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
   boostTitle: { fontSize: 14, fontWeight: '800', color: '#212121' },
   boostSubtitle: { fontSize: 11, color: '#666' },
-  boostBtn: {
-    borderWidth: 1.5, borderColor: '#006B3F',
-    paddingVertical: 8, paddingHorizontal: 16, borderRadius: 18,
-  },
+  boostBtn: { borderWidth: 1.5, borderColor: '#006B3F', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 18 },
   boostBtnText: { fontSize: 12, fontWeight: '700', color: '#006B3F' },
-  bottomNav: {
-    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
-    backgroundColor: '#FFFFFF', paddingVertical: 8, paddingBottom: 25,
-    borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-  },
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: '#212121' },
+  modalSubtitle: { fontSize: 13, color: '#888', marginBottom: 16 },
+  modalList: { maxHeight: 400 },
+  catalogItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5', gap: 10 },
+  catalogItemAdded: { opacity: 0.5 },
+  catalogIcon: { width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  catalogInfo: { flex: 1 },
+  catalogName: { fontSize: 14, fontWeight: '600', color: '#212121' },
+  catalogCategory: { fontSize: 11, color: '#888' },
+  addedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  addedText: { fontSize: 12, color: '#4CAF50', fontWeight: '600' },
+  addCatalogBtn: { padding: 4 },
+  bottomNav: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', backgroundColor: '#FFFFFF', paddingVertical: 8, paddingBottom: 25, borderTopWidth: 1, borderTopColor: '#F0F0F0', position: 'absolute', bottom: 0, left: 0, right: 0 },
   navItem: { alignItems: 'center', gap: 2 },
   navLabel: { fontSize: 10, color: '#888', fontWeight: '500' },
   navLabelActive: { color: '#006B3F', fontWeight: '700' },
