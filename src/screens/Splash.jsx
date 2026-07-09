@@ -61,7 +61,7 @@ export default function Splash({ navigation }) {
         ]}
       >
         <Animated.Image
-          source={require('../../assets/images/logo.png')}
+          source={require('../../assets/logo.png')}
           style={styles.logo}
         />
       </Animated.View>

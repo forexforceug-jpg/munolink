@@ -13,8 +13,7 @@ import Personalization from './src/screens/Personalization';
 import SignIn from './src/screens/SignIn';
 import EnterSignInPin from './src/screens/EnterSignInPin';
 import Home from './src/screens/home';
-import Categories from './Unused Screens/Categories';
-import Groceries from './src/screens/Groceries';
+import Categories from './src/screens/Categories';
 import ProductDetails from './src/screens/ProductDetails';
 import MyCart from './src/screens/MyCart';
 import PaymentConfirm from './src/screens/PaymentConfirm';
@@ -53,6 +52,7 @@ import Connections from './src/screens/Connections';
 import MyOrders from './src/screens/MyOrders';
 import ShopSetup from './src/screens/ShopSetup';
 import ProviderSetup from './src/screens/ProviderSetup';
+import ServiceDetails from './src/screens/ServiceDetails';
 
 const Stack = createNativeStackNavigator();
 
@@ -63,7 +63,7 @@ export default function App() {
         <SafeAreaProvider>
           <NavigationContainer>
             <Stack.Navigator
-              initialRouteName="Connections"
+              initialRouteName="Splash"
               screenOptions={{ headerShown: false }}
             >
               <Stack.Screen name="Splash" component={Splash} />
@@ -77,7 +77,6 @@ export default function App() {
               <Stack.Screen name="EnterSignInPin" component={EnterSignInPin} />
               <Stack.Screen name="Home" component={Home} />
               <Stack.Screen name="Categories" component={Categories} />
-              <Stack.Screen name="Groceries" component={Groceries} />
               <Stack.Screen name="ProductDetails" component={ProductDetails} />
               <Stack.Screen name="MyCart" component={MyCart} />
               <Stack.Screen name="PaymentConfirm" component={PaymentConfirm} />
@@ -116,6 +115,7 @@ export default function App() {
               <Stack.Screen name="Connections" component={Connections} />
               <Stack.Screen name="ShopSetup" component={ShopSetup} />
               <Stack.Screen name="ProviderSetup" component={ProviderSetup} />
+              <Stack.Screen name="ServiceDetails" component={ServiceDetails} />
             </Stack.Navigator>
           </NavigationContainer>
         </SafeAreaProvider>

@@ -88,7 +88,7 @@ export default function Onboarding({ navigation }) {
       <View style={styles.bottomContainer}>
         <TouchableOpacity
           style={styles.getStartedButton}
-          onPress={() => navigation.navigate('AccountType')}
+          onPress={() => navigation.navigate('Connections')}
         >
           <Text style={styles.getStartedText}>Get Started</Text>
           <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
