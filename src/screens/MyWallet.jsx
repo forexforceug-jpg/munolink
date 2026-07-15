@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import LogoImage from '../../assets/logo.png';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const C = {
   primary: '#1F2F5F',
@@ -24,6 +25,7 @@ const C = {
 
 export default function MyWallet({ navigation }) {
   const { user, login } = useAuth();
+  const insets = useSafeAreaInsets();
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [walletBalance, setWalletBalance] = useState(user?.walletBalance || 0);
   const [transactions, setTransactions] = useState([]);
@@ -43,61 +45,142 @@ export default function MyWallet({ navigation }) {
   const onRefresh = () => { setRefreshing(true); loadWallet(); };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Image source={LogoImage} style={styles.headerLogo} resizeMode="contain" />
-        <TouchableOpacity onPress={() => navigation.navigate('Notifications')}>
-          <Ionicons name="notifications-outline" size={24} color={C.text} />
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.accent]} />}>
-        <View style={styles.walletCard}>
-          <View style={styles.walletTop}>
-            <View style={styles.walletInfo}>
-              <View style={styles.walletLabelRow}>
-                <Text style={styles.walletLabel}>Wallet Balance</Text>
-                <TouchableOpacity onPress={() => setBalanceVisible(!balanceVisible)}><Ionicons name={balanceVisible ? 'eye-outline' : 'eye-off-outline'} size={18} color="rgba(255,255,255,0.7)" /></TouchableOpacity>
-              </View>
-              <Text style={styles.walletBalance}>{balanceVisible ? `UGX ${walletBalance.toLocaleString()}` : '****'}</Text>
-              <View style={styles.availableBadge}><View style={styles.availableDot} /><Text style={styles.availableText}>Available Balance</Text></View>
-            </View>
-          </View>
-          <View style={styles.walletActions}>
-            {[{ icon: 'add-outline', label: 'Add Money', route: 'TopUp' },{ icon: 'send-outline', label: 'Send', route: 'SendMoney' },{ icon: 'arrow-down-outline', label: 'Withdraw' },{ icon: 'time-outline', label: 'History', route: 'MyOrders' }].map((action, i) => (<TouchableOpacity key={i} style={styles.walletActionItem} onPress={() => { if (action.route) navigation.navigate(action.route); }}><Ionicons name={action.icon} size={18} color={C.white} /><Text style={styles.walletActionText}>{action.label}</Text></TouchableOpacity>))}
-          </View>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Image source={LogoImage} style={styles.headerLogo} resizeMode="contain" />
+          <TouchableOpacity onPress={() => navigation.navigate('Notifications')}>
+            <Ionicons name="notifications-outline" size={24} color={C.text} />
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.secureBanner}><Ionicons name="shield-checkmark" size={18} color={C.accent} /><Text style={styles.secureText}>Your money is safe and secure with Munolink.</Text></View>
-
-        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Recent Transactions</Text><TouchableOpacity onPress={() => navigation.navigate('MyOrders')}><Text style={styles.viewAll}>View All</Text></TouchableOpacity></View>
-
-        {loading ? <Text style={styles.loadingText}>Loading...</Text> : transactions.length === 0 ? <Text style={styles.noDataText}>No transactions yet.</Text> : transactions.map(txn => (
-          <View key={txn.id} style={styles.transactionRow}>
-            <View style={[styles.txnIconCircle, { backgroundColor: txn.color + '15' }]}><Ionicons name={txn.icon} size={18} color={txn.color} /></View>
-            <View style={styles.txnInfo}><Text style={styles.txnDesc}>{txn.desc}</Text><Text style={styles.txnSource}>{txn.source}</Text><Text style={styles.txnDate}>{txn.date}</Text></View>
-            <View style={styles.txnRight}><Text style={[styles.txnAmount, txn.amount.startsWith('+') ? styles.txnCredit : styles.txnDebit]}>{txn.amount} UGX</Text><View style={styles.txnStatusBadge}><Text style={styles.txnStatusText}>{txn.status}</Text></View></View>
+        <ScrollView 
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 90 + insets.bottom }]} 
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.accent]} />}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.walletCard}>
+            <View style={styles.walletTop}>
+              <View style={styles.walletInfo}>
+                <View style={styles.walletLabelRow}>
+                  <Text style={styles.walletLabel}>Wallet Balance</Text>
+                  <TouchableOpacity onPress={() => setBalanceVisible(!balanceVisible)}>
+                    <Ionicons name={balanceVisible ? 'eye-outline' : 'eye-off-outline'} size={18} color="rgba(255,255,255,0.7)" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.walletBalance}>{balanceVisible ? `UGX ${walletBalance.toLocaleString()}` : '****'}</Text>
+                <View style={styles.availableBadge}>
+                  <View style={styles.availableDot} />
+                  <Text style={styles.availableText}>Available Balance</Text>
+                </View>
+              </View>
+            </View>
+            <View style={styles.walletActions}>
+              {[
+                { icon: 'add-outline', label: 'Add Money', route: 'TopUp' },
+                { icon: 'send-outline', label: 'Send', route: 'SendMoney' },
+                { icon: 'arrow-down-outline', label: 'Withdraw' },
+                { icon: 'time-outline', label: 'History', route: 'MyOrders' }
+              ].map((action, i) => (
+                <TouchableOpacity 
+                  key={i} 
+                  style={styles.walletActionItem} 
+                  onPress={() => { if (action.route) navigation.navigate(action.route); }}
+                >
+                  <Ionicons name={action.icon} size={18} color={C.white} />
+                  <Text style={styles.walletActionText}>{action.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-        ))}
-        <View style={{ height: 90 }} />
-      </ScrollView>
 
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem}><Ionicons name="wallet" size={22} color={C.accent} /><Text style={[styles.navLabel, styles.navLabelActive]}>Wallet</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('MyOrders')}><Ionicons name="calendar-outline" size={22} color={C.muted} /><Text style={styles.navLabel}>Orders</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Connections')}><Ionicons name="people-outline" size={22} color={C.muted} /><Text style={styles.navLabel}>Connections</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Messages')}><Ionicons name="chatbubbles-outline" size={22} color={C.muted} /><View style={styles.navBadge}><Text style={styles.navBadgeText}>3</Text></View><Text style={styles.navLabel}>Messages</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Account')}><Ionicons name="person-outline" size={22} color={C.muted} /><Text style={styles.navLabel}>Account</Text></TouchableOpacity>
+          <View style={styles.secureBanner}>
+            <Ionicons name="shield-checkmark" size={18} color={C.accent} />
+            <Text style={styles.secureText}>Your money is safe and secure with Munolink.</Text>
+          </View>
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('MyOrders')}>
+              <Text style={styles.viewAll}>View All</Text>
+            </TouchableOpacity>
+          </View>
+
+          {loading ? <Text style={styles.loadingText}>Loading...</Text> : transactions.length === 0 ? <Text style={styles.noDataText}>No transactions yet.</Text> : transactions.map(txn => (
+            <View key={txn.id} style={styles.transactionRow}>
+              <View style={[styles.txnIconCircle, { backgroundColor: txn.color + '15' }]}>
+                <Ionicons name={txn.icon} size={18} color={txn.color} />
+              </View>
+              <View style={styles.txnInfo}>
+                <Text style={styles.txnDesc}>{txn.desc}</Text>
+                <Text style={styles.txnSource}>{txn.source}</Text>
+                <Text style={styles.txnDate}>{txn.date}</Text>
+              </View>
+              <View style={styles.txnRight}>
+                <Text style={[styles.txnAmount, txn.amount.startsWith('+') ? styles.txnCredit : styles.txnDebit]}>
+                  {txn.amount} UGX
+                </Text>
+                <View style={styles.txnStatusBadge}>
+                  <Text style={styles.txnStatusText}>{txn.status}</Text>
+                </View>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+
+        {/* Fixed Bottom Navigation - paddingBottom applied inline */}
+        <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 8 }]}>
+          <TouchableOpacity style={styles.navItem}>
+            <Ionicons name="wallet" size={22} color={C.accent} />
+            <Text style={[styles.navLabel, styles.navLabelActive]}>Wallet</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('MyOrders')}>
+            <Ionicons name="calendar-outline" size={22} color={C.muted} />
+            <Text style={styles.navLabel}>Orders</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Connections')}>
+            <Ionicons name="people-outline" size={22} color={C.muted} />
+            <Text style={styles.navLabel}>Connections</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Messages')}>
+            <Ionicons name="chatbubbles-outline" size={22} color={C.muted} />
+            <View style={styles.navBadge}><Text style={styles.navBadgeText}>3</Text></View>
+            <Text style={styles.navLabel}>Messages</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Account')}>
+            <Ionicons name="person-outline" size={22} color={C.muted} />
+            <Text style={styles.navLabel}>Account</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.background },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 50, paddingBottom: 12, backgroundColor: C.white },
+  safeArea: {
+    flex: 1,
+    backgroundColor: C.white,
+  },
+  container: { 
+    flex: 1, 
+    backgroundColor: C.background,
+  },
+  header: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    paddingHorizontal: 20, 
+    paddingTop: 12, 
+    paddingBottom: 12, 
+    backgroundColor: C.white,
+    zIndex: 10,
+  },
   headerLogo: { width: 120, height: 30, resizeMode: 'contain' },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
+  scrollContent: { 
+    paddingHorizontal: 20, 
+    paddingTop: 8,
+  },
   loadingText: { fontSize: 14, color: C.muted, textAlign: 'center', paddingVertical: 20 },
   noDataText: { fontSize: 13, color: C.muted, textAlign: 'center', paddingVertical: 20 },
   walletCard: { backgroundColor: C.primary, borderRadius: 22, padding: 18, marginBottom: 14 },
@@ -129,10 +212,51 @@ const styles = StyleSheet.create({
   txnDebit: { color: C.text },
   txnStatusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: C.greenBg },
   txnStatusText: { fontSize: 9, fontWeight: '700', color: C.success },
-  bottomNav: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', backgroundColor: C.white, paddingVertical: 8, paddingBottom: 35, borderTopWidth: 1, borderTopColor: C.border, position: 'absolute', bottom: 0, left: 0, right: 0 },
-  navItem: { alignItems: 'center', gap: 2, position: 'relative' },
-  navBadge: { position: 'absolute', top: -6, right: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: C.danger, justifyContent: 'center', alignItems: 'center' },
-  navBadgeText: { fontSize: 9, fontWeight: '800', color: C.white },
-  navLabel: { fontSize: 10, color: C.muted, fontWeight: '500' },
-  navLabelActive: { color: C.accent, fontWeight: '700' },
+  bottomNav: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-around', 
+    alignItems: 'center', 
+    backgroundColor: C.white, 
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    // paddingBottom removed from here - now applied inline
+    borderTopWidth: 1, 
+    borderTopColor: C.border,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  navItem: { 
+    alignItems: 'center', 
+    gap: 2, 
+    position: 'relative',
+    paddingHorizontal: 4,
+  },
+  navBadge: { 
+    position: 'absolute', 
+    top: -6, 
+    right: 0, 
+    width: 16, 
+    height: 16, 
+    borderRadius: 8, 
+    backgroundColor: C.danger, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  navBadgeText: { 
+    fontSize: 9, 
+    fontWeight: '800', 
+    color: C.white 
+  },
+  navLabel: { 
+    fontSize: 10, 
+    color: C.muted, 
+    fontWeight: '500' 
+  },
+  navLabelActive: { 
+    color: C.accent, 
+    fontWeight: '700' 
+  },
 });
