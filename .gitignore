@@ -39,3 +39,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+# .gitignore
+node_modules/
+.expo/
+dist/
+.env
+.DS_Store
+*.log
