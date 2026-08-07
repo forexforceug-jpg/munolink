@@ -1,7 +1,9 @@
-import React from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, useWindowDimensions } from 'react-native';
+import React, { memo } from 'react';
+import { View, TouchableOpacity, Text, StyleSheet, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
+import { useBreakpoint } from '../../../hooks/useBreakpoint';
 
 interface FloatingActionRailProps {
   opportunity: Opportunity;
@@ -12,7 +14,27 @@ interface FloatingActionRailProps {
   onAIPress: (opportunity: Opportunity) => void;
 }
 
-export const FloatingActionRail: React.FC<FloatingActionRailProps> = ({
+// ============================================================
+// 🎨 ICONS
+// ============================================================
+const ICONS = {
+  reviews: 'chatbubble-ellipses',
+  directions: 'map',
+  share: 'share-social',
+};
+
+// ============================================================
+// 📏 POSITIONING
+// ============================================================
+const DESKTOP_POSITION = {
+  BUTTON_SIZE: 48,
+  SHOP_BUTTON_SIZE: 56,
+  GAP: 32,
+  AI_GAP: 40,
+  ICON_SIZE: 26,
+};
+
+const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   opportunity,
   onShopPress,
   onReviewsPress,
@@ -20,150 +42,228 @@ export const FloatingActionRail: React.FC<FloatingActionRailProps> = ({
   onSharePress,
   onAIPress,
 }) => {
-  const { width, height } = useWindowDimensions();
-  
+  const { isDesktop } = useBreakpoint();
+
   const handlePress = (action: string, callback: () => void) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     callback();
   };
 
-  // Responsive sizing based on screen dimensions
-  const isSmallDevice = width < 380 || height < 700;
-  const isMediumDevice = width < 420 || height < 800;
-  
-  const buttonSize = isSmallDevice ? 40 : isMediumDevice ? 46 : 52;
-  const iconSize = isSmallDevice ? 16 : isMediumDevice ? 19 : 22;
-  const labelSize = isSmallDevice ? 7 : isMediumDevice ? 7 : 8;
-  const bottomOffset = height * 0.2;
-  const buttonMargin = isSmallDevice ? 4 : 6;
+  const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : 44;
+  const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : 48;
+  const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : 30;
+  const gap = isDesktop ? DESKTOP_POSITION.GAP : 8;
+  const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : 15;
+
+  // Get first letter of shop name for the shop button
+  const shopLetter = opportunity.shopName?.charAt(0).toUpperCase() || 'S';
+
+  // Try to load logo - try multiple paths
+  let logoSrc;
+  try {
+    // Try src/assets first (most common)
+    logoSrc = require('../../../assets/muno.png');
+  } catch (e) {
+    try {
+      // Try root assets
+      logoSrc = require('../../../../assets/muno.png');
+    } catch (e2) {
+      // Fallback: use a text-based logo
+      logoSrc = null;
+    }
+  }
 
   return (
-    <View style={[styles.container, { bottom: bottomOffset }]}>
-      {/* Shop Button */}
+    <View style={[styles.container, { gap: gap }]}>
+      {/* ============================================================
+          SHOP BUTTON - Shop Letter in Circle
+          ============================================================ */}
       <TouchableOpacity
-        style={[styles.actionButton, { 
-          width: buttonSize, 
-          height: buttonSize, 
-          borderRadius: buttonSize / 2,
-          marginBottom: buttonMargin
-        }]}
+        style={[
+          styles.shopButton,
+          { 
+            width: shopButtonSize, 
+            height: shopButtonSize,
+            borderRadius: shopButtonSize / 2,
+          }
+        ]}
         onPress={() => handlePress('Shop', () => onShopPress(opportunity.shopId))}
-        activeOpacity={0.7}
+        activeOpacity={0.8}
       >
-        <Text style={[styles.actionIcon, { fontSize: iconSize }]}>🏪</Text>
-        <Text style={[styles.actionLabel, { fontSize: labelSize }]}>Shop</Text>
+        <View style={styles.shopLetterContainer}>
+          <Text style={[styles.shopLetter, { fontSize: shopButtonSize * 0.45 }]}>
+            {shopLetter}
+          </Text>
+        </View>
+        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
+          Shop
+        </Text>
       </TouchableOpacity>
 
-      {/* Reviews Button */}
+      {/* ============================================================
+          REVIEWS BUTTON
+          ============================================================ */}
       <TouchableOpacity
-        style={[styles.actionButton, { 
-          width: buttonSize, 
-          height: buttonSize, 
-          borderRadius: buttonSize / 2,
-          marginBottom: buttonMargin
-        }]}
+        style={[
+          styles.actionButton,
+          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+        ]}
         onPress={() => handlePress('Reviews', () => onReviewsPress(opportunity.id))}
         activeOpacity={0.7}
       >
-        <Text style={[styles.actionIcon, { fontSize: iconSize }]}>⭐</Text>
-        <Text style={[styles.actionLabel, { fontSize: labelSize }]}>Reviews</Text>
+        <Ionicons name={ICONS.reviews as any} size={iconSize} color="#FFFFFF" />
+        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
+          Reviews
+        </Text>
         {opportunity.rating && (
-          <View style={[styles.badge, { top: -3, right: -3 }]}>
-            <Text style={[styles.badgeText, { fontSize: isSmallDevice ? 7 : 8 }]}>
-              {opportunity.rating.toFixed(1)}
-            </Text>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{opportunity.rating.toFixed(1)}</Text>
           </View>
         )}
       </TouchableOpacity>
 
-      {/* Directions Button */}
-      <TouchableOpacity
-        style={[styles.actionButton, { 
-          width: buttonSize, 
-          height: buttonSize, 
-          borderRadius: buttonSize / 2,
-          marginBottom: buttonMargin
-        }]}
-        onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.shopName, opportunity.area || ''))}
-        activeOpacity={0.7}
-      >
-        <Text style={[styles.actionIcon, { fontSize: iconSize }]}>🧭</Text>
-        <Text style={[styles.actionLabel, { fontSize: labelSize }]}>Directions</Text>
-      </TouchableOpacity>
-
-      {/* Share Button */}
-      <TouchableOpacity
-        style={[styles.actionButton, { 
-          width: buttonSize, 
-          height: buttonSize, 
-          borderRadius: buttonSize / 2,
-          marginBottom: buttonMargin
-        }]}
-        onPress={() => handlePress('Share', () => onSharePress(opportunity))}
-        activeOpacity={0.7}
-      >
-        <Text style={[styles.actionIcon, { fontSize: iconSize }]}>📤</Text>
-        <Text style={[styles.actionLabel, { fontSize: labelSize }]}>Share</Text>
-      </TouchableOpacity>
-
-      {/* AI Button */}
+      {/* ============================================================
+          DIRECTIONS BUTTON
+          ============================================================ */}
       <TouchableOpacity
         style={[
           styles.actionButton,
-          styles.aiButton,
-          { 
-            width: buttonSize, 
-            height: buttonSize, 
-            borderRadius: buttonSize / 2,
-            marginBottom: buttonMargin
-          }
+          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
         ]}
-        onPress={() => handlePress('AI', () => onAIPress(opportunity))}
+        onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.shopName, opportunity.area || ''))}
         activeOpacity={0.7}
       >
-        <View style={styles.aiContainer}>
-          <Text style={[styles.aiIcon, { fontSize: iconSize + 2 }]}>🤖</Text>
-          <View style={[styles.aiPulse, { 
-            width: buttonSize - 8, 
-            height: buttonSize - 8, 
-            borderRadius: (buttonSize - 8) / 2 
-          }]} />
-        </View>
-        <Text style={[styles.aiLabel, { fontSize: labelSize }]}>Ask AI</Text>
+        <Ionicons name={ICONS.directions as any} size={iconSize} color="#FFFFFF" />
+        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
+          Directions
+        </Text>
       </TouchableOpacity>
+
+      {/* ============================================================
+          SHARE BUTTON
+          ============================================================ */}
+      <TouchableOpacity
+        style={[
+          styles.actionButton,
+          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+        ]}
+        onPress={() => handlePress('Share', () => onSharePress(opportunity))}
+        activeOpacity={0.7}
+      >
+        <Ionicons name={ICONS.share as any} size={iconSize} color="#FFFFFF" />
+        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
+          Share
+        </Text>
+      </TouchableOpacity>
+
+      {/* ============================================================
+          MUNO AI BUTTON - Using logo.png (with fallback)
+          ============================================================ */}
+      <View style={{ marginTop: aiGap }}>
+        <TouchableOpacity
+          style={[
+            styles.aiButton,
+            { 
+              width: shopButtonSize, 
+              height: shopButtonSize,
+              borderRadius: shopButtonSize / 2,
+            }
+          ]}
+          onPress={() => handlePress('AI', () => onAIPress(opportunity))}
+          activeOpacity={0.8}
+        >
+          <View style={styles.aiGlow}>
+            {logoSrc ? (
+              <Image
+                source={logoSrc}
+                style={[styles.aiLogo, { width: shopButtonSize * 0.6, height: shopButtonSize * 0.6 }]}
+                resizeMode="contain"
+              />
+            ) : (
+              // Fallback: "M" text if logo not found
+              <Text style={[styles.aiFallbackText, { fontSize: shopButtonSize * 0.4 }]}>
+                M
+              </Text>
+            )}
+          </View>
+          {/* Pulse Animation Ring */}
+          <View style={[styles.aiPulse, { 
+            width: shopButtonSize + 6, 
+            height: shopButtonSize + 6, 
+            borderRadius: (shopButtonSize + 6) / 2 
+          }]} />
+          <Text style={[styles.aiLabel, { fontSize: isDesktop ? 10 : 7 }]}>
+            Muno AI
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
 
+export const FloatingActionRail = memo(FloatingActionRailComponent);
+
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    right: 12,
     alignItems: 'center',
-    zIndex: 999,
+    zIndex: 9999,
   },
-  actionButton: {
-    backgroundColor: 'rgba(31, 47, 95, 0.88)',
+
+  // --- Shop Button ---
+  shopButton: {
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
     position: 'relative',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.12)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  actionIcon: {
-    // fontSize set dynamically
+  shopLetterContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 999,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+  },
+  shopLetter: {
+    color: '#4A7DFF',
+    fontWeight: '700',
+    textShadowColor: 'rgba(74, 125, 255, 0.2)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+
+  // --- Regular Action Buttons ---
+  actionButton: {
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    elevation: 2,
   },
   actionLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 1,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: '500',
+    marginTop: 4,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
+
+  // --- Badge ---
   badge: {
     position: 'absolute',
+    top: -2,
+    right: -2,
     backgroundColor: '#F1C40F',
     borderRadius: 8,
     paddingHorizontal: 4,
@@ -173,30 +273,50 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     color: '#1F2F5F',
+    fontSize: 8,
     fontWeight: 'bold',
   },
+
+  // --- Muno AI Button ---
   aiButton: {
-    backgroundColor: 'rgba(74, 125, 255, 0.25)',
-    borderColor: '#4A7DFF',
-    borderWidth: 2,
-  },
-  aiContainer: {
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
     position: 'relative',
+    borderWidth: 2.5,
+    borderColor: '#4A7DFF',
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  aiGlow: {
+    backgroundColor: 'rgba(74, 125, 255, 0.06)',
+    borderRadius: 999,
+    padding: 9,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  aiIcon: {
-    // fontSize set dynamically
+  aiLogo: {
+    borderRadius: 8,
+  },
+  aiFallbackText: {
+    color: '#4A7DFF',
+    fontWeight: 'bold',
   },
   aiPulse: {
     position: 'absolute',
     borderWidth: 2,
     borderColor: '#4A7DFF',
-    opacity: 0.3,
+    opacity: 0.12,
   },
   aiLabel: {
     color: '#4A7DFF',
     fontWeight: '600',
-    marginTop: 1,
+    marginTop: 3,
+    textShadowColor: 'rgba(74, 125, 255, 0.2)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
   },
 });

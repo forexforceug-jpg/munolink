@@ -18,6 +18,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
@@ -112,10 +114,9 @@ const GuestProfile = ({ navigation }: any) => (
   </View>
 );
 
-// --- Main AccountScreen Component ---
-export const AccountScreen = () => {
+// --- AccountContent Component (Extracted for reuse) ---
+const AccountContent = ({ navigation }: any) => {
   const { isAuthenticated } = useAuth();
-  const navigation = useNavigation<AccountScreenNavigationProp>();
   
   const [showBalance, setShowBalance] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -442,6 +443,23 @@ export const AccountScreen = () => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
+  );
+};
+
+// --- Main AccountScreen Component (Wrapped with ResponsiveLayout) ---
+export const AccountScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="Account" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true}
+      fullWidth={true} // ← Full width on desktop
+    >
+      <AccountContent navigation={navigation} />
+    </ResponsiveLayout>
   );
 };
 

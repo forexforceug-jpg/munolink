@@ -40,7 +40,7 @@ const StepIndicator = ({ currentStep, totalSteps }: any) => (
 
 // --- Main JoinScreen Component ---
 export const JoinScreen = ({ navigation }: any) => {
-  const { signIn } = useAuth();
+  const { signIn, signInWithPhone, signInWithGoogle } = useAuth();
   const [step, setStep] = useState(1);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -48,6 +48,7 @@ export const JoinScreen = ({ navigation }: any) => {
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [otpFocused, setOtpFocused] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [showWelcome, setShowWelcome] = useState(false);
 
@@ -102,27 +103,26 @@ export const JoinScreen = ({ navigation }: any) => {
   };
 
   const handleVerifyOTP = async () => {
-    const code = otp.join('');
-    if (code.length < 6) {
-      Alert.alert('Error', 'Please enter the complete verification code');
+    if (!otp || otp.length < 4) {
+      Alert.alert('Invalid OTP', 'Please enter the 4-digit verification code.');
       return;
     }
 
     setIsLoading(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setStep(3);
-      setShowWelcome(true);
+      const phone = phoneNumber;
+      const fullPhone = `+256${phone}`;
       
-      const userData = {
-        phone: phoneNumber,
-        email: email,
-        name: 'Munolink Member',
-        isVerified: true,
-      };
-      await signIn(userData);
-    } catch (error) {
-      Alert.alert('Error', 'Invalid verification code');
+      console.log('📝 Verifying OTP for phone (custom auth):', fullPhone);
+      
+      // Use signInWithPhone with just the phone number
+      await signInWithPhone(fullPhone);
+      
+      console.log('✅ User signed in successfully');
+      navigation.replace('MainTabs');
+    } catch (error: any) {
+      console.error('Verification error:', error);
+      Alert.alert('Error', error.message || 'Failed to verify. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -149,6 +149,21 @@ export const JoinScreen = ({ navigation }: any) => {
     if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
       otpInputs.current[index - 1]?.focus();
       setOtpFocused(index - 1);
+    }
+  };
+
+  // Handle Google Sign-In
+  const handleGoogleSignIn = async () => {
+    setIsGoogleLoading(true);
+    try {
+      await signInWithGoogle();
+      // The auth state will update via the context
+      navigation.replace('MainTabs');
+    } catch (error: any) {
+      console.error('Google sign-in error:', error);
+      Alert.alert('Error', error.message || 'Failed to sign in with Google.');
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -235,9 +250,25 @@ export const JoinScreen = ({ navigation }: any) => {
 
       <View style={styles.dividerContainer}>
         <View style={styles.divider} />
-        <Text style={styles.dividerText}>or</Text>
+        <Text style={styles.dividerText}>or continue with</Text>
         <View style={styles.divider} />
       </View>
+
+      {/* Google Sign-In Button */}
+      <TouchableOpacity
+        style={[styles.googleButton, isGoogleLoading && styles.googleButtonDisabled]}
+        onPress={handleGoogleSignIn}
+        disabled={isGoogleLoading}
+      >
+        {isGoogleLoading ? (
+          <ActivityIndicator color="#212121" />
+        ) : (
+          <>
+            <Ionicons name="logo-google" size={20} color="#212121" />
+            <Text style={styles.googleButtonText}>Continue with Google</Text>
+          </>
+        )}
+      </TouchableOpacity>
 
       <TouchableOpacity style={styles.signInButton} onPress={() => navigation.navigate('SignIn')}>
         <Text style={styles.signInText}>
@@ -583,6 +614,27 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
     paddingHorizontal: 16,
+  },
+  // Google Button Styles
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    gap: 8,
+    marginBottom: 16,
+  },
+  googleButtonDisabled: {
+    opacity: 0.5,
+  },
+  googleButtonText: {
+    color: '#212121',
+    fontSize: 16,
+    fontWeight: '500',
   },
   signInButton: {
     alignItems: 'center',

@@ -8,7 +8,7 @@ import { HubScreen } from '../features/hub/HubScreen';
 import { PayScreen } from '../features/pay/PayScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
 import { AccountScreen } from '../features/account/AccountScreen';
-// Remove ShopProfileScreen import from here - it belongs in RootNavigator
+import { useBreakpoint } from '../hooks/useBreakpoint';
 
 const Tab = createBottomTabNavigator();
 const { width } = Dimensions.get('window');
@@ -78,11 +78,15 @@ const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }:
 };
 
 export const TabNavigator = () => {
+  const { isDesktop } = useBreakpoint();
+
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: isDesktop 
+          ? { display: 'none' } 
+          : styles.tabBar,
         tabBarActiveTintColor: '#4A7DFF',
         tabBarInactiveTintColor: '#8A8AAE',
         tabBarShowLabel: false,
@@ -103,20 +107,20 @@ export const TabNavigator = () => {
         }}
       />
       
-     <Tab.Screen
-  name="Hub"
-  component={HubScreen}
-  options={{
-    tabBarIcon: ({ focused }) => (
-      <TabIcon 
-        focused={focused} 
-        icon="grid-outline" 
-        label="Hub" 
-        iconType="Ionicons" 
+      <Tab.Screen
+        name="Hub"
+        component={HubScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabIcon 
+              focused={focused} 
+              icon="grid-outline" 
+              label="Hub" 
+              iconType="Ionicons" 
+            />
+          ),
+        }}
       />
-    ),
-  }}
-/>
       
       <Tab.Screen
         name="Pay"
@@ -218,7 +222,6 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: '#4A7DFF',
   },
-  // Pay Button Styles
   payButton: {
     top: -22,
     justifyContent: 'center',
@@ -248,10 +251,6 @@ const styles = StyleSheet.create({
   payIconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  payIcon: {
-    fontSize: 24,
-    color: '#FFFFFF',
   },
   payLabel: {
     color: '#FFFFFF',

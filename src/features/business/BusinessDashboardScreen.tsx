@@ -19,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database.types';
+
 const { width, height } = Dimensions.get('window');
 
 type Shop = Database['public']['Tables']['shops']['Row'];
@@ -103,148 +104,163 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
   const [walletTransactions, setWalletTransactions] = useState<Transaction[]>([]);
 
   // Load dashboard data
-  const loadDashboard = useCallback(async () => {
-    if (!user?.id) {
+const loadDashboard = useCallback(async () => {
+  if (!user?.id) {
+    setLoading(false);
+    return;
+  }
+
+  try {
+    // 1. Get business data - Get all shops and use the most recent
+    const { data: businessData, error: businessError } = await supabase
+      .from('shops')
+      .select('*')
+      .eq('owner_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (businessError) {
+      console.error('Business load error:', businessError);
       setLoading(false);
       return;
     }
 
-    try {
-      // 1. Get business data
-      const { data: businessData, error: businessError } = await supabase
-        .from('shops')
-        .select('*')
-        .eq('owner_id', user.id)
-        .single();
+    if (!businessData || businessData.length === 0) {
+      console.log('No business found for user:', user.id);
+      setLoading(false);
+      return;
+    }
 
-      if (businessError) {
-        console.log('Business not found');
-        setLoading(false);
-        return;
-      }
+    // Use the most recent shop
+    const shop = businessData[0];
+    setBusiness(shop);
+    
+    const bizType = shop.business_type || 'shop';
+    setBusinessType(bizType);
+    setCategory(shop.category || '');
 
-      setBusiness(businessData);
-      
-      const bizType = businessData.business_type || 'shop';
-      setBusinessType(bizType);
-      setCategory(businessData.category || '');
+    // Set config based on business type
+    const bizConfig = BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop;
+    setConfig(bizConfig);
 
-      // Set config based on business type
-      const bizConfig = BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop;
-      setConfig(bizConfig);
+    // 2. Get wallet balance
+    const { data: walletData, error: walletError } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('shop_id', shop.id)
+      .order('created_at', { ascending: false })
+      .limit(5);
 
-      // 2. Get wallet balance
-      const { data: walletData } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('shop_id', businessData.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
+    if (walletError) {
+      console.error('Wallet load error:', walletError);
+    } else if (walletData) {
+      const totalBalance = walletData
+        .filter((transaction) => transaction.status === 'completed')
+        .reduce(
+          (sum: number, transaction) =>
+            sum + (transaction.seller_received ?? transaction.amount ?? 0),
+          0,
+        );
+      setWalletBalance(totalBalance);
+      setWalletTransactions(walletData);
+    }
 
-      if (walletData) {
-        const totalBalance = walletData
-          .filter((transaction) => transaction.status === 'completed')
-          .reduce(
-            (sum: number, transaction) =>
-              sum + (transaction.seller_received ?? transaction.amount ?? 0),
-            0,
-          );
-        setWalletBalance(totalBalance);
-        setWalletTransactions(walletData);
-      }
+    // 3. Get activity
+    const { data: activityData, error: activityError } = await supabase
+      .from('transactions')
+      .select(`
+        *,
+        users:user_id (
+          full_name,
+          phone_number
+        )
+      `)
+      .eq('shop_id', shop.id)
+      .order('created_at', { ascending: false })
+      .limit(5);
 
-      // 3. Get activity
-      const { data: activityData } = await supabase
-        .from('transactions')
+    if (activityError) {
+      console.error('Activity load error:', activityError);
+    } else if (activityData) {
+      setRecentActivity(activityData);
+    }
+
+    // 4. Get offerings based on business type
+    if (bizType === 'shop') {
+      const { data: productData, error: productError } = await supabase
+        .from('shop_products')
         .select(`
           *,
-          users:user_id (
-            full_name,
-            phone_number
+          catalog:catalog_id (
+            id,
+            name,
+            description,
+            images,
+            specifications
           )
         `)
-        .eq('shop_id', businessData.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
+        .eq('shop_id', shop.id)
+        .order('created_at', { ascending: false });
 
-      if (activityData) {
-        setRecentActivity(activityData);
+      if (productError) {
+        console.error('Product load error:', productError);
+      } else if (productData) {
+        setOfferings(productData);
       }
-
-      // 4. Get offerings based on business type
-      if (bizType === 'shop') {
-        const { data: productData } = await supabase
-          .from('shop_products')
+    } else if (bizType === 'service' || bizType === 'institution') {
+      if (shop.owner_id) {
+        const { data: serviceData, error: serviceError } = await supabase
+          .from('provider_services')
           .select(`
             *,
-            catalog:catalog_id (
+            service_catalog:service_id (
               id,
               name,
               description,
               images,
-              specifications
+              duration,
+              category
             )
           `)
-          .eq('shop_id', businessData.id)
+          .eq('user_id', shop.owner_id)
           .order('created_at', { ascending: false });
 
-        if (productData) {
-          setOfferings(productData);
+        if (serviceError) {
+          console.error('Service load error:', serviceError);
+        } else if (serviceData) {
+          setOfferings(serviceData);
         }
-      } else if (bizType === 'service' || bizType === 'institution') {
-  // Only query if owner_id exists
-  if (businessData.owner_id) {
-    const { data: serviceData } = await supabase
-      .from('provider_services')
-      .select(`
-        *,
-        service_catalog:service_id (
-          id,
-          name,
-          description,
-          images,
-          duration,
-          category
-        )
-      `)
-      .eq('user_id', businessData.owner_id)
-      .order('created_at', { ascending: false });
-
-    if (serviceData) {
-      setOfferings(serviceData);
+      }
     }
+
+    // 5. Calculate stats
+    const today = new Date().toISOString().split('T')[0];
+    const todayActivity: Transaction[] =
+      activityData?.filter(
+        (activity) => activity.created_at?.startsWith(today),
+      ) ?? [];
+
+    const todayRevenue = todayActivity.reduce(
+      (sum: number, activity: Transaction) =>
+        sum + (activity.seller_received ?? activity.amount ?? 0),
+      0,
+    );
+
+    setStats({
+      revenue: todayRevenue,
+      activityCount: activityData?.length || 0,
+      customers: new Set(activityData?.map((a: any) => a.user_id)).size || 0,
+      offerings: offerings.length,
+      rating: shop.rating || 0,
+      reviews: shop.review_count || 0,
+    });
+
+  } catch (error) {
+    console.error('Error loading dashboard:', error);
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
   }
-}
-
-      // 5. Calculate stats
-      const today = new Date().toISOString().split('T')[0];
-      const todayActivity: Transaction[] =
-        activityData?.filter(
-          (activity) => activity.created_at?.startsWith(today),
-        ) ?? [];
-
-      const todayRevenue = todayActivity.reduce(
-        (sum: number, activity: Transaction) =>
-          sum + (activity.seller_received ?? activity.amount ?? 0),
-        0,
-      );
-
-      setStats({
-        revenue: todayRevenue,
-        activityCount: activityData?.length || 0,
-        customers: new Set(activityData?.map((a: any) => a.user_id)).size || 0,
-        offerings: offerings.length,
-        rating: businessData.rating || 0,
-        reviews: businessData.review_count || 0,
-      });
-
-    } catch (error) {
-      console.error('Error loading dashboard:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [user?.id]);
+}, [user?.id]);
 
   useEffect(() => {
     loadDashboard();
@@ -326,10 +342,16 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
           serviceId = serviceData.id;
         }
 
+        if (!business.owner_id) {
+          Alert.alert('Error', 'Business owner not found');
+          setSaving(false);
+          return;
+        }
+
         const { error } = await supabase
           .from('provider_services')
           .insert({
-            user_id: business.owner_id!,
+            user_id: business.owner_id,
             service_id: serviceId,
             price: parseFloat(newOffering.price) || 0,
             is_active: true,
@@ -1116,6 +1138,7 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
   );
 };
 
+// --- Styles ---
 const styles = StyleSheet.create({
   container: {
     flex: 1,

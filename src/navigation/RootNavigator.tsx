@@ -23,17 +23,18 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 export const RootNavigator = () => {
   return (
     <Stack.Navigator
+      initialRouteName="MainTabs"  // ← ADD THIS LINE
       screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
       }}
     >
+      {/* Main App - Moved to the top */}
+      <Stack.Screen name="MainTabs" component={TabNavigator} />
+      
       {/* Auth Screens */}
       <Stack.Screen name="Join" component={JoinScreen} />
       <Stack.Screen name="SignIn" component={SignInScreen} />
-      
-      {/* Main App */}
-      <Stack.Screen name="MainTabs" component={TabNavigator} />
       
       {/* Modal/Overlay Screens */}
       <Stack.Screen name="ShopProfile" component={ShopProfileScreen} />

@@ -22,6 +22,8 @@ interface ReviewsBottomSheetProps {
   productId: string;
   productTitle?: string;
   onClose: () => void;
+ panelWidth?: number;  // ← NEW
+  isDesktopView?: boolean;
 }
 
 interface Review {
@@ -48,6 +50,7 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
   productId,
   productTitle,
   onClose,
+  isDesktopView = false,
 }) => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [filteredReviews, setFilteredReviews] = useState<Review[]>([]);
@@ -101,7 +104,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     try {
       console.log('📱 Fetching reviews for product:', productId);
 
-      // Fetch reviews
       const { data: reviewsData, error: reviewsError } = await supabase
         .from('reviews')
         .select('id, rating, comment, created_at, customer_id')
@@ -126,7 +128,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
         return;
       }
 
-      // Get customer names
       const customerIds = reviewsData
         .map(r => r.customer_id)
         .filter((id): id is string => id !== null && id !== undefined);
@@ -151,7 +152,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
         }
       }
 
-      // Format reviews with mock data for demo
       const formattedReviews: Review[] = reviewsData.map((item: any, index: number) => ({
         id: item.id,
         rating: item.rating,
@@ -167,13 +167,11 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
       setReviews(formattedReviews);
       setFilteredReviews(formattedReviews);
 
-      // Calculate average
       const sum = formattedReviews.reduce((acc, r) => acc + r.rating, 0);
       const avg = sum / formattedReviews.length;
       setAverageRating(avg);
       setTotalReviews(formattedReviews.length);
 
-      // Calculate rating distribution
       const distribution: RatingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
       formattedReviews.forEach(r => {
         if (distribution[r.rating] !== undefined) {
@@ -195,7 +193,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     }
   }, [visible, productId, fetchReviews]);
 
-  // Filter reviews
   const applyFilter = useCallback((filterKey: string) => {
     setActiveFilter(filterKey);
     let filtered = [...reviews];
@@ -226,7 +223,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     setFilteredReviews(filtered);
   }, [reviews]);
 
-  // Handle rating distribution bar width
   const getBarWidth = (count: number) => {
     const max = Math.max(...Object.values(ratingDistribution));
     return max > 0 ? (count / max) * 100 : 0;
@@ -256,7 +252,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
 
     setIsSubmitting(true);
     try {
-      // In a real app, this would save to Supabase
       const newReview: Review = {
         id: `temp-${Date.now()}`,
         rating: userRating,
@@ -271,12 +266,10 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
       setReviews(updatedReviews);
       setFilteredReviews(updatedReviews);
 
-      // Recalculate average
       const sum = updatedReviews.reduce((acc, r) => acc + r.rating, 0);
       setAverageRating(sum / updatedReviews.length);
       setTotalReviews(updatedReviews.length);
 
-      // Reset form
       setUserRating(0);
       setUserComment('');
 
@@ -288,7 +281,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     }
   };
 
-  // Render review card
   const renderReviewCard = ({ item }: { item: Review }) => (
     <View style={styles.reviewCard}>
       <View style={styles.reviewHeader}>
@@ -340,7 +332,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     </View>
   );
 
-  // AI Insight Card
   const AIInsightCard = ({ text }: { text: string }) => (
     <View style={styles.aiInsightCard}>
       <Ionicons name="sparkles" size={16} color="#4A7DFF" />
@@ -348,7 +339,6 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     </View>
   );
 
-  // Get AI insights
   const getAIInsights = () => {
     const insights = [
       "87% of reviewers mention fast delivery",
@@ -360,6 +350,164 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     return insights[Math.floor(Math.random() * insights.length)];
   };
 
+  // ============================================================
+  // DESKTOP VIEW - Render content directly (no Modal wrapper)
+  // ============================================================
+  if (isDesktopView) {
+    return (
+      <View style={styles.desktopContainer}>
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#4A7DFF" />
+            <Text style={styles.loadingText}>Loading reviews...</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorIcon}>⚠️</Text>
+            <Text style={styles.errorTitle}>Could not load reviews</Text>
+            <Text style={styles.errorSubtext}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={fetchReviews}>
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <ScrollView 
+            ref={scrollViewRef}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.desktopScrollContent}
+          >
+            {/* Header */}
+            <View style={styles.desktopHeader}>
+              <Text style={styles.desktopTitle}>
+                {productTitle ? `Reviews for ${productTitle}` : 'Reviews'}
+              </Text>
+              <Text style={styles.desktopReviewCount}>{totalReviews} reviews</Text>
+            </View>
+
+            {/* Rating Summary */}
+            <View style={styles.ratingSummary}>
+              <View style={styles.ratingLeft}>
+                <Text style={styles.averageRating}>{averageRating.toFixed(1)}</Text>
+                <Text style={styles.stars}>{renderStars(averageRating, 18)}</Text>
+                <Text style={styles.totalReviews}>{totalReviews} reviews</Text>
+              </View>
+              <View style={styles.ratingRight}>
+                <Text style={styles.aiSummary}>🤖 {aiSummary}</Text>
+              </View>
+            </View>
+
+            {/* Rating Distribution */}
+            <View style={styles.distributionContainer}>
+              {[5, 4, 3, 2, 1].map((star) => (
+                <View key={star} style={styles.distributionRow}>
+                  <Text style={styles.distributionLabel}>{star}★</Text>
+                  <View style={styles.distributionBar}>
+                    <View 
+                      style={[
+                        styles.distributionFill,
+                        { width: `${getBarWidth(ratingDistribution[star] || 0)}%` }
+                      ]} 
+                    />
+                  </View>
+                  <Text style={styles.distributionCount}>
+                    {ratingDistribution[star] || 0}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Filter Chips */}
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterContainer}
+              contentContainerStyle={styles.filterContent}
+            >
+              {filterOptions.map((filter) => (
+                <TouchableOpacity
+                  key={filter.key}
+                  style={[
+                    styles.filterChip,
+                    activeFilter === filter.key && styles.filterChipActive,
+                  ]}
+                  onPress={() => applyFilter(filter.key)}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      activeFilter === filter.key && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {filter.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Write a Review */}
+            <View style={styles.writeReviewContainer}>
+              <Text style={styles.writeReviewTitle}>Write a Review</Text>
+              <View style={styles.starSelector}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity
+                    key={star}
+                    onPress={() => setUserRating(star)}
+                  >
+                    <Text style={[styles.starSelectorIcon, userRating >= star && styles.starSelectorActive]}>
+                      {userRating >= star ? '⭐' : '☆'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput
+                style={styles.reviewInput}
+                placeholder="Describe your experience..."
+                placeholderTextColor="#8A8AAE"
+                multiline
+                numberOfLines={3}
+                value={userComment}
+                onChangeText={setUserComment}
+              />
+              <View style={styles.reviewActions}>
+                <TouchableOpacity style={styles.attachButton}>
+                  <Ionicons name="camera-outline" size={20} color="#4A7DFF" />
+                  <Text style={styles.attachButtonText}>Attach Photos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.postButton,
+                    (userRating === 0 || !userComment.trim() || isSubmitting) && styles.postButtonDisabled,
+                  ]}
+                  onPress={handleSubmitReview}
+                  disabled={userRating === 0 || !userComment.trim() || isSubmitting}
+                >
+                  <Text style={styles.postButtonText}>
+                    {isSubmitting ? 'Posting...' : 'Post Review'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* AI Insight */}
+            <AIInsightCard text={getAIInsights()} />
+
+            {/* Reviews List */}
+            <FlatList
+              data={filteredReviews}
+              renderItem={renderReviewCard}
+              keyExtractor={(item, index) => `${item.id}-${index}`}
+              scrollEnabled={false}
+              contentContainerStyle={styles.reviewsList}
+            />
+          </ScrollView>
+        )}
+      </View>
+    );
+  }
+
+  // ============================================================
+  // MOBILE VIEW - Use Modal
+  // ============================================================
   return (
     <Modal
       visible={visible}
@@ -533,6 +681,38 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
 };
 
 const styles = StyleSheet.create({
+  // ============================================================
+  // DESKTOP STYLES
+  // ============================================================
+  desktopContainer: {
+    flex: 1,
+    backgroundColor: '#1A1A2E',
+    paddingHorizontal: 12,
+  },
+  desktopScrollContent: {
+    paddingBottom: 20,
+  },
+  desktopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 12,
+  },
+  desktopTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  desktopReviewCount: {
+    color: '#8A8AAE',
+    fontSize: 12,
+  },
+  // ============================================================
+  // MOBILE STYLES (Modal)
+  // ============================================================
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -564,10 +744,14 @@ const styles = StyleSheet.create({
     zIndex: 10,
     padding: 4,
   },
+  // ============================================================
+  // SHARED STYLES
+  // ============================================================
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
     color: '#FFFFFF',

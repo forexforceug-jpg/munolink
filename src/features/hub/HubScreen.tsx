@@ -10,14 +10,14 @@ import {
   Dimensions,
   StatusBar,
   FlatList,
-  TextInput,
   Animated,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
@@ -348,20 +348,19 @@ const GuestHubView = ({ navigation }: any) => (
     </View>
     <TouchableOpacity 
       style={styles.guestButton} 
-      onPress={() => navigation.navigate('Join')}
+      onPress={() => navigation?.navigate('Join')}
     >
       <Text style={styles.guestButtonText}>Create Account</Text>
     </TouchableOpacity>
-    <TouchableOpacity onPress={() => navigation.navigate('Discover')}>
+    <TouchableOpacity onPress={() => navigation?.navigate('Discover')}>
       <Text style={styles.guestContinueText}>Continue Browsing</Text>
     </TouchableOpacity>
   </View>
 );
 
-// --- Main HubScreen Component ---
-export const HubScreen = () => {
+// --- HubContent Component (Extracted for reuse) ---
+const HubContent = ({ navigation }: any) => {
   const { isAuthenticated } = useAuth();
-  const navigation = useNavigation();
 
   const [activeTab, setActiveTab] = useState('cart');
   const [cartItemsState, setCartItemsState] = useState(cartItems);
@@ -387,12 +386,6 @@ export const HubScreen = () => {
     );
   };
 
-  const handleSelectItem = (id: string) => {
-    setSelectedItems(prev =>
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
   const calculateTotal = () => {
     const subtotal = cartItemsState.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const deliveryFee = 15000;
@@ -405,22 +398,7 @@ export const HubScreen = () => {
 
   // If not authenticated, show guest view
   if (!isAuthenticated) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Hub</Text>
-          <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.headerIcon}>
-              <Ionicons name="search-outline" size={22} color="#1F2F5F" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerIcon}>
-              <Ionicons name="options-outline" size={22} color="#1F2F5F" />
-            </TouchableOpacity>
-          </View>
-        </View>
-        <GuestHubView navigation={navigation} />
-      </SafeAreaView>
-    );
+    return <GuestHubView navigation={navigation} />;
   }
 
   // If authenticated, show full Hub
@@ -600,6 +578,23 @@ export const HubScreen = () => {
   );
 };
 
+// --- Main HubScreen Component (Wrapped with ResponsiveLayout) ---
+export const HubScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="Hub" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true} // ✅ Hide Context Panel on Hub
+      fullWidth={true}
+    >
+      <HubContent navigation={navigation} />
+    </ResponsiveLayout>
+  );
+};
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -633,6 +628,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingBottom: 40,
+    flexGrow: 1,
   },
   // AI Banner
   aiBanner: {

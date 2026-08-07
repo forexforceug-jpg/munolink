@@ -19,17 +19,155 @@ interface SimpleDetailsModalProps {
   visible: boolean;
   opportunity: Opportunity | null;
   onClose: () => void;
+  isDesktopView?: boolean;
+  panelWidth?: number;  // ← NEW
 }
 
 export const SimpleDetailsModal: React.FC<SimpleDetailsModalProps> = ({
   visible,
   opportunity,
   onClose,
+  isDesktopView = false,
 }) => {
   if (!opportunity) return null;
 
   const formatPrice = (price: number) => `UGX ${price.toLocaleString()}`;
 
+  // ============================================================
+  // DESKTOP VIEW - Render content directly (no Modal wrapper)
+  // ============================================================
+  if (isDesktopView) {
+    return (
+      <View style={styles.desktopContainer}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.desktopScrollContent}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <Image
+              source={{ uri: opportunity.imageUrl }}
+              style={styles.headerImage}
+              resizeMode="cover"
+            />
+            <View style={styles.headerInfo}>
+              <Text style={styles.headerTitle}>{opportunity.title}</Text>
+              <Text style={styles.headerPrice}>
+                {formatPrice(opportunity.price)}
+              </Text>
+              <Text
+                style={[
+                  styles.headerStatus,
+                  { color: opportunity.inStock ? '#2ECC71' : '#E74C3C' },
+                ]}
+              >
+                {opportunity.inStock ? '✅ In Stock' : '❌ Check Availability'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Provider */}
+          <View style={styles.providerSection}>
+            <View style={styles.providerAvatar}>
+              <Text style={styles.providerLetter}>
+                {opportunity.shopName.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={styles.providerInfo}>
+              <Text style={styles.providerName}>{opportunity.shopName}</Text>
+              <Text style={styles.providerDetail}>
+                ⭐ {opportunity.rating?.toFixed(1) || 'New'} •{' '}
+                {opportunity.area || 'Nearby'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Quick Info Chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.chipsScroll}
+            contentContainerStyle={styles.chipsContent}
+          >
+            {opportunity.specifications &&
+              Object.entries(opportunity.specifications)
+                .slice(0, 4)
+                .map(([key, value]) => (
+                  <View key={key} style={styles.chip}>
+                    <Text style={styles.chipLabel}>
+                      {key.replace(/_/g, ' ')}
+                    </Text>
+                    <Text style={styles.chipValue}>{String(value)}</Text>
+                  </View>
+                ))}
+          </ScrollView>
+
+          {/* Description */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Description</Text>
+            <Text style={styles.sectionText}>
+              {opportunity.description ||
+                `Premium ${opportunity.title} from ${opportunity.shopName}.`}
+            </Text>
+          </View>
+
+          {/* Specifications */}
+          {opportunity.specifications &&
+            Object.keys(opportunity.specifications).length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Specifications</Text>
+                {Object.entries(opportunity.specifications).map(
+                  ([key, value]) => (
+                    <View key={key} style={styles.specRow}>
+                      <Text style={styles.specLabel}>
+                        {key.replace(/_/g, ' ')}
+                      </Text>
+                      <Text style={styles.specValue}>{String(value)}</Text>
+                    </View>
+                  )
+                )}
+              </View>
+            )}
+
+          {/* Bottom spacer */}
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+
+        {/* Bottom Action Bar */}
+        <View style={styles.desktopBottomBar}>
+          <TouchableOpacity style={styles.actionBtn}>
+            <Ionicons name="chatbubble-outline" size={20} color="#4A7DFF" />
+            <Text style={styles.actionBtnText}>Chat</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionBtn}>
+            <Ionicons name="sparkles-outline" size={20} color="#4A7DFF" />
+            <Text style={styles.actionBtnText}>AI</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionBtn}>
+            <Ionicons name="bookmark-outline" size={20} color="#4A7DFF" />
+            <Text style={styles.actionBtnText}>Save</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.buyBtn}>
+            <LinearGradient
+              colors={['#4A7DFF', '#6B94FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.buyGradient}
+            >
+              <Text style={styles.buyText}>Buy Now</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ============================================================
+  // MOBILE VIEW - Use Modal
+  // ============================================================
   return (
     <Modal
       visible={visible}
@@ -178,6 +316,35 @@ export const SimpleDetailsModal: React.FC<SimpleDetailsModalProps> = ({
 };
 
 const styles = StyleSheet.create({
+  // ============================================================
+  // DESKTOP STYLES
+  // ============================================================
+  desktopContainer: {
+    flex: 1,
+    backgroundColor: '#1A1A2E',
+  },
+  desktopScrollContent: {
+    paddingHorizontal: 12,
+    paddingBottom: 80,
+  },
+  desktopBottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(26, 42, 79, 0.95)',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  // ============================================================
+  // MOBILE STYLES (Modal)
+  // ============================================================
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -209,6 +376,9 @@ const styles = StyleSheet.create({
     zIndex: 10,
     padding: 4,
   },
+  // ============================================================
+  // SHARED STYLES
+  // ============================================================
   scrollContent: {
     paddingBottom: 20,
   },

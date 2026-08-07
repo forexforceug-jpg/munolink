@@ -1,0 +1,141 @@
+import React, { ReactNode } from 'react';
+import { View, StyleSheet } from 'react-native';
+import { Sidebar } from '../components/Sidebar';
+import { ContextPanel } from '../components/ContextPanel';
+import { Opportunity } from '../services/feed.service';
+
+interface Props {
+  children: ReactNode;
+  currentRoute?: string;
+  onNavigate?: (route: string) => void;
+  floatingActions?: ReactNode;
+  hideContextPanel?: boolean;
+  fullWidth?: boolean;
+  desktopNavArrows?: ReactNode;
+  // Context Panel props
+  selectedOpportunity?: Opportunity | null;
+  onReviewsPress?: (productId: string, productTitle?: string) => void;
+  onShowMorePress?: (opportunity: Opportunity) => void;
+  onSharePress?: (opportunity: Opportunity) => void;
+  onAIPress?: (opportunity: Opportunity) => void;
+  featuredOpportunities?: Opportunity[];
+  contextPanelView?: 'details' | 'reviews' | null;
+  onContextPanelViewChange?: (view: 'details' | 'reviews' | null) => void;
+  // Modal props for Context Panel
+  selectedProductId?: string;
+  selectedProductTitle?: string;
+  selectedOpportunityForModal?: Opportunity | null;
+  onCloseReviews?: () => void;
+  onCloseDetails?: () => void;
+}
+
+export function DesktopLayout({ 
+  children, 
+  currentRoute, 
+  onNavigate,
+  floatingActions,
+  hideContextPanel = false,
+  fullWidth = false,
+  desktopNavArrows,
+  selectedOpportunity,
+  onReviewsPress,
+  onShowMorePress,
+  onSharePress,
+  onAIPress,
+  featuredOpportunities = [],
+  contextPanelView,
+  onContextPanelViewChange,
+  selectedProductId = '',
+  selectedProductTitle = '',
+  selectedOpportunityForModal = null,
+  onCloseReviews,
+  onCloseDetails,
+}: Props) {
+  return (
+    <View style={styles.container}>
+      <View style={styles.main}>
+        <Sidebar currentRoute={currentRoute} onNavigate={onNavigate} />
+        
+        <View style={styles.feedContainer}>
+          <View style={styles.feedWrapper}>
+            {children}
+          </View>
+          {floatingActions && (
+            <View style={styles.floatingActionsContainer}>
+              {floatingActions}
+            </View>
+          )}
+        </View>
+       {!hideContextPanel && (
+  <View style={{ width: 360, flexShrink: 0 }}>
+    <ContextPanel 
+      opportunity={selectedOpportunity || undefined}
+      onReviewsPress={onReviewsPress}
+      onShowMorePress={onShowMorePress}
+      onSharePress={onSharePress}
+      onAIPress={onAIPress}
+      featuredOpportunities={featuredOpportunities}
+      activeView={contextPanelView}
+      onViewChange={onContextPanelViewChange}
+      selectedProductId={selectedProductId}
+      selectedProductTitle={selectedProductTitle}
+      selectedOpportunity={selectedOpportunityForModal}
+      onCloseReviews={onCloseReviews}
+      onCloseDetails={onCloseDetails}
+    />
+  </View>
+)}
+      </View>
+      
+      {desktopNavArrows && (
+        <View style={styles.desktopNavArrowsContainer}>
+          {desktopNavArrows}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1A1A2E',
+  },
+  main: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#1A1A2E',
+  },
+  feedContainer: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  feedWrapper: {
+    width: '100%',
+    maxWidth: 480,
+    height: '100%',
+    justifyContent: 'center',
+  },
+  floatingActionsContainer: {
+    position: 'absolute',
+    right: 120,
+    top: '50%',
+    transform: [{ translateY: -150 }],
+    zIndex: 9999,
+    pointerEvents: 'box-none',
+    alignItems: 'center',
+  },
+  desktopNavArrowsContainer: {
+    position: 'absolute',
+    right: 362,
+    top: '50%',
+    transform: [{ translateY: -44 }],
+    zIndex: 9999,
+    pointerEvents: 'box-none',
+    alignItems: 'center',
+    gap: 8,
+  },
+});

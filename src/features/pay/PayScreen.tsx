@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
@@ -120,20 +122,19 @@ const GuestPayView = ({ navigation }: any) => (
     </Text>
     <TouchableOpacity 
       style={styles.guestButton} 
-      onPress={() => navigation.navigate('Join')}
+      onPress={() => navigation?.navigate('Join')}
     >
       <Text style={styles.guestButtonText}>Create Account</Text>
     </TouchableOpacity>
-    <TouchableOpacity onPress={() => navigation.navigate('Discover')}>
+    <TouchableOpacity onPress={() => navigation?.navigate('Discover')}>
       <Text style={styles.guestContinueText}>Continue as Guest</Text>
     </TouchableOpacity>
   </View>
 );
 
-// --- Main PayScreen Component ---
-export const PayScreen = () => {
+// --- PayContent Component (Extracted for reuse) ---
+const PayContent = ({ navigation }: any) => {
   const { isAuthenticated } = useAuth();
-  const navigation = useNavigation();
   
   const [activeTab, setActiveTab] = useState('hub');
   const [selectedFilter, setSelectedFilter] = useState('All');
@@ -148,15 +149,7 @@ export const PayScreen = () => {
 
   // If not authenticated, show guest view
   if (!isAuthenticated) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Pay</Text>
-        </View>
-        <GuestPayView navigation={navigation} />
-      </SafeAreaView>
-    );
+    return <GuestPayView navigation={navigation} />;
   }
 
   // Render Pay Hub
@@ -565,6 +558,23 @@ export const PayScreen = () => {
       {renderAddMoney()}
       {renderWithdraw()}
     </SafeAreaView>
+  );
+};
+
+// --- Main PayScreen Component (Wrapped with ResponsiveLayout) ---
+export const PayScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="Pay" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true}
+      fullWidth={true} // ← Full width on desktop
+    >
+      <PayContent navigation={navigation} />
+    </ResponsiveLayout>
   );
 };
 

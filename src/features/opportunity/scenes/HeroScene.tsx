@@ -1,0 +1,48 @@
+import React from 'react';
+import { View, Image, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Scene } from '../types/Scene';
+
+interface Props {
+  scene: Scene;
+  width?: number;
+  height?: number;
+}
+
+export function HeroScene({ scene, width, height }: Props) {
+  return (
+    <View style={[styles.container, { width, height }]}>
+      {scene.image && (
+        <Image source={{ uri: scene.image }} style={styles.image} resizeMode="cover" />
+      )}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.6)']}
+        style={styles.gradient}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    position: 'relative',
+    backgroundColor: 'transparent',
+    flex: 1,
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  gradient: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '50%',
+  },
+});

@@ -20,6 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
@@ -298,20 +300,19 @@ const GuestInboxView = ({ navigation }: any) => (
     </Text>
     <TouchableOpacity 
       style={styles.guestButton} 
-      onPress={() => navigation.navigate('Join')}
+      onPress={() => navigation?.navigate('Join')}
     >
       <Text style={styles.guestButtonText}>Sign In</Text>
     </TouchableOpacity>
-    <TouchableOpacity onPress={() => navigation.navigate('Discover')}>
+    <TouchableOpacity onPress={() => navigation?.navigate('Discover')}>
       <Text style={styles.guestContinueText}>Continue Browsing</Text>
     </TouchableOpacity>
   </View>
 );
 
-// --- Main InboxScreen Component ---
-export const InboxScreen = () => {
+// --- InboxContent Component (Extracted for reuse) ---
+const InboxContent = ({ navigation }: any) => {
   const { isAuthenticated } = useAuth();
-  const navigation = useNavigation();
   
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState<any>(null);
@@ -626,6 +627,23 @@ export const InboxScreen = () => {
       {/* Chat Modal */}
       {renderChatView()}
     </SafeAreaView>
+  );
+};
+
+// --- Main InboxScreen Component (Wrapped with ResponsiveLayout) ---
+export const InboxScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="Inbox" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true}
+      fullWidth={true} // ← Full width on desktop
+    >
+      <InboxContent navigation={navigation} />
+    </ResponsiveLayout>
   );
 };
 

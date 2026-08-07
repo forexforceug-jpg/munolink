@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
@@ -13,7 +13,7 @@ interface ActionRailProps {
   cardHeight: number;
 }
 
-export const ActionRail: React.FC<ActionRailProps> = ({
+const ActionRailComponent: React.FC<ActionRailProps> = ({
   opportunity,
   onShopPress,
   onReviewsPress,
@@ -94,6 +94,9 @@ export const ActionRail: React.FC<ActionRailProps> = ({
     </View>
   );
 };
+
+// ✅ Memoize to prevent unnecessary re-renders
+export const ActionRail = memo(ActionRailComponent);
 
 const styles = StyleSheet.create({
   container: {
