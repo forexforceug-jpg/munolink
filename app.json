@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "munolink-dxdlilfcssxakysv7m5bd",
-    "slug": "munolink-dxdlilfcssxakysv7m5bd",
+    "name": "Munolink",
+    "slug": "munolink",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/adaptive-icon.png",
@@ -27,10 +27,6 @@
       "eas": {
         "projectId": "91ced7cf-a62a-4ec2-8508-5d422e703c54"
       }
-    },
-    "plugins": [
-      "expo-font",
-      "expo-image"
-    ]
+    }
   }
 }

@@ -1,9 +1,36 @@
-import React, { memo } from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, Image } from 'react-native';
+import React, { memo, useRef, useEffect, useState } from 'react';
+import { 
+  View, 
+  TouchableOpacity, 
+  Text, 
+  StyleSheet, 
+  Image,
+  Animated,
+  Easing,
+  Platform,
+  Alert
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
 import { useBreakpoint } from '../../../hooks/useBreakpoint';
+
+// Logo import with fallback
+let munoLogo;
+try {
+  munoLogo = require('../../../assets/muno.png');
+} catch {
+  try {
+    munoLogo = require('../../../../assets/muno.png');
+  } catch {
+    try {
+      munoLogo = require('../../../public/muno.png');
+    } catch {
+      console.warn('⚠️ muno.png not found - using text fallback');
+      munoLogo = null;
+    }
+  }
+}
 
 interface FloatingActionRailProps {
   opportunity: Opportunity;
@@ -12,26 +39,39 @@ interface FloatingActionRailProps {
   onDirectionsPress: (shopName: string, area: string) => void;
   onSharePress: (opportunity: Opportunity) => void;
   onAIPress: (opportunity: Opportunity) => void;
+  onSavePress?: (opportunity: Opportunity) => void;  // NEW: Save/Wishlist
+  // Optional data overrides for demo/display
+  reviewCount?: number;
+  distance?: number; // in km
+  shareCount?: number;
+  savedCount?: number;
+  isSaved?: boolean;
 }
 
-// ============================================================
-// 🎨 ICONS
-// ============================================================
 const ICONS = {
   reviews: 'chatbubble-ellipses',
   directions: 'map',
   share: 'share-social',
+  save: 'bookmark',        // NEW
+  saveOutline: 'bookmark',  // NEW
 };
 
-// ============================================================
-// 📏 POSITIONING
-// ============================================================
 const DESKTOP_POSITION = {
   BUTTON_SIZE: 48,
   SHOP_BUTTON_SIZE: 56,
   GAP: 32,
-  AI_GAP: 40,
-  ICON_SIZE: 26,
+  AI_GAP: -2,
+  ICON_SIZE: 22,  // Slightly smaller to make room for values
+  VALUE_FONT_SIZE: 9,
+};
+
+const MOBILE_POSITION = {
+  BUTTON_SIZE: 44,
+  SHOP_BUTTON_SIZE: 48,
+  GAP: 8,
+  AI_GAP: 15,
+  ICON_SIZE: 20,
+  VALUE_FONT_SIZE: 7,
 };
 
 const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
@@ -41,43 +81,77 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   onDirectionsPress,
   onSharePress,
   onAIPress,
+  onSavePress,
+  reviewCount = 0,
+  distance = 0,
+  shareCount = 0,
+  savedCount = 0,
+  isSaved = false,
 }) => {
   const { isDesktop } = useBreakpoint();
+  const [saved, setSaved] = useState(isSaved);
+  const [localSavedCount, setLocalSavedCount] = useState(savedCount);
+
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.15,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
 
   const handlePress = (action: string, callback: () => void) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     callback();
   };
 
+  // Handle Save/Wishlist toggle
+  const handleSavePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const newSavedState = !saved;
+    setSaved(newSavedState);
+    setLocalSavedCount(prev => newSavedState ? prev + 1 : Math.max(0, prev - 1));
+    
+    if (onSavePress) {
+      onSavePress(opportunity);
+    }
+  };
+
   const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : 44;
   const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : 48;
-  const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : 30;
+  const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : 20;
+  const valueFontSize = isDesktop ? DESKTOP_POSITION.VALUE_FONT_SIZE : 7;
   const gap = isDesktop ? DESKTOP_POSITION.GAP : 8;
   const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : 15;
 
-  // Get first letter of shop name for the shop button
   const shopLetter = opportunity.shopName?.charAt(0).toUpperCase() || 'S';
+  
+  // Hardcoded logo sizes
+  const LOGO_SIZE_DESKTOP = 80;
+  const LOGO_SIZE_MOBILE = 70;
+  const logoSize = isDesktop ? LOGO_SIZE_DESKTOP : LOGO_SIZE_MOBILE;
 
-  // Try to load logo - try multiple paths
-  let logoSrc;
-  try {
-    // Try src/assets first (most common)
-    logoSrc = require('../../../assets/muno.png');
-  } catch (e) {
-    try {
-      // Try root assets
-      logoSrc = require('../../../../assets/muno.png');
-    } catch (e2) {
-      // Fallback: use a text-based logo
-      logoSrc = null;
-    }
-  }
+  // Format distance
+  const formattedDistance = distance > 0 ? `${distance.toFixed(1)}km` : '--';
 
   return (
-    <View style={[styles.container, { gap: gap }]}>
-      {/* ============================================================
-          SHOP BUTTON - Shop Letter in Circle
-          ============================================================ */}
+    <View style={[styles.container, { gap }]}>
+      {/* Shop Button */}
       <TouchableOpacity
         style={[
           styles.shopButton,
@@ -95,14 +169,12 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
             {shopLetter}
           </Text>
         </View>
-        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
+        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
           Shop
         </Text>
       </TouchableOpacity>
 
-      {/* ============================================================
-          REVIEWS BUTTON
-          ============================================================ */}
+      {/* Reviews Button - Shows Rating */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -112,8 +184,8 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.reviews as any} size={iconSize} color="#FFFFFF" />
-        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
-          Reviews
+        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
+          {opportunity.rating ? opportunity.rating.toFixed(1) : '0.0'}
         </Text>
         {opportunity.rating && (
           <View style={styles.badge}>
@@ -122,9 +194,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         )}
       </TouchableOpacity>
 
-      {/* ============================================================
-          DIRECTIONS BUTTON
-          ============================================================ */}
+      {/* Directions Button - Shows Distance */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -134,14 +204,12 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.directions as any} size={iconSize} color="#FFFFFF" />
-        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
-          Directions
+        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
+          {formattedDistance}
         </Text>
       </TouchableOpacity>
 
-      {/* ============================================================
-          SHARE BUTTON
-          ============================================================ */}
+      {/* Share Button - Shows Share Count */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -151,14 +219,34 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.share as any} size={iconSize} color="#FFFFFF" />
-        <Text style={[styles.actionLabel, { fontSize: isDesktop ? 10 : 7 }]}>
-          Share
+        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
+          {shareCount > 0 ? shareCount : ''}
         </Text>
       </TouchableOpacity>
 
-      {/* ============================================================
-          MUNO AI BUTTON - Using logo.png (with fallback)
-          ============================================================ */}
+      {/* NEW: Save/Wishlist Button - Shows Saved Count */}
+      <TouchableOpacity
+        style={[
+          styles.actionButton,
+          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+        ]}
+        onPress={handleSavePress}
+        activeOpacity={0.7}
+      >
+        <Ionicons 
+          name={(saved ? ICONS.save : ICONS.saveOutline) as any} 
+          size={iconSize} 
+          color={saved ? '#FF6B6B' : '#FFFFFF'} 
+        />
+        <Text style={[styles.valueLabel, { 
+          fontSize: valueFontSize,
+          color: saved ? '#FF6B6B' : 'rgba(255,255,255,0.6)'
+        }]}>
+          {localSavedCount > 0 ? localSavedCount : ''}
+        </Text>
+      </TouchableOpacity>
+
+      {/* AI Button with Muno Logo */}
       <View style={{ marginTop: aiGap }}>
         <TouchableOpacity
           style={[
@@ -172,29 +260,37 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           onPress={() => handlePress('AI', () => onAIPress(opportunity))}
           activeOpacity={0.8}
         >
-          <View style={styles.aiGlow}>
-            {logoSrc ? (
+          <View style={[styles.aiGlow, { padding: 4 }]}>
+            {munoLogo ? (
               <Image
-                source={logoSrc}
-                style={[styles.aiLogo, { width: shopButtonSize * 0.6, height: shopButtonSize * 0.6 }]}
+                source={munoLogo}
+                style={{ 
+                  width: logoSize,
+                  height: logoSize,
+                }}
                 resizeMode="contain"
               />
             ) : (
-              // Fallback: "M" text if logo not found
               <Text style={[styles.aiFallbackText, { fontSize: shopButtonSize * 0.4 }]}>
                 M
               </Text>
             )}
           </View>
-          {/* Pulse Animation Ring */}
-          <View style={[styles.aiPulse, { 
-            width: shopButtonSize + 6, 
-            height: shopButtonSize + 6, 
-            borderRadius: (shopButtonSize + 6) / 2 
-          }]} />
-          <Text style={[styles.aiLabel, { fontSize: isDesktop ? 10 : 7 }]}>
-            Muno AI
-          </Text>
+          <Animated.View 
+            style={[
+              styles.aiPulse,
+              {
+                width: shopButtonSize + 6,
+                height: shopButtonSize + 6,
+                borderRadius: (shopButtonSize + 6) / 2,
+                transform: [{ scale: pulseAnim }],
+                opacity: pulseAnim.interpolate({
+                  inputRange: [1, 1.15],
+                  outputRange: [0.12, 0.3],
+                }),
+              }
+            ]} 
+          />
         </TouchableOpacity>
       </View>
     </View>
@@ -203,16 +299,12 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
 
 export const FloatingActionRail = memo(FloatingActionRailComponent);
 
-// ============================================================
-// STYLES
-// ============================================================
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     zIndex: 9999,
   },
 
-  // --- Shop Button ---
   shopButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -220,12 +312,26 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.12)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+      },
+      default: {
+        boxShadow: '0px 2px 6px rgba(0,0,0,0.2)',
+      },
+    }),
   },
+
   shopLetterContainer: {
     width: '100%',
     height: '100%',
@@ -234,6 +340,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
+
   shopLetter: {
     color: '#4A7DFF',
     fontWeight: '700',
@@ -242,7 +349,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
 
-  // --- Regular Action Buttons ---
   actionButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -250,16 +356,16 @@ const styles = StyleSheet.create({
     position: 'relative',
     elevation: 2,
   },
-  actionLabel: {
+
+  valueLabel: {
     color: 'rgba(255,255,255,0.6)',
-    fontWeight: '500',
-    marginTop: 4,
+    fontWeight: '600',
+    marginTop: 2,
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
 
-  // --- Badge ---
   badge: {
     position: 'absolute',
     top: -2,
@@ -271,13 +377,13 @@ const styles = StyleSheet.create({
     minWidth: 16,
     alignItems: 'center',
   },
+
   badgeText: {
     color: '#1F2F5F',
     fontSize: 8,
     fontWeight: 'bold',
   },
 
-  // --- Muno AI Button ---
   aiButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -285,38 +391,43 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderWidth: 2.5,
     borderColor: '#4A7DFF',
-    shadowColor: '#4A7DFF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    elevation: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#4A7DFF',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.3,
+        shadowRadius: 14,
+      },
+      android: {
+        elevation: 4,
+        shadowColor: '#4A7DFF',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.3,
+        shadowRadius: 14,
+      },
+      default: {
+        boxShadow: '0px 0px 14px rgba(74, 125, 255, 0.3)',
+      },
+    }),
   },
+
   aiGlow: {
     backgroundColor: 'rgba(74, 125, 255, 0.06)',
     borderRadius: 999,
-    padding: 9,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'visible',
   },
-  aiLogo: {
-    borderRadius: 8,
-  },
-  aiFallbackText: {
-    color: '#4A7DFF',
-    fontWeight: 'bold',
-  },
+
   aiPulse: {
     position: 'absolute',
     borderWidth: 2,
     borderColor: '#4A7DFF',
     opacity: 0.12,
   },
-  aiLabel: {
+
+  aiFallbackText: {
     color: '#4A7DFF',
-    fontWeight: '600',
-    marginTop: 3,
-    textShadowColor: 'rgba(74, 125, 255, 0.2)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 6,
+    fontWeight: 'bold',
   },
 });

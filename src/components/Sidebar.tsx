@@ -19,7 +19,7 @@ export function Sidebar({ currentRoute, onNavigate }: Props) {
   return (
     <View style={styles.sidebar}>
       <View style={styles.logoContainer}>
-        {/* ✅ REPLACED text logo with image logo */}
+        {/* ✅ image logo */}
         <Image 
           source={require('../../assets/logo.png')} 
           style={styles.logoImage}
