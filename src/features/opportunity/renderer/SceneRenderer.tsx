@@ -1,3 +1,5 @@
+// src/features/opportunity/renderer/SceneRenderer.tsx
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   View, 
@@ -49,7 +51,7 @@ export function SceneRenderer({
   onShowMore,
   width = screenWidth, 
   height = 600,
-  autoPlay = true,
+  autoPlay = false,
   autoPlayInterval = 6000,
   resetKey,
   isDesktop = false,
@@ -70,7 +72,6 @@ export function SceneRenderer({
 
   const currentScene = scenes[currentIndex] || scenes[0];
 
-  // ✅ Mobile: higher position to avoid bottom nav bar
   const bottomPosition = isDesktop ? 30 : 100;
 
   useEffect(() => {
@@ -312,7 +313,7 @@ export function SceneRenderer({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#010102',
     borderRadius: 0,
     overflow: 'hidden',
     position: 'relative',
@@ -424,7 +425,7 @@ const styles = StyleSheet.create({
   },
   navigationArrows: {
     position: 'absolute',
-    top: -60,
+    top: -240,
     left: 0,
     right: 0,
     bottom: 0,

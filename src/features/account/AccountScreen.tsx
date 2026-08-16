@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   StatusBar,
   Switch,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,36 +21,40 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { supabase } from '../../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
 type AccountScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-// --- Mock User Data ---
-const userData = {
-  id: '1',
-  name: 'John Doe',
-  phone: '+256 700 000 000',
-  email: 'john.doe@email.com',
-  avatar: 'https://via.placeholder.com/100/4A7DFF/FFFFFF?text=JD',
-  isVerified: true,
-  walletBalance: 1250000,
-  memberLevel: 'Trusted Member',
-  memberPoints: 2450,
-  pointsToNextLevel: 550,
-  totalOrders: 47,
-  totalReviews: 32,
-  joinedYear: 2023,
-  loyaltyProgress: 0.82,
-};
+// --- Types ---
+interface UserProfile {
+  id: string;
+  full_name: string | null;
+  phone_number: string;
+  avatar_url: string | null;
+  role: string | null;
+  wallet_balance: number | null;
+  lifetime_savings: number | null;
+  kyc_verified: boolean | null;
+  created_at: string | null;
+}
+
+interface Shop {
+  id: string;
+  name: string;
+  is_verified: boolean | null;
+  rating: number | null;
+  review_count: number | null;
+  logo_url: string | null;
+}
 
 // --- Quick Access Shortcuts ---
 const shortcuts = [
-  { id: 'orders', icon: '📦', label: 'My Orders', count: 3 },
-  { id: 'bookings', icon: '📅', label: 'My Bookings', count: 2 },
-  { id: 'wishlist', icon: '❤️', label: 'Wishlist', count: 12 },
-  { id: 'saved', icon: '📍', label: 'Saved Places', count: 5 },
-  { id: 'deals', icon: '🏷️', label: 'Deals', count: 8 },
+  { id: 'orders', icon: '📦', label: 'My Orders' },
+  { id: 'bookings', icon: '📅', label: 'My Bookings' },
+  { id: 'wishlist', icon: '❤️', label: 'Wishlist' },
+  { id: 'saved', icon: '📍', label: 'Saved Places' },
 ];
 
 // --- Menu Items ---
@@ -60,7 +65,6 @@ const menuItems = [
   { id: 'orders', icon: 'cube-outline', label: 'My Orders', subtitle: 'View order history and track purchases' },
   { id: 'bookings', icon: 'calendar-outline', label: 'My Bookings', subtitle: 'Manage service appointments and reservations' },
   { id: 'wishlist', icon: 'heart-outline', label: 'Wishlist & Collections', subtitle: 'Access saved products and services' },
-  // Start a Business
   { id: 'start_business', icon: 'rocket-outline', label: 'Start a Business', subtitle: 'Sell products or offer services on Munolink' },
   { id: 'sell', icon: 'storefront-outline', label: 'Sell on Munolink', subtitle: 'Manage your shop or service business' },
   { id: 'help', icon: 'help-circle-outline', label: 'Help & Support', subtitle: 'FAQs, customer support & assistance' },
@@ -69,13 +73,13 @@ const menuItems = [
 // --- Sub-components ---
 
 // Shortcut Item
-const ShortcutItem = ({ item }: any) => (
+const ShortcutItem = ({ item, count }: any) => (
   <TouchableOpacity style={styles.shortcutItem}>
     <View style={styles.shortcutIcon}>
       <Text style={styles.shortcutIconText}>{item.icon}</Text>
-      {item.count > 0 && (
+      {count > 0 && (
         <View style={styles.shortcutBadge}>
-          <Text style={styles.shortcutBadgeText}>{item.count}</Text>
+          <Text style={styles.shortcutBadgeText}>{count}</Text>
         </View>
       )}
     </View>
@@ -116,15 +120,74 @@ const GuestProfile = ({ navigation }: any) => (
 
 // --- AccountContent Component (Extracted for reuse) ---
 const AccountContent = ({ navigation }: any) => {
-  const { isAuthenticated } = useAuth();
-  
+  const { user, isAuthenticated } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userShops, setUserShops] = useState<Shop[]>([]);
   const [showBalance, setShowBalance] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [stats, setStats] = useState({
+    totalOrders: 0,
+    totalReviews: 0,
+    joinedYear: new Date().getFullYear(),
+  });
+
+  // Fetch user data from Supabase
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      fetchUserData();
+    } else {
+      setLoading(false);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const fetchUserData = async () => {
+    try {
+      setLoading(true);
+      const userId = user?.id;
+
+      // Fetch user profile
+      const { data: profile, error: profileError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+      setUserProfile(profile);
+
+      // Fetch user's shops
+      const { data: shops, error: shopsError } = await supabase
+        .from('shops')
+        .select('id, name, is_verified, rating, review_count, logo_url')
+        .eq('owner_id', userId);
+
+      if (shopsError) throw shopsError;
+      setUserShops(shops || []);
+
+      // Set joined year from profile
+      if (profile?.created_at) {
+        const joinedDate = new Date(profile.created_at);
+        setStats(prev => ({ ...prev, joinedYear: joinedDate.getFullYear() }));
+      }
+
+      // Fetch order count (mock for now - you'll need to implement this)
+      // const { count: orderCount } = await supabase
+      //   .from('transactions')
+      //   .select('*', { count: 'exact', head: true })
+      //   .eq('user_id', userId);
+      // setStats(prev => ({ ...prev, totalOrders: orderCount || 0 }));
+
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleMenuItemPress = (id: string) => {
     console.log('🔗 Menu item pressed:', id);
     
-    // Navigate to Business Registration
     if (id === 'start_business') {
       navigation.navigate('BusinessRegistration');
       return;
@@ -144,7 +207,20 @@ const AccountContent = ({ navigation }: any) => {
     );
   };
 
-  // If not authenticated, show guest version
+  // --- Loading State ---
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#4A7DFF" />
+          <Text style={styles.loadingText}>Loading your account...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // --- Guest View ---
   if (!isAuthenticated) {
     return (
       <SafeAreaView style={styles.container}>
@@ -172,7 +248,6 @@ const AccountContent = ({ navigation }: any) => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Guest Profile */}
           <GuestProfile navigation={navigation} />
 
           {/* Settings Section - Available to guests */}
@@ -285,6 +360,15 @@ const AccountContent = ({ navigation }: any) => {
   }
 
   // --- Authenticated User View ---
+  const displayName = userProfile?.full_name || user?.name || 'User';
+  const displayPhone = userProfile?.phone_number || user?.phone || '';
+  const avatarUrl = userProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4A7DFF&color=fff&size=100`;
+  const isVerified = userProfile?.kyc_verified || false;
+  const walletBalance = userProfile?.wallet_balance || 0;
+  const lifetimeSavings = userProfile?.lifetime_savings || 0;
+  const shopCount = userShops.length;
+  const hasBusiness = shopCount > 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -315,7 +399,7 @@ const AccountContent = ({ navigation }: any) => {
         <View style={styles.profileSection}>
           <View style={styles.profileLeft}>
             <View style={styles.profileImageContainer}>
-              <Image source={{ uri: userData.avatar }} style={styles.profileImage} />
+              <Image source={{ uri: avatarUrl }} style={styles.profileImage} />
               <TouchableOpacity style={styles.cameraButton}>
                 <Ionicons name="camera" size={14} color="#FFFFFF" />
               </TouchableOpacity>
@@ -323,8 +407,8 @@ const AccountContent = ({ navigation }: any) => {
           </View>
           <View style={styles.profileInfo}>
             <View style={styles.profileNameRow}>
-              <Text style={styles.profileName}>{userData.name}</Text>
-              {userData.isVerified && (
+              <Text style={styles.profileName}>{displayName}</Text>
+              {isVerified && (
                 <View style={styles.verifiedBadge}>
                   <Text style={styles.verifiedBadgeText}>✓</Text>
                 </View>
@@ -332,11 +416,13 @@ const AccountContent = ({ navigation }: any) => {
             </View>
             <View style={styles.profileDetail}>
               <Ionicons name="call-outline" size={14} color="#8A8AAE" />
-              <Text style={styles.profileDetailText}>{userData.phone}</Text>
+              <Text style={styles.profileDetailText}>{displayPhone}</Text>
             </View>
             <View style={styles.profileDetail}>
-              <Ionicons name="mail-outline" size={14} color="#8A8AAE" />
-              <Text style={styles.profileDetailText}>{userData.email}</Text>
+              <Ionicons name="briefcase-outline" size={14} color="#8A8AAE" />
+              <Text style={styles.profileDetailText}>
+                {hasBusiness ? `${shopCount} Business${shopCount > 1 ? 'es' : ''}` : 'No business yet'}
+              </Text>
             </View>
           </View>
         </View>
@@ -358,7 +444,7 @@ const AccountContent = ({ navigation }: any) => {
                 <Text style={styles.walletBalanceLabel}>Available Balance</Text>
                 <View style={styles.walletBalanceRow}>
                   <Text style={styles.walletBalance}>
-                    {showBalance ? `UGX ${userData.walletBalance.toLocaleString()}` : '••••••'}
+                    {showBalance ? `UGX ${walletBalance.toLocaleString()}` : '••••••'}
                   </Text>
                   <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
                     <Ionicons 
@@ -373,13 +459,19 @@ const AccountContent = ({ navigation }: any) => {
                 <Text style={styles.addMoneyText}>+ Add Money</Text>
               </TouchableOpacity>
             </View>
+            {lifetimeSavings > 0 && (
+              <View style={styles.lifetimeSavingsContainer}>
+                <Text style={styles.lifetimeSavingsLabel}>💰 Lifetime Savings</Text>
+                <Text style={styles.lifetimeSavingsValue}>UGX {lifetimeSavings.toLocaleString()}</Text>
+              </View>
+            )}
           </LinearGradient>
         </TouchableOpacity>
 
         {/* Quick Access Shortcuts */}
         <View style={styles.shortcutsContainer}>
           {shortcuts.map((item) => (
-            <ShortcutItem key={item.id} item={item} />
+            <ShortcutItem key={item.id} item={item} count={0} />
           ))}
         </View>
 
@@ -390,48 +482,41 @@ const AccountContent = ({ navigation }: any) => {
           ))}
         </View>
 
-        {/* Membership Card */}
-        <View style={styles.membershipCard}>
-          <LinearGradient
-            colors={['#1A2A4F', '#1F2F5F']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.membershipGradient}
-          >
-            <View style={styles.membershipHeader}>
-              <View>
-                <Text style={styles.membershipLevel}>{userData.memberLevel}</Text>
-                <Text style={styles.membershipPoints}>
-                  {userData.memberPoints} points • {userData.pointsToNextLevel} to next level
-                </Text>
+        {/* My Business Card (if user has a shop) */}
+        {hasBusiness && (
+          <View style={styles.businessCard}>
+            <LinearGradient
+              colors={['#1A2A4F', '#2A3F6F']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.businessGradient}
+            >
+              <View style={styles.businessHeader}>
+                <Text style={styles.businessTitle}>🏪 My Business</Text>
+                <TouchableOpacity onPress={() => navigation.navigate('BusinessDashboard')}>
+                  <Text style={styles.businessManage}>Manage ›</Text>
+                </TouchableOpacity>
               </View>
-              <View style={styles.membershipBadge}>
-                <Text style={styles.membershipBadgeText}>⭐</Text>
-              </View>
-            </View>
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${userData.loyaltyProgress * 100}%` }]} />
-              </View>
-            </View>
-            <View style={styles.membershipStats}>
-              <View style={styles.membershipStat}>
-                <Text style={styles.membershipStatValue}>{userData.totalOrders}</Text>
-                <Text style={styles.membershipStatLabel}>Orders</Text>
-              </View>
-              <View style={styles.membershipStatDivider} />
-              <View style={styles.membershipStat}>
-                <Text style={styles.membershipStatValue}>{userData.totalReviews}</Text>
-                <Text style={styles.membershipStatLabel}>Reviews</Text>
-              </View>
-              <View style={styles.membershipStatDivider} />
-              <View style={styles.membershipStat}>
-                <Text style={styles.membershipStatValue}>{userData.joinedYear}</Text>
-                <Text style={styles.membershipStatLabel}>Joined</Text>
-              </View>
-            </View>
-          </LinearGradient>
-        </View>
+              {userShops.map((shop) => (
+                <View key={shop.id} style={styles.businessItem}>
+                  <View style={styles.businessItemLeft}>
+                    <Text style={styles.businessItemName}>{shop.name}</Text>
+                    {shop.is_verified && (
+                      <View style={styles.verifiedBadge}>
+                        <Text style={styles.verifiedBadgeText}>✓</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.businessItemRight}>
+                    {shop.rating && (
+                      <Text style={styles.businessItemRating}>⭐ {shop.rating.toFixed(1)}</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </LinearGradient>
+          </View>
+        )}
 
         {/* Log Out Button */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -456,7 +541,7 @@ export const AccountScreen = ({ navigation }: any) => {
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
-      fullWidth={true} // ← Full width on desktop
+      fullWidth={true}
     >
       <AccountContent navigation={navigation} />
     </ResponsiveLayout>
@@ -467,6 +552,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8F9FC',
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 12,
   },
   topBar: {
     flexDirection: 'row',
@@ -690,6 +786,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  lifetimeSavingsContainer: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  lifetimeSavingsLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+  },
+  lifetimeSavingsValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   // Shortcuts
   shortcutsContainer: {
     flexDirection: 'row',
@@ -804,8 +917,8 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
   },
-  // Membership Card
-  membershipCard: {
+  // Business Card
+  businessCard: {
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 16,
@@ -815,70 +928,49 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  membershipGradient: {
+  businessGradient: {
     padding: 16,
   },
-  membershipHeader: {
+  businessHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
   },
-  membershipLevel: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  membershipPoints: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  membershipBadge: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 20,
-    padding: 8,
-  },
-  membershipBadgeText: {
-    fontSize: 20,
-  },
-  progressContainer: {
-    marginBottom: 12,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 2,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#F1C40F',
-    borderRadius: 2,
-  },
-  membershipStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-  },
-  membershipStat: {
-    alignItems: 'center',
-  },
-  membershipStatValue: {
+  businessTitle: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  membershipStatLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 11,
-    marginTop: 2,
+  businessManage: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
   },
-  membershipStatDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  businessItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  businessItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  businessItemName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  businessItemRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  businessItemRating: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
   },
   // Log Out
   logoutButton: {

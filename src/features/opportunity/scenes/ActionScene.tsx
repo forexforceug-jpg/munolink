@@ -54,7 +54,7 @@ export function ActionScene({
     <View style={[styles.container, { width, height }]}>
       {/* Background Image */}
       {scene.image && (
-        <Image source={{ uri: scene.image }} style={styles.backgroundImage} resizeMode="cover" />
+        <Image source={{ uri: scene.image }} style={styles.backgroundImage} resizeMode="contain" />
       )}
       <View style={styles.overlay}>
         <Text style={styles.title}>{scene.title}</Text>

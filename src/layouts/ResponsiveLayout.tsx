@@ -1,3 +1,5 @@
+// src/layouts/ResponsiveLayout.tsx
+
 import React, { ReactNode } from 'react';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { MobileLayout } from './MobileLayout';
@@ -19,14 +21,21 @@ interface Props {
   onSharePress?: (opportunity: Opportunity) => void;
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
-  contextPanelView?: 'details' | 'reviews' | null;
-  onContextPanelViewChange?: (view: 'details' | 'reviews' | null) => void;
+  contextPanelView?: 'details' | 'reviews' | 'directions' | null;
+  onContextPanelViewChange?: (view: 'details' | 'reviews' | 'directions' | null) => void;
   // Modal props for Context Panel
   selectedProductId?: string;
   selectedProductTitle?: string;
   selectedOpportunityForModal?: Opportunity | null;
   onCloseReviews?: () => void;
   onCloseDetails?: () => void;
+  // AI props
+  aiViewActive?: boolean;
+  onAIClose?: () => void;
+  aiContextHint?: string;
+  // Directions props
+  directionsViewActive?: boolean;
+  onDirectionsClose?: () => void;
 }
 
 export function ResponsiveLayout({ 
@@ -50,6 +59,11 @@ export function ResponsiveLayout({
   selectedOpportunityForModal = null,
   onCloseReviews,
   onCloseDetails,
+  aiViewActive = false,
+  onAIClose,
+  aiContextHint = '',
+  directionsViewActive = false,
+  onDirectionsClose,
 }: Props) {
   const { isDesktop } = useBreakpoint();
 
@@ -75,6 +89,11 @@ export function ResponsiveLayout({
         selectedOpportunityForModal={selectedOpportunityForModal}
         onCloseReviews={onCloseReviews}
         onCloseDetails={onCloseDetails}
+        aiViewActive={aiViewActive}
+        onAIClose={onAIClose}
+        aiContextHint={aiContextHint}
+        directionsViewActive={directionsViewActive}
+        onDirectionsClose={onDirectionsClose}
       >
         {children}
       </DesktopLayout>

@@ -1,3 +1,5 @@
+// src/features/feed/FeedScreen.tsx
+
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,9 +32,11 @@ import { feedService, Opportunity as RawOpportunity } from '../../services/feed.
 import { BottomSheetModal, BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { ReviewsBottomSheet } from './components/ReviewsBottomSheet';
 import { AIBottomSheet } from './components/AIBottomSheet';
+import { DirectionsBottomSheet } from './components/DirectionsBottomSheet';
 import { SimpleDetailsModal } from './components/SimpleDetailsModal';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { recommendationService } from '../../services/recommendation.service';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -40,7 +44,7 @@ const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 export const FeedScreen = ({ navigation }: any) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
-  const { isAuthenticated, isGuest } = useAuth();
+  const { isAuthenticated, isGuest, user } = useAuth();
   const flatListRef = useRef<FlatList>(null);
 
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
@@ -51,10 +55,14 @@ export const FeedScreen = ({ navigation }: any) => {
   const [selectedOpportunity, setSelectedOpportunity] = useState<RawOpportunity | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [showDirectionsModal, setShowDirectionsModal] = useState(false);
+  const [aiViewActive, setAiViewActive] = useState(false);
   const [aiContextHint, setAiContextHint] = useState<string>('');
   const [showGuestPrompt, setShowGuestPrompt] = useState(false);
   const [swipeCount, setSwipeCount] = useState(0);
-  const [contextPanelView, setContextPanelView] = useState<'details' | 'reviews' | null>(null);
+  const [contextPanelView, setContextPanelView] = useState<'details' | 'reviews' | 'directions' | null>(null);
+  const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false);
 
   const {
     opportunities,
@@ -85,14 +93,55 @@ export const FeedScreen = ({ navigation }: any) => {
   }, [opportunities]);
 
   const featuredOpportunities = useMemo(() => {
-    return uniqueOpportunities.slice(0, 6);
+    return uniqueOpportunities.slice(0, 14);
   }, [uniqueOpportunities]);
 
+  // === RECOMMENDATION ENGINE ===
   useEffect(() => {
-    if (data && data.length > 0) {
-      setOpportunities(data);
+    if (data && data.length > 0 && !isApplyingRecommendations) {
+      const applyRecommendations = async () => {
+        setIsApplyingRecommendations(true);
+        try {
+          let result: RawOpportunity[] = [];
+          
+          if (user?.id) {
+            console.log('👤 Getting personalized recommendations for user:', user.id);
+            result = await recommendationService.getPersonalizedRecommendations(data, user.id);
+            
+            if (result.length > 0) {
+              for (const item of result.slice(0, 3)) {
+                await recommendationService.trackInteraction(user.id, item.id, 'view');
+              }
+            }
+          } else {
+            console.log('👤 Getting new user recommendations for guest');
+            result = recommendationService.getNewUserRecommendations(data);
+          }
+          
+          console.log(`✅ Set ${result.length} personalized opportunities`);
+          setOpportunities(result);
+        } catch (error) {
+          console.error('❌ Error applying recommendations:', error);
+          setOpportunities(data);
+        } finally {
+          setIsApplyingRecommendations(false);
+        }
+      };
+      
+      applyRecommendations();
     }
-  }, [data]);
+  }, [data, user?.id]);
+
+  // Track when user views an opportunity (for learning)
+  const trackOpportunityView = useCallback(async (opportunity: RawOpportunity) => {
+    if (user?.id) {
+      try {
+        await recommendationService.trackInteraction(user.id, opportunity.id, 'view');
+      } catch (error) {
+        // Silently fail
+      }
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     if (queryError) {
@@ -119,7 +168,10 @@ export const FeedScreen = ({ navigation }: any) => {
         if (!isAuthenticated && isGuest) {
           setSwipeCount(prev => prev + 1);
         }
-        // Reset context panel view when opportunity changes
+        const item = uniqueOpportunities[index];
+        if (item) {
+          trackOpportunityView(item);
+        }
         setContextPanelView(null);
       }
     }
@@ -134,6 +186,10 @@ export const FeedScreen = ({ navigation }: any) => {
           setCurrentIndex(index);
           if (!isAuthenticated && isGuest) {
             setSwipeCount(prev => prev + 1);
+          }
+          const item = uniqueOpportunities[index];
+          if (item) {
+            trackOpportunityView(item);
           }
           setContextPanelView(null);
         }
@@ -166,6 +222,9 @@ export const FeedScreen = ({ navigation }: any) => {
   const handleSharePress = useCallback(async (opportunity: RawOpportunity) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
+      if (user?.id) {
+        await recommendationService.trackInteraction(user.id, opportunity.id, 'share');
+      }
       const message = `🛍️ Check out ${opportunity.title}\n\n🏪 ${opportunity.shopName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${opportunity.area || 'Available nearby'}\n\nDownload Munolink to discover more!`;
       await Share.share({
         message: message,
@@ -174,19 +233,55 @@ export const FeedScreen = ({ navigation }: any) => {
     } catch (error) {
       console.error('Error sharing:', error);
     }
-  }, []);
+  }, [user?.id]);
 
+  // --- Directions Handler ---
+  const handleDirectionsPress = useCallback((shopName: string, area: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    console.log(`📍 Directions to ${shopName} in ${area}`);
+    
+    const currentOpportunity = uniqueOpportunities[currentIndex];
+    
+    if (isDesktop) {
+      setContextPanelView('directions');
+      setSelectedOpportunity(currentOpportunity);
+    } else {
+      setSelectedOpportunity(currentOpportunity);
+      setShowDirectionsModal(true);
+    }
+  }, [isDesktop, uniqueOpportunities, currentIndex]);
+
+  // --- AI Handler ---
   const handleAIPress = useCallback((opportunity: RawOpportunity) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    console.log('🤖 AI Pressed for opportunity:', opportunity.title);
     setSelectedOpportunity(opportunity);
     setAiContextHint('');
     
-    if (!isDesktop) {
-      setTimeout(() => {
-        aiSheetRef.current?.present();
-      }, 100);
+    if (isDesktop) {
+      console.log('🖥️ Desktop - Showing AI in context panel');
+      setAiViewActive(true);
+    } else {
+      console.log('📱 Mobile - Showing AI modal');
+      setShowAIModal(true);
     }
   }, [isDesktop]);
+
+  // --- Close AI ---
+  const handleCloseAI = useCallback(() => {
+    console.log('🔚 Closing AI');
+    setShowAIModal(false);
+    setAiViewActive(false);
+    setSelectedOpportunity(null);
+    setAiContextHint('');
+  }, []);
+
+  // --- Close Directions ---
+  const handleCloseDirections = useCallback(() => {
+    console.log('🔚 Closing Directions');
+    setShowDirectionsModal(false);
+    setSelectedOpportunity(null);
+  }, []);
 
   const handleShowMorePress = useCallback((opportunity: RawOpportunity) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -212,9 +307,12 @@ export const FeedScreen = ({ navigation }: any) => {
         );
         return;
       }
+      if (user?.id && isLoved) {
+        recommendationService.trackInteraction(user.id, opportunity.id, 'save');
+      }
       console.log(isLoved ? '❤️ Added to wishlist:' : '❤️ Removed from wishlist:', opportunity.title);
     },
-    [isAuthenticated, navigation]
+    [isAuthenticated, navigation, user?.id]
   );
 
   const handleSavePress = useCallback((opportunity: RawOpportunity) => {
@@ -230,8 +328,11 @@ export const FeedScreen = ({ navigation }: any) => {
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (user?.id) {
+      recommendationService.trackInteraction(user.id, opportunity.id, 'save');
+    }
     console.log('🔖 Saved:', opportunity.title);
-  }, [isAuthenticated, navigation]);
+  }, [isAuthenticated, navigation, user?.id]);
 
   const handleFollowPress = useCallback((opportunity: RawOpportunity) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -339,7 +440,7 @@ export const FeedScreen = ({ navigation }: any) => {
             }}
             width={cardWidth}
             height={cardHeight}
-            autoPlay={true}
+            autoPlay={false}
             autoPlayInterval={9000}
             resetKey={item.id}
           />
@@ -364,22 +465,21 @@ export const FeedScreen = ({ navigation }: any) => {
           });
         }}
         onReviewsPress={(productId) => handleReviewsPress(productId, currentOpportunity.title)}
-        onDirectionsPress={(shopName, area) => {
-          console.log(`Directions to ${shopName} in ${area}`);
-        }}
+        onDirectionsPress={handleDirectionsPress}
         onSharePress={handleSharePress}
         onAIPress={handleAIPress}
+        onSavePress={handleSavePress}
       />
     );
-  }, [uniqueOpportunities, currentIndex, navigation, handleReviewsPress, handleSharePress, handleAIPress]);
+  }, [uniqueOpportunities, currentIndex, navigation, handleReviewsPress, handleSharePress, handleSavePress, handleAIPress, handleDirectionsPress]);
 
   // --- Loading States ---
-  if (isLoading || queryLoading) {
+  if (isLoading || queryLoading || isApplyingRecommendations) {
     return (
       <View style={[styles.centered, { height }]}>
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={[styles.loadingText, { fontSize: width < 380 ? 14 : 16 }]}>
-          Loading opportunities...
+          {isApplyingRecommendations ? 'Personalizing your feed...' : 'Loading opportunities...'}
         </Text>
       </View>
     );
@@ -428,19 +528,21 @@ export const FeedScreen = ({ navigation }: any) => {
         contextPanelView={contextPanelView}
         onContextPanelViewChange={setContextPanelView}
         selectedProductId={selectedProductId}
-  selectedProductTitle={selectedProductTitle}
-  selectedOpportunityForModal={selectedOpportunity}
-  onCloseReviews={() => {
-    setContextPanelView(null);
-    setSelectedProductId('');
-    setSelectedProductTitle('');
-  }}
-  onCloseDetails={() => {
-    setContextPanelView(null);
-    setSelectedOpportunity(null);
-  }}
->
-      
+        selectedProductTitle={selectedProductTitle}
+        selectedOpportunityForModal={selectedOpportunity}
+        aiViewActive={aiViewActive}
+        onAIClose={handleCloseAI}
+        aiContextHint={aiContextHint}
+        onCloseReviews={() => {
+          setContextPanelView(null);
+          setSelectedProductId('');
+          setSelectedProductTitle('');
+        }}
+        onCloseDetails={() => {
+          setContextPanelView(null);
+          setSelectedOpportunity(null);
+        }}
+      >
         <GestureHandlerRootView style={{ flex: 1 }}>
           <BottomSheetModalProvider>
             <SafeAreaView style={[styles.container, { height }]}>
@@ -483,18 +585,6 @@ export const FeedScreen = ({ navigation }: any) => {
                   setSelectedProductTitle('');
                 }}
               />
-
-              {selectedOpportunity && (
-                <AIBottomSheet
-                  bottomSheetRef={aiSheetRef}
-                  opportunity={selectedOpportunity}
-                  contextHint={aiContextHint}
-                  onClose={() => {
-                    aiSheetRef.current?.dismiss();
-                    setAiContextHint('');
-                  }}
-                />
-              )}
 
               <SimpleDetailsModal
                 visible={showDetailsModal}
@@ -608,17 +698,24 @@ export const FeedScreen = ({ navigation }: any) => {
               }}
             />
 
-            {selectedOpportunity && (
-              <AIBottomSheet
-                bottomSheetRef={aiSheetRef}
-                opportunity={selectedOpportunity}
-                contextHint={aiContextHint}
-                onClose={() => {
-                  aiSheetRef.current?.dismiss();
-                  setAiContextHint('');
-                }}
-              />
-            )}
+            <AIBottomSheet
+              visible={showAIModal}
+              opportunity={selectedOpportunity}
+              contextHint={aiContextHint}
+              onClose={() => {
+                setShowAIModal(false);
+                setSelectedOpportunity(null);
+                setAiContextHint('');
+              }}
+              isDesktopView={false}
+            />
+
+            <DirectionsBottomSheet
+              visible={showDirectionsModal}
+              opportunity={selectedOpportunity}
+              onClose={handleCloseDirections}
+              isDesktopView={false}
+            />
 
             <SimpleDetailsModal
               visible={showDetailsModal}
@@ -656,7 +753,7 @@ const styles = StyleSheet.create({
   },
   centered: {
     flex: 1,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#000000',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,

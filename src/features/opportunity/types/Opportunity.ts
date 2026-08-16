@@ -1,4 +1,5 @@
-// Normalized Opportunity Object - Database agnostic
+// src/features/opportunity/types/Opportunity.ts
+
 export interface Opportunity {
   id: string;
   type: 'product' | 'service' | 'event';
@@ -9,19 +10,16 @@ export interface Opportunity {
     id: string;
     verified: boolean;
     yearsInBusiness?: number;
+    type?: 'shop' | 'service_provider' | 'institution';
   };
   location: {
     area: string;
     distance?: string;
-    coordinates?: {
-      lat: number;
-      lng: number;
-    };
   };
   price: number;
-  currency?: string;
-  images: string[];  // Max 5 - mapped to scenes
-  attributes: Record<string, any>;  // Flexible key-value pairs
+  currency: string;
+  images: string[];
+  attributes: Record<string, any>;
   reviews: {
     rating: number;
     count: number;
@@ -36,9 +34,14 @@ export interface Opportunity {
   warranty?: string;
   actions: {
     primary: 'buy' | 'book' | 'contact' | 'view';
-    secondary?: ('share' | 'save' | 'compare')[];
-    custom?: Record<string, any>;
+    secondary: string[];
   };
-  source: 'product' | 'catalog' | 'shop' | 'user';
+  source: 'product' | 'service' | 'event';
   createdAt: string;
+  // Service-specific fields
+  duration?: string;
+  duration_minutes?: number;
+  // Product-specific fields
+  brand?: string;
+  inStock?: boolean;
 }

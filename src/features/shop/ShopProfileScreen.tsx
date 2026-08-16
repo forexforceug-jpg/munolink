@@ -1,4 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+// src/features/shop/ShopProfileScreen.tsx
+
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,101 +14,224 @@ import {
   StatusBar,
   ActivityIndicator,
   RefreshControl,
+  Linking,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../context/AuthContext';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { Opportunity } from '../../services/feed.service';
+import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
 
 const { width, height } = Dimensions.get('window');
-
-// --- Mock Data ---
-const getMockShopData = (shopId: string) => ({
-  id: shopId,
-  name: 'City Electronics',
-  category: 'Electronics Store',
-  rating: 4.8,
-  reviewCount: 1258,
-  distance: '0.6 km',
-  location: 'Jinja, Uganda',
-  status: 'Open Now',
-  isVerified: true,
-  coverImage: 'https://via.placeholder.com/400x200/4A7DFF/FFFFFF?text=City+Electronics',
-  profileImage: 'https://via.placeholder.com/100/4A7DFF/FFFFFF?text=CE',
-  description: 'City Electronics is one of the highest-rated electronics shops in Jinja with a 4.8★ rating from over 1,200 reviews.',
-  since: '2017',
-  orders: 6200,
-  responseTime: '2 mins',
-  trustBadges: ['Verified Business', 'Official Warranty', 'Fast Delivery', '6,200 Orders', 'Avg Response 2 mins'],
-  products: [
-    { id: '1', name: 'Samsung Galaxy S25', price: 2850000, image: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=S25', rating: 4.9 },
-    { id: '2', name: 'iPhone 16 Pro Max', price: 3200000, image: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=iPhone', rating: 4.8 },
-    { id: '3', name: 'MacBook Air M3', price: 4500000, image: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=MacBook', rating: 4.7 },
-    { id: '4', name: 'Samsung 65" TV', price: 5200000, image: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=TV', rating: 4.6 },
-    { id: '5', name: 'iPad Pro M4', price: 3800000, image: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=iPad', rating: 4.8 },
-    { id: '6', name: 'Sony WH-1000XM5', price: 850000, image: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=Sony', rating: 4.9 },
-  ],
-  services: [
-    { id: '1', name: 'Phone Repair', price: 'UGX 50,000 - 200,000', duration: '1-2 hours', icon: '🔧' },
-    { id: '2', name: 'Computer Setup', price: 'UGX 30,000', duration: '30 min', icon: '🖥️' },
-    { id: '3', name: 'Data Recovery', price: 'UGX 100,000 - 500,000', duration: '2-4 hours', icon: '💾' },
-  ],
-  isShop: true,
-  contact: {
-    phone: '+256 700 000 000',
-    email: 'info@cityelectronics.ug',
-    website: 'www.cityelectronics.ug',
-    address: '123 Main Street, Jinja, Uganda',
-  },
-  shopPhotos: [
-    'https://via.placeholder.com/300/4A7DFF/FFFFFF?text=Shop+1',
-    'https://via.placeholder.com/300/6B94FF/FFFFFF?text=Shop+2',
-    'https://via.placeholder.com/300/4A7DFF/FFFFFF?text=Shop+3',
-  ],
-});
 
 interface ShopProfileScreenProps {
   route: any;
   navigation: any;
 }
 
+interface ShopData {
+  id: string;
+  name: string;
+  category: string | null;
+  rating: number | null;
+  review_count: number | null;
+  area: string | null;
+  is_verified: boolean | null;
+  is_open: boolean | null;
+  logo_url: string | null;
+  cover_image?: string;
+  description: string | null;
+  created_at: string | null;
+  phone: string | null;
+  address: string | null;
+  business_type: string | null;
+  owner_id: string | null;
+}
+
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  image: string | null;
+  rating: number | null;
+  catalog_id: string;
+  in_stock: boolean | null;
+  category: string | null;
+}
+
+interface Service {
+  id: string;
+  name: string;
+  price: number;
+  duration: string | null;
+  category: string | null;
+}
+
 export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, navigation }) => {
-  const { shopId } = route.params || {};
+  const { shopId, shopName: routeShopName } = route.params || {};
+  const { user } = useAuth();
+  
   const [activeTab, setActiveTab] = useState('products');
   const [showReviews, setShowReviews] = useState(false);
   const [showAI, setShowAI] = useState(false);
+  const [showDirections, setShowDirections] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [shop, setShop] = useState<any>(null);
+  const [shop, setShop] = useState<ShopData | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
   const [isFollowing, setIsFollowing] = useState(false);
 
-  useEffect(() => {
-    const fetchShop = async () => {
-      setLoading(true);
-      try {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        const data = getMockShopData(shopId || '1');
-        setShop(data);
-      } catch (error) {
-        console.error('Error fetching shop:', error);
-      } finally {
-        setLoading(false);
+  // AI Summary state
+  const [aiSummary, setAiSummary] = useState<string>('');
+
+  // Refs for bottom sheets
+  const reviewsSheetRef = useRef<any>(null);
+  const aiSheetRef = useRef<any>(null);
+
+  // Fetch shop data
+  const fetchShopData = useCallback(async () => {
+    if (!shopId) return;
+
+    setLoading(true);
+    try {
+      // 1. Fetch shop details
+      const { data: shopData, error: shopError } = await supabase
+        .from('shops')
+        .select('*')
+        .eq('id', shopId)
+        .single();
+
+      if (shopError) throw shopError;
+      setShop(shopData);
+
+      // 2. Fetch products - FIXED: simpler query without complex joins
+      const { data: productsData, error: productsError } = await supabase
+        .from('shop_products')
+        .select('*')
+        .eq('shop_id', shopId)
+        .order('created_at', { ascending: false });
+
+      if (productsError) {
+        console.error('Products error:', productsError);
+      } else if (productsData) {
+        // Get catalog details for each product
+        const catalogIds = productsData.map(p => p.catalog_id).filter(Boolean);
+        let catalogMap: Record<string, any> = {};
+        
+        if (catalogIds.length > 0) {
+          const { data: catalogData, error: catalogError } = await supabase
+            .from('catalog')
+            .select('id, name, images, specifications, category')
+            .in('id', catalogIds);
+          
+          if (!catalogError && catalogData) {
+            catalogMap = catalogData.reduce((acc: any, item: any) => {
+              acc[item.id] = item;
+              return acc;
+            }, {});
+          }
+        }
+
+        const formattedProducts = productsData.map((item: any) => {
+          const catalog = catalogMap[item.catalog_id] || {};
+          return {
+            id: item.id,
+            name: catalog.name || 'Product',
+            price: item.regular_price || 0,
+            image: catalog.images?.[0] || null,
+            rating: null,
+            catalog_id: item.catalog_id,
+            in_stock: item.in_stock,
+            category: catalog.category || null,
+          };
+        });
+        setProducts(formattedProducts);
       }
-    };
-    fetchShop();
+
+      // 3. Fetch services (if any) - FIXED: simpler query
+      if (shopData?.owner_id) {
+        const { data: servicesData, error: servicesError } = await supabase
+          .from('provider_services')
+          .select('*')
+          .eq('user_id', shopData.owner_id)
+          .order('created_at', { ascending: false });
+
+        if (servicesError) {
+          console.error('Services error:', servicesError);
+        } else if (servicesData) {
+          // Get service catalog details
+          const serviceIds = servicesData.map(s => s.service_id).filter(Boolean);
+          let serviceCatalogMap: Record<string, any> = {};
+          
+          if (serviceIds.length > 0) {
+            const { data: serviceCatalogData, error: serviceCatalogError } = await supabase
+              .from('service_catalog')
+              .select('id, name, duration, category, images')
+              .in('id', serviceIds);
+            
+            if (!serviceCatalogError && serviceCatalogData) {
+              serviceCatalogMap = serviceCatalogData.reduce((acc: any, item: any) => {
+                acc[item.id] = item;
+                return acc;
+              }, {});
+            }
+          }
+
+          const formattedServices = servicesData.map((item: any) => {
+            const catalog = serviceCatalogMap[item.service_id] || {};
+            return {
+              id: item.id,
+              name: catalog.name || 'Service',
+              price: item.price || 0,
+              duration: catalog.duration || null,
+              category: catalog.category || null,
+            };
+          });
+          setServices(formattedServices);
+        }
+      }
+
+      // 4. Generate AI summary
+      const summary = generateAISummary(shopData);
+      setAiSummary(summary);
+
+    } catch (error) {
+      console.error('Error fetching shop data:', error);
+      Alert.alert('Error', 'Failed to load shop profile');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [shopId]);
 
-  const onRefresh = async () => {
+  useEffect(() => {
+    fetchShopData();
+  }, [fetchShopData]);
+
+  const onRefresh = () => {
     setRefreshing(true);
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const data = getMockShopData(shopId || '1');
-      setShop(data);
-    } catch (error) {
-      console.error('Error refreshing:', error);
-    } finally {
-      setRefreshing(false);
+    fetchShopData();
+  };
+
+  const generateAISummary = (shopData: ShopData): string => {
+    const name = shopData?.name || 'This shop';
+    const category = shopData?.category || 'business';
+    const rating = shopData?.rating || 0;
+    const reviewCount = shopData?.review_count || 0;
+    const description = shopData?.description || '';
+    const since = shopData?.created_at ? new Date(shopData.created_at).getFullYear() : 'recently';
+
+    if (rating > 4.0) {
+      return `${name} is a highly-rated ${category} with a ${rating.toFixed(1)}★ rating from ${reviewCount} reviews. ${description || `Customers consistently praise their quality service and products.`} They've been serving customers since ${since}.`;
+    } else if (rating > 3.0) {
+      return `${name} is a ${category} with a ${rating.toFixed(1)}★ rating from ${reviewCount} reviews. ${description || `They offer quality products and services to the community.`} They've been in business since ${since}.`;
+    } else {
+      return `${name} is a ${category} serving the community since ${since}. ${description || `They offer a variety of products and services.`} ${reviewCount > 0 ? `Currently rated ${rating.toFixed(1)}★ by ${reviewCount} customers.` : 'Be the first to leave a review!'}`;
     }
   };
 
@@ -114,43 +239,75 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
     return '⭐'.repeat(Math.round(rating));
   };
 
-  // --- AI Summary ---
-  const aiSummary = "City Electronics is one of the highest-rated electronics shops in Jinja with a 4.8★ rating from over 1,200 reviews. Customers frequently praise genuine products, fast delivery, and excellent after-sales support. Most buyers recommend them for Samsung phones and laptops.";
+  const handleDirectionsPress = () => {
+    setShowDirections(true);
+  };
 
-  // --- Trust Cards ---
-  const trustItems = [
-    { icon: '✅', label: 'Verified Business' },
-    { icon: '📅', label: `Since ${shop?.since || '2017'}` },
-    { icon: '🛡️', label: 'Official Warranty' },
-    { icon: '📦', label: `${shop?.orders || 6200} Orders` },
-    { icon: '⚡', label: `Avg Response ${shop?.responseTime || '2 mins'}` },
-    { icon: '🚚', label: 'Delivery Available' },
-  ];
+  const handleChatPress = () => {
+    if (!user) {
+      Alert.alert('Sign in required', 'Please sign in to chat with this seller.');
+      return;
+    }
+    Alert.alert('Chat', 'Chat feature coming soon!');
+  };
+
+  const handleCallPress = () => {
+    if (shop?.phone) {
+      Linking.openURL(`tel:${shop.phone}`);
+    } else {
+      Alert.alert('No phone number', 'This business has not provided a phone number.');
+    }
+  };
+
+  const handleFollowPress = () => {
+    if (!user) {
+      Alert.alert('Sign in required', 'Please sign in to follow this shop.');
+      return;
+    }
+    setIsFollowing(!isFollowing);
+    Alert.alert(isFollowing ? 'Unfollowed' : 'Following', isFollowing ? 'You unfollowed this shop.' : 'You are now following this shop.');
+  };
 
   // --- Render Products Tab ---
   const renderProducts = () => (
     <View style={styles.tabContent}>
       <View style={styles.tabHeader}>
         <Text style={styles.tabSubtitle}>Products</Text>
-        <Text style={styles.tabCount}>{shop.products?.length || 0}</Text>
+        <Text style={styles.tabCount}>{products.length}</Text>
       </View>
-      <FlatList
-        data={shop.products}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={styles.productCard}>
-            <Image source={{ uri: item.image }} style={styles.productImage} />
-            <View style={styles.productInfo}>
-              <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.productRating}>⭐ {item.rating}</Text>
-              <Text style={styles.productPrice}>UGX {item.price.toLocaleString()}</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        scrollEnabled={false}
-        contentContainerStyle={styles.productsGrid}
-      />
+      {products.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>No products available</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={products}
+          renderItem={({ item }) => (
+            <TouchableOpacity style={styles.productCard}>
+              {item.image ? (
+                <Image source={{ uri: item.image }} style={styles.productImage} />
+              ) : (
+                <View style={[styles.productImage, styles.productImagePlaceholder]}>
+                  <Text style={styles.productImagePlaceholderText}>📦</Text>
+                </View>
+              )}
+              <View style={styles.productInfo}>
+                <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.productPrice}>UGX {item.price.toLocaleString()}</Text>
+                {item.in_stock !== null && (
+                  <Text style={[styles.productStock, { color: item.in_stock ? '#2ECC71' : '#E74C3C' }]}>
+                    {item.in_stock ? 'In Stock' : 'Out of Stock'}
+                  </Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          )}
+          keyExtractor={(item) => item.id}
+          numColumns={2}
+          scrollEnabled={false}
+          contentContainerStyle={styles.productsGrid}
+        />
+      )}
     </View>
   );
 
@@ -159,63 +316,31 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
     <View style={styles.tabContent}>
       <View style={styles.tabHeader}>
         <Text style={styles.tabSubtitle}>Services</Text>
-        <Text style={styles.tabCount}>{shop.services?.length || 0}</Text>
+        <Text style={styles.tabCount}>{services.length}</Text>
       </View>
-      {shop.services?.map((service: any, index: number) => (
-        <View key={index} style={styles.serviceCard}>
-          <View style={styles.serviceIcon}>
-            <Text style={styles.serviceIconText}>{service.icon || '🔧'}</Text>
-          </View>
-          <View style={styles.serviceInfo}>
-            <Text style={styles.serviceName}>{service.name}</Text>
-            <Text style={styles.servicePrice}>{service.price}</Text>
-            <Text style={styles.serviceDuration}>⏱ {service.duration}</Text>
-          </View>
-          <TouchableOpacity style={styles.serviceBookButton}>
-            <Text style={styles.serviceBookText}>Book</Text>
-          </TouchableOpacity>
+      {services.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>No services available</Text>
         </View>
-      ))}
-    </View>
-  );
-
-  // --- Render Shop Photos ---
-  const renderShopPhotos = () => (
-    <View style={styles.photosContainer}>
-      <TouchableOpacity style={styles.photosHeader} onPress={() => console.log('View all photos')}>
-        <Text style={styles.photosTitle}>Shop Photos</Text>
-        <View style={styles.photosCount}>
-          <Text style={styles.photosCountText}>{shop.shopPhotos?.length || 0}</Text>
-          <Ionicons name="chevron-forward" size={16} color="#4A7DFF" />
-        </View>
-      </TouchableOpacity>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photosScroll}>
-        {shop.shopPhotos?.map((photo: string, i: number) => (
-          <Image key={i} source={{ uri: photo }} style={styles.photoItem} />
-        ))}
-      </ScrollView>
-    </View>
-  );
-
-  // --- Render Contact ---
-  const renderContact = () => (
-    <View style={styles.contactContainer}>
-      <TouchableOpacity style={styles.contactItem} onPress={() => console.log('Directions')}>
-        <Ionicons name="location-outline" size={20} color="#4A7DFF" />
-        <Text style={styles.contactText}>Directions</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.contactItem} onPress={() => console.log('Call')}>
-        <Ionicons name="call-outline" size={20} color="#4A7DFF" />
-        <Text style={styles.contactText}>Call</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.contactItem} onPress={() => console.log('Chat')}>
-        <Ionicons name="chatbubble-outline" size={20} color="#4A7DFF" />
-        <Text style={styles.contactText}>Chat</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.contactItem} onPress={() => console.log('Website')}>
-        <Ionicons name="globe-outline" size={20} color="#4A7DFF" />
-        <Text style={styles.contactText}>Website</Text>
-      </TouchableOpacity>
+      ) : (
+        services.map((service, index) => (
+          <View key={index} style={styles.serviceCard}>
+            <View style={styles.serviceIcon}>
+              <Text style={styles.serviceIconText}>🔧</Text>
+            </View>
+            <View style={styles.serviceInfo}>
+              <Text style={styles.serviceName}>{service.name}</Text>
+              <Text style={styles.servicePrice}>UGX {service.price.toLocaleString()}</Text>
+              {service.duration && (
+                <Text style={styles.serviceDuration}>⏱ {service.duration}</Text>
+              )}
+            </View>
+            <TouchableOpacity style={styles.serviceBookButton}>
+              <Text style={styles.serviceBookText}>Book</Text>
+            </TouchableOpacity>
+          </View>
+        ))
+      )}
     </View>
   );
 
@@ -230,9 +355,9 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
         return (
           <TouchableOpacity style={styles.reviewsButton} onPress={() => setShowReviews(true)}>
             <View style={styles.reviewsSummary}>
-              <Text style={styles.reviewsAvg}>{shop.rating.toFixed(1)}</Text>
-              <Text style={styles.reviewsStars}>{renderStars(shop.rating)}</Text>
-              <Text style={styles.reviewsCount}>{shop.reviewCount} reviews</Text>
+              <Text style={styles.reviewsAvg}>{shop?.rating?.toFixed(1) || 'N/A'}</Text>
+              <Text style={styles.reviewsStars}>{renderStars(shop?.rating || 0)}</Text>
+              <Text style={styles.reviewsCount}>{shop?.review_count || 0} reviews</Text>
               <Ionicons name="chevron-forward" size={20} color="#4A7DFF" />
             </View>
           </TouchableOpacity>
@@ -242,14 +367,45 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
     }
   };
 
-  const tabs = shop?.isShop 
-    ? ['products', 'reviews']
-    : ['services', 'reviews'];
+  // Determine which tabs to show based on business type
+  const getTabs = () => {
+    if (!shop) return ['products', 'reviews'];
+    const isShop = shop.business_type === 'shop';
+    const isService = shop.business_type === 'service' || shop.business_type === 'institution';
+    
+    if (isShop) return ['products', 'reviews'];
+    if (isService) return ['services', 'reviews'];
+    return ['products', 'services', 'reviews'];
+  };
 
+  const tabs = getTabs();
   const tabLabels: Record<string, string> = {
     products: 'Products',
     services: 'Services',
     reviews: 'Reviews',
+  };
+
+  // Create opportunity object for AI
+  const getOpportunityForAI = (): Opportunity | null => {
+    if (!shop) return null;
+    return {
+      id: shop.id,
+      title: shop.name || 'Shop',
+      shopName: shop.name || 'Shop',
+      shopId: shop.id,
+      price: 0,
+      currency: 'UGX',
+      imageUrl: shop.logo_url || '',
+      catalogImages: [],
+      description: shop.description || '',
+      specifications: {},
+      rating: shop.rating,
+      reviewCount: shop.review_count,
+      area: shop.area,
+      inStock: true,
+      category: shop.category,
+      type: 'product',
+    };
   };
 
   if (loading) {
@@ -272,6 +428,14 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
     );
   }
 
+  const trustItems = [
+    { icon: '✅', label: shop.is_verified ? 'Verified Business' : 'Unverified' },
+    { icon: '📅', label: shop.created_at ? `Since ${new Date(shop.created_at).getFullYear()}` : 'New' },
+    { icon: '📦', label: `${products.length + services.length} Offerings` },
+    { icon: '⭐', label: shop.rating ? `${shop.rating.toFixed(1)} Rating` : 'No Rating' },
+    { icon: '🔄', label: shop.is_open ? '🟢 Open Now' : '🔴 Closed' },
+  ];
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -284,7 +448,7 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
       {/* Follow Button */}
       <TouchableOpacity 
         style={[styles.followButton, isFollowing && styles.followingButton]} 
-        onPress={() => setIsFollowing(!isFollowing)}
+        onPress={handleFollowPress}
       >
         <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
           {isFollowing ? 'Following' : 'Follow'}
@@ -302,7 +466,13 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
       >
         {/* Cover Image */}
         <View style={styles.coverContainer}>
-          <Image source={{ uri: shop.coverImage }} style={styles.coverImage} />
+          {shop.logo_url ? (
+            <Image source={{ uri: shop.logo_url }} style={styles.coverImage} />
+          ) : (
+            <View style={[styles.coverImage, styles.coverImagePlaceholder]}>
+              <Text style={styles.coverImagePlaceholderText}>🏪</Text>
+            </View>
+          )}
           <LinearGradient
             colors={['rgba(31, 47, 95, 0)', 'rgba(31, 47, 95, 0.7)']}
             start={{ x: 0, y: 0.5 }}
@@ -311,11 +481,19 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
           />
         </View>
 
-        {/* Profile Header - Simple */}
+        {/* Profile Header */}
         <View style={styles.profileHeader}>
           <View style={styles.profileImageContainer}>
-            <Image source={{ uri: shop.profileImage }} style={styles.profileImage} />
-            {shop.isVerified && (
+            {shop.logo_url ? (
+              <Image source={{ uri: shop.logo_url }} style={styles.profileImage} />
+            ) : (
+              <View style={[styles.profileImage, styles.profileImagePlaceholder]}>
+                <Text style={styles.profileImagePlaceholderText}>
+                  {shop.name?.charAt(0)?.toUpperCase() || 'B'}
+                </Text>
+              </View>
+            )}
+            {shop.is_verified && (
               <View style={styles.verifiedBadge}>
                 <Text style={styles.verifiedBadgeText}>✓</Text>
               </View>
@@ -324,36 +502,46 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
           <View style={styles.profileInfo}>
             <View style={styles.profileNameRow}>
               <Text style={styles.profileName}>{shop.name}</Text>
-              {shop.isVerified && (
+              {shop.is_verified && (
                 <Ionicons name="checkmark-circle" size={18} color="#4A7DFF" />
               )}
             </View>
-            <Text style={styles.profileCategory}>{shop.category}</Text>
+            <Text style={styles.profileCategory}>{shop.category || 'Business'}</Text>
             <View style={styles.profileStats}>
-              <Text style={styles.profileRating}>⭐ {shop.rating.toFixed(1)}</Text>
-              <Text style={styles.profileDivider}>•</Text>
-              <Text style={styles.profileReviews}>{shop.reviewCount} Reviews</Text>
-              <Text style={styles.profileDivider}>•</Text>
-              <Text style={styles.profileDistance}>{shop.distance}</Text>
+              {shop.rating && (
+                <>
+                  <Text style={styles.profileRating}>⭐ {shop.rating.toFixed(1)}</Text>
+                  <Text style={styles.profileDivider}>•</Text>
+                </>
+              )}
+              <Text style={styles.profileReviews}>{shop.review_count || 0} Reviews</Text>
+              {shop.area && (
+                <>
+                  <Text style={styles.profileDivider}>•</Text>
+                  <Text style={styles.profileDistance}>{shop.area}</Text>
+                </>
+              )}
             </View>
             <View style={styles.profileStatus}>
-              <View style={[styles.statusDot, { backgroundColor: '#2ECC71' }]} />
-              <Text style={styles.statusText}>{shop.status}</Text>
+              <View style={[styles.statusDot, { backgroundColor: shop.is_open ? '#2ECC71' : '#E74C3C' }]} />
+              <Text style={[styles.statusText, { color: shop.is_open ? '#2ECC71' : '#E74C3C' }]}>
+                {shop.is_open ? 'Open Now' : 'Closed'}
+              </Text>
             </View>
           </View>
         </View>
 
-        {/* Action Buttons - Simple Row */}
+        {/* Action Buttons */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.actionButton}>
+          <TouchableOpacity style={styles.actionButton} onPress={handleChatPress}>
             <Ionicons name="chatbubble-outline" size={22} color="#4A7DFF" />
             <Text style={styles.actionButtonText}>Chat</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton}>
+          <TouchableOpacity style={styles.actionButton} onPress={handleCallPress}>
             <Ionicons name="call-outline" size={22} color="#4A7DFF" />
             <Text style={styles.actionButtonText}>Call</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton}>
+          <TouchableOpacity style={styles.actionButton} onPress={handleDirectionsPress}>
             <Ionicons name="location-outline" size={22} color="#4A7DFF" />
             <Text style={styles.actionButtonText}>Directions</Text>
           </TouchableOpacity>
@@ -384,19 +572,16 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
           ))}
         </ScrollView>
 
-        {/* Shop Photos */}
-        {renderShopPhotos()}
-
         {/* Tab Navigation */}
         <View style={styles.tabContainer}>
           {tabs.map((tab) => (
             <TouchableOpacity
               key={tab}
-              style={[styles.tab, activeTab === tab && styles.activeTab]}
+              style={styles.tab}
               onPress={() => setActiveTab(tab)}
             >
               <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-                {tabLabels[tab]}
+                {tabLabels[tab] || tab}
               </Text>
               {activeTab === tab && <View style={styles.tabIndicator} />}
             </TouchableOpacity>
@@ -405,9 +590,6 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
 
         {/* Tab Content */}
         {renderTabContent()}
-
-        {/* Contact - Simple */}
-        {renderContact()}
 
         {/* Bottom spacer */}
         <View style={styles.bottomSpacer} />
@@ -422,15 +604,20 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
       />
 
       {/* AI Bottom Sheet */}
-      <AIBottomSheet
-        bottomSheetRef={null as any}
-        opportunity={{
-          title: shop.name,
-          description: shop.description,
-          shopName: shop.name,
-          // ... other required fields
-        } as Opportunity}
-        onClose={() => setShowAI(false)}
+      {getOpportunityForAI() && (
+        <AIBottomSheet
+          bottomSheetRef={aiSheetRef}
+          opportunity={getOpportunityForAI()!}
+          onClose={() => setShowAI(false)}
+        />
+      )}
+
+      {/* Directions Bottom Sheet - Mobile */}
+      <DirectionsBottomSheet
+        visible={showDirections}
+        opportunity={getOpportunityForAI()}
+        onClose={() => setShowDirections(false)}
+        isDesktopView={false}
       />
     </SafeAreaView>
   );
@@ -508,6 +695,15 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  coverImagePlaceholder: {
+    backgroundColor: '#1A2A4F',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coverImagePlaceholderText: {
+    fontSize: 48,
+    opacity: 0.3,
+  },
   coverGradient: {
     position: 'absolute',
     bottom: 0,
@@ -532,6 +728,16 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     borderWidth: 2,
     borderColor: '#4A7DFF',
+  },
+  profileImagePlaceholder: {
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  profileImagePlaceholderText: {
+    color: '#4A7DFF',
+    fontSize: 24,
+    fontWeight: 'bold',
   },
   verifiedBadge: {
     position: 'absolute',
@@ -572,6 +778,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 2,
     gap: 4,
+    flexWrap: 'wrap',
   },
   profileRating: {
     color: '#F1C40F',
@@ -601,7 +808,6 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
   },
   statusText: {
-    color: '#2ECC71',
     fontSize: 11,
     fontWeight: '500',
   },
@@ -628,7 +834,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  // AI Summary
   aiSummaryCard: {
     marginHorizontal: 16,
     padding: 14,
@@ -660,7 +865,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontWeight: '500',
   },
-  // Trust Cards
   trustContainer: {
     paddingHorizontal: 16,
     marginBottom: 12,
@@ -685,41 +889,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 2,
   },
-  // Photos
-  photosContainer: {
-    paddingHorizontal: 16,
-    marginBottom: 12,
-  },
-  photosHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  photosTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  photosCount: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  photosCountText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-  },
-  photosScroll: {
-    flexDirection: 'row',
-  },
-  photoItem: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    marginRight: 8,
-  },
-  // Tabs
   tabContainer: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -732,7 +901,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     position: 'relative',
   },
-  activeTab: {},
   tabText: {
     color: '#8A8AAE',
     fontSize: 14,
@@ -769,6 +937,14 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
   },
+  emptyState: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  emptyStateText: {
+    color: '#8A8AAE',
+    fontSize: 14,
+  },
   productsGrid: {
     gap: 8,
   },
@@ -787,6 +963,15 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginBottom: 6,
   },
+  productImagePlaceholder: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  productImagePlaceholderText: {
+    fontSize: 30,
+    opacity: 0.3,
+  },
   productInfo: {
     flex: 1,
   },
@@ -795,18 +980,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  productRating: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 1,
-  },
   productPrice: {
     color: '#4A7DFF',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 1,
   },
-  // Services
+  productStock: {
+    fontSize: 10,
+    marginTop: 1,
+  },
   serviceCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -856,7 +1039,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
-  // Reviews
   reviewsButton: {
     paddingHorizontal: 16,
   },
@@ -882,29 +1064,6 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
     flex: 1,
-  },
-  // Contact
-  contactContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    gap: 8,
-    marginTop: 4,
-  },
-  contactItem: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.03)',
-  },
-  contactText: {
-    color: '#8A8AAE',
-    fontSize: 11,
   },
   bottomSpacer: {
     height: 20,

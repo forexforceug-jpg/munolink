@@ -13,17 +13,27 @@ import {
   Modal,
   TextInput,
   Alert,
+  FlatList,
+  ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database.types';
+import * as ImagePicker from 'expo-image-picker';
 
 const { width, height } = Dimensions.get('window');
 
 type Shop = Database['public']['Tables']['shops']['Row'];
 type Transaction = Database['public']['Tables']['transactions']['Row'];
+type CatalogItem = Database['public']['Tables']['catalog']['Row'];
+type ServiceCatalogItem = Database['public']['Tables']['service_catalog']['Row'];
+type ShopProduct = Database['public']['Tables']['shop_products']['Row'];
+type ProviderService = Database['public']['Tables']['provider_services']['Row'];
+type ProductAttribute = Database['public']['Tables']['product_attributes']['Row'];
+type ProductAttributeValue = Database['public']['Tables']['product_attribute_values']['Row'];
 
 // --- Business Type Configuration ---
 const BUSINESS_CONFIGS: Record<string, any> = {
@@ -33,17 +43,16 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activityLabel: 'Orders',
     activityIcon: 'receipt-outline',
     statuses: ['New', 'Confirmed', 'Preparing', 'Ready', 'Shipped', 'Completed', 'Cancelled'],
-    actions: {
-      'New': ['Accept', 'Decline'],
-      'Confirmed': ['Mark Preparing'],
-      'Preparing': ['Mark Ready'],
-      'Ready': ['Mark Shipped'],
-      'Shipped': ['Mark Completed'],
-    },
     stats: ['Revenue', 'Orders', 'Customers', 'Products'],
-    quickActions: ['Add Product', 'View Orders', 'Analytics', 'Business Settings'],
-    addModal: 'product',
-    catalogSearch: true,
+    quickActions: ['Browse Catalog', 'View Orders', 'Analytics', 'Business Settings'],
+    catalogTable: 'catalog',
+    offeringTable: 'shop_products',
+    foreignKey: 'catalog_id',
+    priceField: 'regular_price',
+    stockField: 'in_stock',
+    activeField: 'in_stock',
+    sellerSpecsField: 'seller_specifications',
+    supportsAttributes: true,
   },
   service: {
     offeringLabel: 'Services',
@@ -51,16 +60,15 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activityLabel: 'Bookings',
     activityIcon: 'calendar-outline',
     statuses: ['Requested', 'Accepted', 'Scheduled', 'In Progress', 'Completed', 'Cancelled'],
-    actions: {
-      'Requested': ['Accept', 'Decline'],
-      'Accepted': ['Schedule', 'Contact Customer'],
-      'Scheduled': ['Start Service'],
-      'In Progress': ['Mark Completed'],
-    },
     stats: ['Revenue', 'Bookings', 'Customers', 'Services'],
-    quickActions: ['Add Service', 'View Bookings', 'Set Availability', 'Business Settings'],
-    addModal: 'service',
-    catalogSearch: false,
+    quickActions: ['Browse Catalog', 'View Bookings', 'Set Availability', 'Business Settings'],
+    catalogTable: 'service_catalog',
+    offeringTable: 'provider_services',
+    foreignKey: 'service_id',
+    priceField: 'price',
+    activeField: 'is_active',
+    sellerSpecsField: null,
+    supportsAttributes: false,
   },
   institution: {
     offeringLabel: 'Offerings',
@@ -68,15 +76,15 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activityLabel: 'Reservations',
     activityIcon: 'calendar-outline',
     statuses: ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled'],
-    actions: {
-      'Pending': ['Confirm', 'Decline'],
-      'Confirmed': ['Mark In Progress'],
-      'In Progress': ['Mark Completed'],
-    },
     stats: ['Revenue', 'Reservations', 'Customers', 'Offerings'],
-    quickActions: ['Add Offering', 'View Reservations', 'Business Hours', 'Business Settings'],
-    addModal: 'offering',
-    catalogSearch: false,
+    quickActions: ['Browse Catalog', 'View Reservations', 'Business Hours', 'Business Settings'],
+    catalogTable: 'service_catalog',
+    offeringTable: 'provider_services',
+    foreignKey: 'service_id',
+    priceField: 'price',
+    activeField: 'is_active',
+    sellerSpecsField: null,
+    supportsAttributes: false,
   },
 };
 
@@ -94,173 +102,230 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
   const [stats, setStats] = useState<any>({});
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [offerings, setOfferings] = useState<any[]>([]);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [catalogResults, setCatalogResults] = useState<any[]>([]);
-  const [selectedCatalogItem, setSelectedCatalogItem] = useState<any>(null);
-  const [newOffering, setNewOffering] = useState<any>({});
-  const [saving, setSaving] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [walletTransactions, setWalletTransactions] = useState<Transaction[]>([]);
+  
+  // --- Catalog Browser States ---
+  const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
+  const [catalogResults, setCatalogResults] = useState<any[]>([]);
+  const [selectedCatalogItem, setSelectedCatalogItem] = useState<any>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('All');
+  const [catalogCategories, setCatalogCategories] = useState<string[]>([]);
+  
+  // --- Offering Customization States ---
+  const [showCustomizeModal, setShowCustomizeModal] = useState(false);
+  const [customOffering, setCustomOffering] = useState<any>({
+    price: '',
+    discount: '',
+    discountType: 'percentage',
+    specifications: {} as Record<string, any>,
+    attributeValues: {} as Record<string, string>,
+    in_stock: true,
+    is_active: true,
+    custom_name: '',
+    custom_description: '',
+    custom_images: [] as string[],
+    stock: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [productAttributes, setProductAttributes] = useState<ProductAttribute[]>([]);
 
   // Load dashboard data
-const loadDashboard = useCallback(async () => {
-  if (!user?.id) {
-    setLoading(false);
-    return;
-  }
-
-  try {
-    // 1. Get business data - Get all shops and use the most recent
-    const { data: businessData, error: businessError } = await supabase
-      .from('shops')
-      .select('*')
-      .eq('owner_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (businessError) {
-      console.error('Business load error:', businessError);
+  const loadDashboard = useCallback(async () => {
+    if (!user?.id) {
       setLoading(false);
       return;
     }
 
-    if (!businessData || businessData.length === 0) {
-      console.log('No business found for user:', user.id);
+    try {
+      // 1. Get business data
+      const { data: businessData, error: businessError } = await supabase
+        .from('shops')
+        .select('*')
+        .eq('owner_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (businessError) {
+        console.error('Business load error:', businessError);
+        setLoading(false);
+        return;
+      }
+
+      if (!businessData || businessData.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const shop = businessData[0];
+      setBusiness(shop);
+      
+      const bizType = shop.business_type || 'shop';
+      setBusinessType(bizType);
+      setCategory(shop.category || '');
+
+      const bizConfig = BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop;
+      setConfig(bizConfig);
+
+      // 2. Get wallet balance
+      const { data: walletData, error: walletError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!walletError && walletData) {
+        const totalBalance = walletData
+          .filter((transaction) => transaction.status === 'completed')
+          .reduce(
+            (sum: number, transaction) =>
+              sum + (transaction.seller_received ?? transaction.amount ?? 0),
+            0,
+          );
+        setWalletBalance(totalBalance);
+        setWalletTransactions(walletData);
+      }
+
+      // 3. Get activity
+      const { data: activityData, error: activityError } = await supabase
+        .from('transactions')
+        .select(`
+          *,
+          users:user_id (
+            full_name,
+            phone_number
+          )
+        `)
+        .eq('shop_id', shop.id)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!activityError && activityData) {
+        setRecentActivity(activityData);
+      }
+
+      // 4. Get offerings based on business type
+      await loadOfferings(shop, bizType);
+
+      // 5. Calculate stats
+      const today = new Date().toISOString().split('T')[0];
+      const todayActivity: Transaction[] =
+        activityData?.filter(
+          (activity) => activity.created_at?.startsWith(today),
+        ) ?? [];
+
+      const todayRevenue = todayActivity.reduce(
+        (sum: number, activity: Transaction) =>
+          sum + (activity.seller_received ?? activity.amount ?? 0),
+        0,
+      );
+
+      setStats({
+        revenue: todayRevenue,
+        activityCount: activityData?.length || 0,
+        customers: new Set(activityData?.map((a: any) => a.user_id)).size || 0,
+        offerings: offerings.length,
+        rating: shop.rating || 0,
+        reviews: shop.review_count || 0,
+      });
+
+    } catch (error) {
+      console.error('Error loading dashboard:', error);
+    } finally {
       setLoading(false);
-      return;
+      setRefreshing(false);
     }
+  }, [user?.id]);
 
-    // Use the most recent shop
-    const shop = businessData[0];
-    setBusiness(shop);
-    
-    const bizType = shop.business_type || 'shop';
-    setBusinessType(bizType);
-    setCategory(shop.category || '');
-
-    // Set config based on business type
-    const bizConfig = BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop;
-    setConfig(bizConfig);
-
-    // 2. Get wallet balance
-    const { data: walletData, error: walletError } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('shop_id', shop.id)
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    if (walletError) {
-      console.error('Wallet load error:', walletError);
-    } else if (walletData) {
-      const totalBalance = walletData
-        .filter((transaction) => transaction.status === 'completed')
-        .reduce(
-          (sum: number, transaction) =>
-            sum + (transaction.seller_received ?? transaction.amount ?? 0),
-          0,
-        );
-      setWalletBalance(totalBalance);
-      setWalletTransactions(walletData);
-    }
-
-    // 3. Get activity
-    const { data: activityData, error: activityError } = await supabase
-      .from('transactions')
+  // Load offerings separately
+const loadOfferings = async (shop: Shop, bizType: string) => {
+  if (bizType === 'shop') {
+    // SIMPLIFIED QUERY - try without the join first
+    const { data: productData, error: productError } = await supabase
+      .from('shop_products')
       .select(`
         *,
-        users:user_id (
-          full_name,
-          phone_number
+        catalog:catalog_id (
+          id,
+          name,
+          description,
+          images,
+          specifications,
+          category,
+          brand
         )
       `)
       .eq('shop_id', shop.id)
-      .order('created_at', { ascending: false })
-      .limit(5);
+      .order('created_at', { ascending: false });
 
-    if (activityError) {
-      console.error('Activity load error:', activityError);
-    } else if (activityData) {
-      setRecentActivity(activityData);
+    if (productError) {
+      console.error('Product load error:', productError);
+      // If the join fails, try without it
+      if (productError.code === 'PGRST200' || productError.message?.includes('could not find')) {
+        console.log('⚠️ Join failed, trying without join...');
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('shop_products')
+          .select('*')
+          .eq('shop_id', shop.id)
+          .order('created_at', { ascending: false });
+        
+        if (!fallbackError && fallbackData) {
+          setOfferings(fallbackData);
+        }
+        return;
+      }
+      return;
     }
-
-    // 4. Get offerings based on business type
-    if (bizType === 'shop') {
-      const { data: productData, error: productError } = await supabase
-        .from('shop_products')
+    
+    if (productData) {
+      setOfferings(productData);
+    }
+  } else if (bizType === 'service' || bizType === 'institution') {
+    if (shop.owner_id) {
+      const { data: serviceData, error: serviceError } = await supabase
+        .from('provider_services')
         .select(`
           *,
-          catalog:catalog_id (
+          service_catalog:service_id (
             id,
             name,
             description,
             images,
+            duration,
+            category,
             specifications
           )
         `)
-        .eq('shop_id', shop.id)
+        .eq('user_id', shop.owner_id)
         .order('created_at', { ascending: false });
 
-      if (productError) {
-        console.error('Product load error:', productError);
-      } else if (productData) {
-        setOfferings(productData);
-      }
-    } else if (bizType === 'service' || bizType === 'institution') {
-      if (shop.owner_id) {
-        const { data: serviceData, error: serviceError } = await supabase
-          .from('provider_services')
-          .select(`
-            *,
-            service_catalog:service_id (
-              id,
-              name,
-              description,
-              images,
-              duration,
-              category
-            )
-          `)
-          .eq('user_id', shop.owner_id)
-          .order('created_at', { ascending: false });
-
-        if (serviceError) {
-          console.error('Service load error:', serviceError);
-        } else if (serviceData) {
-          setOfferings(serviceData);
+      if (serviceError) {
+        console.error('Service load error:', serviceError);
+        // Fallback without join
+        if (serviceError.code === 'PGRST200' || serviceError.message?.includes('could not find')) {
+          console.log('⚠️ Join failed, trying without join...');
+          const { data: fallbackData, error: fallbackError } = await supabase
+            .from('provider_services')
+            .select('*')
+            .eq('user_id', shop.owner_id)
+            .order('created_at', { ascending: false });
+          
+          if (!fallbackError && fallbackData) {
+            setOfferings(fallbackData);
+          }
         }
+        return;
+      }
+
+      if (serviceData) {
+        setOfferings(serviceData);
       }
     }
-
-    // 5. Calculate stats
-    const today = new Date().toISOString().split('T')[0];
-    const todayActivity: Transaction[] =
-      activityData?.filter(
-        (activity) => activity.created_at?.startsWith(today),
-      ) ?? [];
-
-    const todayRevenue = todayActivity.reduce(
-      (sum: number, activity: Transaction) =>
-        sum + (activity.seller_received ?? activity.amount ?? 0),
-      0,
-    );
-
-    setStats({
-      revenue: todayRevenue,
-      activityCount: activityData?.length || 0,
-      customers: new Set(activityData?.map((a: any) => a.user_id)).size || 0,
-      offerings: offerings.length,
-      rating: shop.rating || 0,
-      reviews: shop.review_count || 0,
-    });
-
-  } catch (error) {
-    console.error('Error loading dashboard:', error);
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
   }
-}, [user?.id]);
+};
 
   useEffect(() => {
     loadDashboard();
@@ -271,105 +336,766 @@ const loadDashboard = useCallback(async () => {
     loadDashboard();
   };
 
-  // --- Search Catalog (for shops) ---
-  const searchCatalog = async (query: string) => {
-    if (!query.trim()) {
-      setCatalogResults([]);
-      return;
-    }
-
-    const { data } = await supabase
-      .from('catalog')
-      .select('*')
-      .ilike('name', `%${query}%`)
-      .limit(10);
-
-    setCatalogResults(data || []);
+  // --- Get the correct catalog table based on business type ---
+  const getCatalogTable = () => {
+    return config.catalogTable || 'catalog';
   };
 
-  // --- Add Offering ---
-  const handleAddOffering = async () => {
-    if (!business) return;
+  // --- Get the correct offering table based on business type ---
+  const getOfferingTable = () => {
+    return config.offeringTable || 'shop_products';
+  };
 
-    if (businessType === 'shop') {
-      if (!selectedCatalogItem) {
-        Alert.alert('Error', 'Please select a product from the catalog');
+  // --- Catalog Search ---
+  const searchCatalog = async (query: string, categoryFilter: string = 'All') => {
+    setCatalogSearchQuery(query);
+    setCatalogCategoryFilter(categoryFilter);
+    
+    const table = getCatalogTable();
+    setCatalogLoading(true);
+    
+    try {
+      let supabaseQuery = supabase
+        .from(table)
+        .select('*')
+        .order('name');
+
+      if (query.trim()) {
+        supabaseQuery = supabaseQuery.or(`name.ilike.%${query}%,description.ilike.%${query}%,category.ilike.%${query}%`);
+      }
+
+      if (categoryFilter !== 'All') {
+        supabaseQuery = supabaseQuery.eq('category', categoryFilter);
+      }
+
+      supabaseQuery = supabaseQuery.limit(30);
+
+      const { data, error } = await supabaseQuery;
+
+      if (error) {
+        console.error('Catalog search error:', error);
         return;
       }
 
-      setSaving(true);
-      try {
-        const { error } = await supabase
-          .from('shop_products')
-          .insert({
-            shop_id: business.id,
-            catalog_id: selectedCatalogItem.id,
-            regular_price: parseFloat(newOffering.price) || 0,
-            in_stock: true,
-          });
+      setCatalogResults(data || []);
 
-        if (error) throw error;
+      // Extract unique categories
+      const categories = ['All', ...new Set(data?.map((item: any) => item.category).filter(Boolean))];
+      setCatalogCategories(categories);
 
-        Alert.alert('Success', 'Product added successfully!');
-        setShowAddModal(false);
-        setSelectedCatalogItem(null);
-        setNewOffering({});
-        loadDashboard();
-      } catch (error: any) {
-        Alert.alert('Error', error.message || 'Failed to add product');
-      } finally {
-        setSaving(false);
-      }
-    } else {
-      setSaving(true);
-      try {
-        let serviceId = newOffering.service_id;
-        
-        if (!serviceId) {
-          const { data: serviceData, error: serviceError } = await supabase
-            .from('service_catalog')
-            .insert({
-              name: newOffering.name || 'Untitled Service',
-              category: category || 'General',
-              description: newOffering.description || '',
-              duration: newOffering.duration || '',
-              is_active: true,
-            })
-            .select('id')
-            .single();
-
-          if (serviceError) throw serviceError;
-          serviceId = serviceData.id;
-        }
-
-        if (!business.owner_id) {
-          Alert.alert('Error', 'Business owner not found');
-          setSaving(false);
-          return;
-        }
-
-        const { error } = await supabase
-          .from('provider_services')
-          .insert({
-            user_id: business.owner_id,
-            service_id: serviceId,
-            price: parseFloat(newOffering.price) || 0,
-            is_active: true,
-          });
-
-        if (error) throw error;
-
-        Alert.alert('Success', `${config.offeringLabel.slice(0, -1)} added successfully!`);
-        setShowAddModal(false);
-        setNewOffering({});
-        loadDashboard();
-      } catch (error: any) {
-        Alert.alert('Error', error.message || 'Failed to add offering');
-      } finally {
-        setSaving(false);
-      }
+    } catch (error) {
+      console.error('Catalog search error:', error);
+    } finally {
+      setCatalogLoading(false);
     }
   };
+
+  // --- Open Catalog Browser ---
+  const openCatalogBrowser = () => {
+    setShowCatalogModal(true);
+    setCatalogSearchQuery('');
+    setCatalogCategoryFilter('All');
+    searchCatalog('', 'All');
+  };
+
+  // --- Select Catalog Item ---
+  const handleSelectCatalogItem = async (item: any) => {
+    setSelectedCatalogItem(item);
+    
+    // Pre-fill customization with catalog data
+    const specs = item.specifications || {};
+    const editableSpecs: Record<string, any> = {};
+    Object.keys(specs).forEach(key => {
+      editableSpecs[key] = specs[key] || '';
+    });
+
+    setCustomOffering({
+      price: '',
+      discount: '',
+      discountType: 'percentage',
+      specifications: editableSpecs,
+      attributeValues: {},
+      in_stock: true,
+      is_active: true,
+      custom_name: item.name || '',
+      custom_description: item.description || '',
+      custom_images: item.images || [],
+      stock: '',
+    });
+
+    // If shop and supports attributes, load product attributes
+    if (businessType === 'shop' && config.supportsAttributes) {
+      await loadProductAttributes(item.id);
+    }
+
+    setShowCatalogModal(false);
+    setShowCustomizeModal(true);
+  };
+
+  // --- Load Product Attributes ---
+  const loadProductAttributes = async (catalogId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('product_attributes')
+        .select('*')
+        .eq('catalog_id', catalogId)
+        .order('sort_order', { ascending: true });
+
+      if (error) {
+        console.error('Error loading attributes:', error);
+        return;
+      }
+
+      setProductAttributes(data || []);
+      
+      // Initialize attribute values
+      const attributeValues: Record<string, string> = {};
+      data?.forEach((attr: ProductAttribute) => {
+        attributeValues[attr.attribute_name] = '';
+      });
+      
+      setCustomOffering((prev: any) => ({
+        ...prev,
+        attributeValues,
+      }));
+      
+    } catch (error) {
+      console.error('Error loading attributes:', error);
+    }
+  };
+
+  // --- Pick Images ---
+  const pickImages = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets) {
+        const imageUris = result.assets.map(asset => asset.uri);
+        setCustomOffering((prev: any) => ({
+          ...prev,
+          custom_images: [...prev.custom_images, ...imageUris],
+        }));
+      }
+    } catch (error) {
+      console.error('Image pick error:', error);
+      Alert.alert('Error', 'Failed to pick images.');
+    }
+  };
+
+  // --- Remove Image ---
+  const removeImage = (index: number) => {
+    setCustomOffering((prev: any) => ({
+      ...prev,
+      custom_images: prev.custom_images.filter((_: any, i: number) => i !== index),
+    }));
+  };
+
+  // --- Add Offering with Customization ---
+  const handleAddCustomizedOffering = async () => {
+    if (!business || !selectedCatalogItem) {
+      Alert.alert('Error', 'No item selected');
+      return;
+    }
+
+    if (!customOffering.price || parseFloat(customOffering.price) <= 0) {
+      Alert.alert('Error', 'Please enter a valid price');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const price = parseFloat(customOffering.price);
+      const discount = customOffering.discount ? parseFloat(customOffering.discount) : 0;
+      
+      let finalPrice = price;
+      if (discount > 0) {
+        if (customOffering.discountType === 'percentage') {
+          finalPrice = price - (price * discount / 100);
+        } else {
+          finalPrice = price - discount;
+        }
+      }
+
+      // --- Step 1: Insert into the appropriate table ---
+      let offeringId: string | null = null;
+      let shopProductId: string | null = null;
+
+      if (businessType === 'shop') {
+        // For shops: insert into shop_products
+        const offeringData = {
+          shop_id: business.id,
+          catalog_id: selectedCatalogItem.id,
+          regular_price: finalPrice,
+          in_stock: customOffering.in_stock,
+          seller_specifications: customOffering.specifications || {},
+        };
+
+        console.log('📤 Inserting into shop_products:', offeringData);
+
+        const { data, error } = await supabase
+          .from('shop_products')
+          .insert(offeringData)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('❌ Shop product insert error:', error);
+          
+          // Check for specific foreign key errors
+          if (error.message?.includes('catalog_id')) {
+            throw new Error('Invalid catalog item. Please try again.');
+          }
+          if (error.message?.includes('shop_id')) {
+            throw new Error('Invalid shop. Please contact support.');
+          }
+          throw error;
+        }
+
+        offeringId = data.id;
+        shopProductId = data.id;
+        console.log('✅ Shop product created:', offeringId);
+
+        // --- Step 2: Handle product attributes for shops ---
+        if (config.supportsAttributes && Object.keys(customOffering.attributeValues).length > 0) {
+          await handleProductAttributes(selectedCatalogItem.id, shopProductId);
+        }
+
+      } else {
+        // For services and institutions: insert into provider_services
+        const offeringData: any = {
+          user_id: business.owner_id,
+          service_id: selectedCatalogItem.id,
+          price: finalPrice,
+          is_active: customOffering.is_active,
+        };
+
+        if (businessType === 'institution') {
+          offeringData.institution_id = business.id;
+        }
+
+        console.log('📤 Inserting into provider_services:', offeringData);
+
+        const { data, error } = await supabase
+          .from('provider_services')
+          .insert(offeringData)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('❌ Provider service insert error:', error);
+          
+          if (error.message?.includes('service_id')) {
+            throw new Error('Invalid service. Please try again.');
+          }
+          if (error.message?.includes('user_id')) {
+            throw new Error('Invalid user. Please contact support.');
+          }
+          throw error;
+        }
+
+        offeringId = data.id;
+        console.log('✅ Provider service created:', offeringId);
+      }
+
+      Alert.alert(
+        'Success', 
+        `${config.offeringLabel.slice(0, -1)} added successfully!`,
+        [{ text: 'OK' }]
+      );
+      
+      // Reset and refresh
+      setShowCustomizeModal(false);
+      setSelectedCatalogItem(null);
+      setProductAttributes([]);
+      setCustomOffering({
+        price: '',
+        discount: '',
+        discountType: 'percentage',
+        specifications: {},
+        attributeValues: {},
+        in_stock: true,
+        is_active: true,
+        custom_name: '',
+        custom_description: '',
+        custom_images: [],
+        stock: '',
+      });
+      loadDashboard();
+
+    } catch (error: any) {
+      console.error('❌ Add offering error:', error);
+      Alert.alert('Error', error.message || 'Failed to add offering');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // --- Handle Product Attributes ---
+  const handleProductAttributes = async (catalogId: string, productId: string) => {
+    try {
+      const attributeValues = customOffering.attributeValues || {};
+const entries = Object.entries(attributeValues).filter(([_, value]) => 
+  value && typeof value === 'string' && value.trim() !== ''
+);
+      if (entries.length === 0) {
+        console.log('No attribute values to save');
+        return;
+      }
+
+      console.log('📤 Saving product attributes:', entries);
+
+      for (const [attributeName, value] of entries) {
+        // 1. Find existing product_attribute or create one
+        let { data: existingAttribute, error: findError } = await supabase
+          .from('product_attributes')
+          .select('id')
+          .eq('catalog_id', catalogId)
+          .eq('attribute_name', attributeName)
+          .single();
+
+        if (findError && findError.code !== 'PGRST116') {
+          console.error('Error finding attribute:', findError);
+          continue;
+        }
+
+        let attributeId: string;
+
+        if (!existingAttribute) {
+          // Create new product_attribute
+          const { data: newAttr, error: createError } = await supabase
+  .from('product_attributes')
+  .insert({
+    catalog_id: catalogId,
+    attribute_name: attributeName,
+    attribute_value: typeof value === 'string' ? value : String(value),
+    attribute_type: 'text',
+  })
+  .select()
+  .single();
+
+          if (createError) {
+            console.error('Error creating attribute:', createError);
+            continue;
+          }
+          attributeId = newAttr.id;
+        } else {
+          attributeId = existingAttribute.id;
+        }
+
+        // 2. Insert into product_attribute_values
+        const { error: valueError } = await supabase
+  .from('product_attribute_values')
+  .insert({
+    product_id: productId,
+    attribute_id: attributeId,
+    value: typeof value === 'string' ? value : String(value),
+  });
+
+        if (valueError) {
+          console.error('Error inserting attribute value:', valueError);
+          // If duplicate, update instead
+          if (valueError.code === '23505') {
+            const { error: updateError } = await supabase
+  .from('product_attribute_values')
+  .update({ value: typeof value === 'string' ? value : String(value) })
+  .eq('product_id', productId)
+  .eq('attribute_id', attributeId);
+            if (updateError) {
+              console.error('Error updating attribute value:', updateError);
+            }
+          }
+        }
+      }
+
+      console.log('✅ Product attributes saved successfully');
+
+    } catch (error) {
+      console.error('Error handling product attributes:', error);
+    }
+  };
+
+  // --- Render Catalog Browser ---
+  const renderCatalogBrowser = () => (
+    <Modal
+      visible={showCatalogModal}
+      transparent={false}
+      animationType="slide"
+      onRequestClose={() => setShowCatalogModal(false)}
+    >
+      <SafeAreaView style={styles.modalFullScreen}>
+        <View style={styles.modalFullHeader}>
+          <TouchableOpacity onPress={() => setShowCatalogModal(false)}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+          <Text style={styles.modalFullTitle}>Browse {config.offeringLabel}</Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <View style={styles.searchContainer}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={20} color="#8A8AAE" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder={`Search ${config.offeringLabel.toLowerCase()}...`}
+              placeholderTextColor="#8A8AAE"
+              value={catalogSearchQuery}
+              onChangeText={(text) => searchCatalog(text, catalogCategoryFilter)}
+            />
+            {catalogSearchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => searchCatalog('', catalogCategoryFilter)}>
+                <Ionicons name="close-circle" size={20} color="#8A8AAE" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* Category Filters */}
+        {catalogCategories.length > 1 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.categoryFilters}
+            contentContainerStyle={styles.categoryFiltersContent}
+          >
+            {catalogCategories.map((cat) => (
+              <TouchableOpacity
+                key={cat}
+                style={[
+                  styles.categoryFilterChip,
+                  catalogCategoryFilter === cat && styles.categoryFilterChipActive,
+                ]}
+                onPress={() => searchCatalog(catalogSearchQuery, cat)}
+              >
+                <Text
+                  style={[
+                    styles.categoryFilterText,
+                    catalogCategoryFilter === cat && styles.categoryFilterTextActive,
+                  ]}
+                >
+                  {cat}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        {catalogLoading ? (
+          <View style={styles.catalogLoading}>
+            <ActivityIndicator size="large" color="#4A7DFF" />
+            <Text style={styles.catalogLoadingText}>Loading catalog...</Text>
+          </View>
+        ) : catalogResults.length === 0 ? (
+          <View style={styles.catalogEmpty}>
+            <Ionicons name="search-outline" size={48} color="#8A8AAE" />
+            <Text style={styles.catalogEmptyTitle}>No items found</Text>
+            <Text style={styles.catalogEmptySubtext}>
+              Try adjusting your search or filters
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={catalogResults}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.catalogItemCard}
+                onPress={() => handleSelectCatalogItem(item)}
+              >
+                <Image
+                  source={{ uri: item.images?.[0] || 'https://via.placeholder.com/80' }}
+                  style={styles.catalogItemImage}
+                />
+                <View style={styles.catalogItemInfo}>
+                  <Text style={styles.catalogItemName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.catalogItemCategory}>
+                    {item.category || 'Uncategorized'}
+                  </Text>
+                  {item.brand && (
+                    <Text style={styles.catalogItemBrand}>🏷️ {item.brand}</Text>
+                  )}
+                  {item.duration && (
+                    <Text style={styles.catalogItemDuration}>⏱️ {item.duration}</Text>
+                  )}
+                </View>
+                <View style={styles.catalogItemSelect}>
+                  <Ionicons name="chevron-forward" size={20} color="#4A7DFF" />
+                </View>
+              </TouchableOpacity>
+            )}
+            contentContainerStyle={styles.catalogListContent}
+          />
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+
+  // --- Render Customization Modal ---
+  const renderCustomizeModal = () => (
+    <Modal
+      visible={showCustomizeModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => {
+        setShowCustomizeModal(false);
+        setSelectedCatalogItem(null);
+        setProductAttributes([]);
+      }}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              Customize {config.offeringLabel.slice(0, -1)}
+            </Text>
+            <TouchableOpacity onPress={() => {
+              setShowCustomizeModal(false);
+              setSelectedCatalogItem(null);
+              setProductAttributes([]);
+            }}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {/* Catalog Item Preview */}
+            {selectedCatalogItem && (
+              <View style={styles.catalogPreview}>
+                <Image
+                  source={{ uri: selectedCatalogItem.images?.[0] || 'https://via.placeholder.com/100' }}
+                  style={styles.catalogPreviewImage}
+                />
+                <View style={styles.catalogPreviewInfo}>
+                  <Text style={styles.catalogPreviewName}>{selectedCatalogItem.name}</Text>
+                  <Text style={styles.catalogPreviewCategory}>
+                    {selectedCatalogItem.category}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Price */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>Your Price (UGX) *</Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="Enter your price"
+                placeholderTextColor="#8A8AAE"
+                keyboardType="numeric"
+                value={customOffering.price}
+                onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, price: text }))}
+              />
+            </View>
+
+            {/* Discount */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>Discount</Text>
+              <View style={styles.discountRow}>
+                <TextInput
+                  style={[styles.formInput, styles.discountInput]}
+                  placeholder="0"
+                  placeholderTextColor="#8A8AAE"
+                  keyboardType="numeric"
+                  value={customOffering.discount}
+                  onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, discount: text }))}
+                />
+                <View style={styles.discountTypeContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.discountTypeBtn,
+                      customOffering.discountType === 'percentage' && styles.discountTypeActive,
+                    ]}
+                    onPress={() => setCustomOffering((prev: any) => ({ ...prev, discountType: 'percentage' }))}
+                  >
+                    <Text style={[styles.discountTypeText, customOffering.discountType === 'percentage' && styles.discountTypeTextActive]}>
+                      %
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.discountTypeBtn,
+                      customOffering.discountType === 'fixed' && styles.discountTypeActive,
+                    ]}
+                    onPress={() => setCustomOffering((prev: any) => ({ ...prev, discountType: 'fixed' }))}
+                  >
+                    <Text style={[styles.discountTypeText, customOffering.discountType === 'fixed' && styles.discountTypeTextActive]}>
+                      UGX
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {/* Stock (for shops) */}
+            {businessType === 'shop' && (
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Stock Quantity</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="Enter stock quantity"
+                  placeholderTextColor="#8A8AAE"
+                  keyboardType="numeric"
+                  value={customOffering.stock}
+                  onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, stock: text }))}
+                />
+              </View>
+            )}
+
+            {/* Custom Images */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>Your Images</Text>
+              <View style={styles.imageUploadRow}>
+                {customOffering.custom_images.map((uri: string, index: number) => (
+                  <View key={index} style={styles.imagePreviewContainer}>
+                    <Image source={{ uri }} style={styles.imagePreview} />
+                    <TouchableOpacity
+                      style={styles.imageRemoveBtn}
+                      onPress={() => removeImage(index)}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#E74C3C" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                <TouchableOpacity style={styles.imageAddBtn} onPress={pickImages}>
+                  <Ionicons name="camera" size={24} color="#4A7DFF" />
+                  <Text style={styles.imageAddText}>Add Photos</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Custom Name & Description */}
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>Custom Name (Optional)</Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="Override the default name"
+                placeholderTextColor="#8A8AAE"
+                value={customOffering.custom_name}
+                onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, custom_name: text }))}
+              />
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>Custom Description (Optional)</Text>
+              <TextInput
+                style={[styles.formInput, styles.formTextArea]}
+                placeholder="Override the default description"
+                placeholderTextColor="#8A8AAE"
+                multiline
+                numberOfLines={3}
+                value={customOffering.custom_description}
+                onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, custom_description: text }))}
+              />
+            </View>
+
+            {/* Specifications */}
+            {Object.keys(customOffering.specifications).length > 0 && (
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Specifications</Text>
+                {Object.keys(customOffering.specifications).map((key) => (
+                  <View key={key} style={styles.specRow}>
+                    <Text style={styles.specLabel}>
+                      {key.charAt(0).toUpperCase() + key.slice(1)}
+                    </Text>
+                    <TextInput
+                      style={styles.specInput}
+                      placeholder={`Enter ${key}`}
+                      placeholderTextColor="#8A8AAE"
+                      value={customOffering.specifications[key] || ''}
+                      onChangeText={(text) => {
+                        setCustomOffering((prev: any) => ({
+                          ...prev,
+                          specifications: { ...prev.specifications, [key]: text }
+                        }));
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Product Attributes (for shops) */}
+            {businessType === 'shop' && productAttributes.length > 0 && (
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Product Attributes</Text>
+                {productAttributes.map((attr: ProductAttribute) => (
+                  <View key={attr.id} style={styles.specRow}>
+                    <Text style={styles.specLabel}>
+                      {attr.attribute_name}
+                    </Text>
+                    <TextInput
+                      style={styles.specInput}
+                      placeholder={`Enter ${attr.attribute_name}`}
+                      placeholderTextColor="#8A8AAE"
+                      value={customOffering.attributeValues[attr.attribute_name] || ''}
+                      onChangeText={(text) => {
+                        setCustomOffering((prev: any) => ({
+                          ...prev,
+                          attributeValues: { 
+                            ...prev.attributeValues, 
+                            [attr.attribute_name]: text 
+                          }
+                        }));
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Toggles */}
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>
+                {businessType === 'shop' ? 'In Stock' : 'Available'}
+              </Text>
+              <Switch
+                value={customOffering.in_stock}
+                onValueChange={(value) => setCustomOffering((prev: any) => ({ ...prev, in_stock: value }))}
+                trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+              />
+            </View>
+
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>Visible to Customers</Text>
+              <Switch
+                value={customOffering.is_active}
+                onValueChange={(value) => setCustomOffering((prev: any) => ({ ...prev, is_active: value }))}
+                trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.modalSubmit, saving && styles.modalSubmitDisabled]}
+              onPress={handleAddCustomizedOffering}
+              disabled={saving}
+            >
+              <LinearGradient
+                colors={['#4A7DFF', '#6B94FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.modalSubmitGradient}
+              >
+                <Text style={styles.modalSubmitText}>
+                  {saving ? 'Publishing...' : `Publish ${config.offeringLabel.slice(0, -1)}`}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
 
   // --- Render Stats ---
   const renderStats = () => {
@@ -424,11 +1150,9 @@ const loadDashboard = useCallback(async () => {
         let onPress = () => {};
 
         switch(action) {
-          case 'Add Product':
-          case 'Add Service':
-          case 'Add Offering':
-            icon = 'add-circle-outline';
-            onPress = () => setShowAddModal(true);
+          case 'Browse Catalog':
+            icon = 'grid-outline';
+            onPress = openCatalogBrowser;
             break;
           case 'View Orders':
           case 'View Bookings':
@@ -517,57 +1241,67 @@ const loadDashboard = useCallback(async () => {
     <View style={styles.tabContent}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{config.offeringLabel} ({offerings.length})</Text>
-        <TouchableOpacity style={styles.addButton} onPress={() => setShowAddModal(true)}>
+        <TouchableOpacity style={styles.addButton} onPress={openCatalogBrowser}>
           <Ionicons name="add" size={20} color="#FFFFFF" />
-          <Text style={styles.addButtonText}>Add</Text>
+          <Text style={styles.addButtonText}>Browse Catalog</Text>
         </TouchableOpacity>
       </View>
 
       {offerings.length === 0 ? (
-        <Text style={styles.noDataText}>No {config.offeringLabel.toLowerCase()} yet.</Text>
+        <View style={styles.emptyOfferings}>
+          <Ionicons name={config.offeringIcon} size={48} color="#8A8AAE" />
+          <Text style={styles.emptyOfferingsTitle}>No {config.offeringLabel.toLowerCase()} yet</Text>
+          <Text style={styles.emptyOfferingsSubtext}>
+            Browse the catalog to add {config.offeringLabel.toLowerCase()} to your shop
+          </Text>
+          <TouchableOpacity style={styles.browseCatalogBtn} onPress={openCatalogBrowser}>
+            <Text style={styles.browseCatalogBtnText}>Browse Catalog</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
-        offerings.map((item, index) => (
-          <View key={index} style={styles.offeringCard}>
-            {item.catalog?.images && item.catalog.images.length > 0 ? (
-              <Image source={{ uri: item.catalog.images[0] }} style={styles.offeringImage} />
-            ) : item.service_catalog?.images && item.service_catalog.images.length > 0 ? (
-              <Image source={{ uri: item.service_catalog.images[0] }} style={styles.offeringImage} />
-            ) : (
-              <View style={[styles.offeringImage, styles.offeringImagePlaceholder]}>
-                <Text style={styles.offeringImageText}>📦</Text>
+        offerings.map((item, index) => {
+          const catalogData = item.catalog || item.service_catalog || {};
+          const name = catalogData.name || item.name || 'Offering';
+          const price = item.regular_price || item.price || 0;
+          const images = catalogData.images || [];
+          
+          return (
+            <View key={index} style={styles.offeringCard}>
+              {images.length > 0 ? (
+                <Image source={{ uri: images[0] }} style={styles.offeringImage} />
+              ) : (
+                <View style={[styles.offeringImage, styles.offeringImagePlaceholder]}>
+                  <Text style={styles.offeringImageText}>📦</Text>
+                </View>
+              )}
+              <View style={styles.offeringInfo}>
+                <Text style={styles.offeringName}>{name}</Text>
+                <Text style={styles.offeringPrice}>UGX {price.toLocaleString()}</Text>
+                <View style={styles.offeringStats}>
+                  {businessType === 'shop' ? (
+                    <>
+                      <Text style={styles.offeringStat}>👁️ {item.views || 0}</Text>
+                      <Text style={styles.offeringStat}>🛒 {item.sales || 0}</Text>
+                      <Text style={[styles.offeringStock, { color: item.in_stock ? '#2ECC71' : '#E74C3C' }]}>
+                        {item.in_stock ? 'In Stock' : 'Out of Stock'}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.offeringStat}>📅 {catalogData.duration || 'N/A'}</Text>
+                      <Text style={[styles.offeringStock, { color: item.is_active ? '#2ECC71' : '#E74C3C' }]}>
+                        {item.is_active ? 'Available' : 'Unavailable'}
+                      </Text>
+                    </>
+                  )}
+                </View>
               </View>
-            )}
-            <View style={styles.offeringInfo}>
-              <Text style={styles.offeringName}>
-                {item.catalog?.name || item.service_catalog?.name || item.name || 'Offering'}
-              </Text>
-              <Text style={styles.offeringPrice}>
-                UGX {(item.regular_price || item.price || 0).toLocaleString()}
-              </Text>
-              <View style={styles.offeringStats}>
-                {businessType === 'shop' ? (
-                  <>
-                    <Text style={styles.offeringStat}>👁️ {item.views || 0}</Text>
-                    <Text style={styles.offeringStat}>🛒 {item.sales || 0}</Text>
-                    <Text style={[styles.offeringStock, { color: item.in_stock ? '#2ECC71' : '#E74C3C' }]}>
-                      {item.in_stock ? 'In Stock' : 'Out of Stock'}
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.offeringStat}>📅 {item.service_catalog?.duration || item.duration || 'N/A'}</Text>
-                    <Text style={[styles.offeringStock, { color: item.is_active ? '#2ECC71' : '#E74C3C' }]}>
-                      {item.is_active ? 'Available' : 'Unavailable'}
-                    </Text>
-                  </>
-                )}
-              </View>
+              <TouchableOpacity style={styles.offeringAction}>
+                <Ionicons name="create-outline" size={20} color="#4A7DFF" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.offeringAction}>
-              <Ionicons name="create-outline" size={20} color="#4A7DFF" />
-            </TouchableOpacity>
-          </View>
-        ))
+          );
+        })
       )}
     </View>
   );
@@ -606,8 +1340,6 @@ const loadDashboard = useCallback(async () => {
             const statusStyle = statusColors[status] || statusColors.pending;
             const statusDisplay = status.charAt(0).toUpperCase() + status.slice(1);
 
-            const actions = config.actions?.[status] || [];
-
             return (
               <View key={index} style={styles.activityCard}>
                 <View style={styles.activityCardHeader}>
@@ -625,13 +1357,6 @@ const loadDashboard = useCallback(async () => {
                   <Text style={styles.activityCardAmount}>
                     UGX {item.amount?.toLocaleString() || 0}
                   </Text>
-                </View>
-                <View style={styles.activityCardActions}>
-                  {actions.map((action: string) => (
-                    <TouchableOpacity key={action} style={styles.activityCardAction}>
-                      <Text style={styles.activityCardActionText}>{action}</Text>
-                    </TouchableOpacity>
-                  ))}
                 </View>
               </View>
             );
@@ -837,171 +1562,7 @@ const loadDashboard = useCallback(async () => {
     </View>
   );
 
-  // --- Render Add Modal ---
-  const renderAddModal = () => (
-    <Modal
-      visible={showAddModal}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => {
-        setShowAddModal(false);
-        setSelectedCatalogItem(null);
-      }}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              {businessType === 'shop' ? 'Add Product' : `Add ${config.offeringLabel.slice(0, -1)}`}
-            </Text>
-            <TouchableOpacity onPress={() => {
-              setShowAddModal(false);
-              setSelectedCatalogItem(null);
-            }}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {businessType === 'shop' ? (
-              <>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Search Catalog</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="Search for a product..."
-                    placeholderTextColor="#8A8AAE"
-                    value={searchQuery}
-                    onChangeText={(text) => {
-                      setSearchQuery(text);
-                      searchCatalog(text);
-                    }}
-                  />
-                </View>
-
-                {catalogResults.length > 0 && (
-                  <View style={styles.catalogResults}>
-                    {catalogResults.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={[styles.catalogItem, selectedCatalogItem?.id === item.id && styles.catalogItemSelected]}
-                        onPress={() => setSelectedCatalogItem(item)}
-                      >
-                        <Image source={{ uri: item.images?.[0] || 'https://via.placeholder.com/40' }} style={styles.catalogImage} />
-                        <View style={styles.catalogInfo}>
-                          <Text style={styles.catalogName}>{item.name}</Text>
-                          <Text style={styles.catalogCategory}>{item.category}</Text>
-                        </View>
-                        {selectedCatalogItem?.id === item.id && (
-                          <Ionicons name="checkmark-circle" size={20} color="#2ECC71" />
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-
-                {selectedCatalogItem && (
-                  <>
-                    <View style={styles.formGroup}>
-                      <Text style={styles.formLabel}>Price (UGX) *</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        placeholder="Enter your price"
-                        placeholderTextColor="#8A8AAE"
-                        keyboardType="numeric"
-                        value={newOffering.price}
-                        onChangeText={(text) => setNewOffering({ ...newOffering, price: text })}
-                      />
-                    </View>
-
-                    <View style={styles.formGroup}>
-                      <Text style={styles.formLabel}>Stock Quantity *</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        placeholder="Enter stock quantity"
-                        placeholderTextColor="#8A8AAE"
-                        keyboardType="numeric"
-                        value={newOffering.stock}
-                        onChangeText={(text) => setNewOffering({ ...newOffering, stock: text })}
-                      />
-                    </View>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>{config.offeringLabel.slice(0, -1)} Name *</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder={`Enter ${config.offeringLabel.slice(0, -1).toLowerCase()} name`}
-                    placeholderTextColor="#8A8AAE"
-                    value={newOffering.name}
-                    onChangeText={(text) => setNewOffering({ ...newOffering, name: text })}
-                  />
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Price (UGX) *</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="Enter price"
-                    placeholderTextColor="#8A8AAE"
-                    keyboardType="numeric"
-                    value={newOffering.price}
-                    onChangeText={(text) => setNewOffering({ ...newOffering, price: text })}
-                  />
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Duration</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="e.g. 1 hour, 30 mins"
-                    placeholderTextColor="#8A8AAE"
-                    value={newOffering.duration}
-                    onChangeText={(text) => setNewOffering({ ...newOffering, duration: text })}
-                  />
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Description</Text>
-                  <TextInput
-                    style={[styles.formInput, styles.formTextArea]}
-                    placeholder="Describe your offering..."
-                    placeholderTextColor="#8A8AAE"
-                    multiline
-                    numberOfLines={3}
-                    value={newOffering.description}
-                    onChangeText={(text) => setNewOffering({ ...newOffering, description: text })}
-                  />
-                </View>
-              </>
-            )}
-
-            <TouchableOpacity
-              style={[styles.modalSubmit, saving && styles.modalSubmitDisabled]}
-              onPress={handleAddOffering}
-              disabled={saving}
-            >
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.modalSubmitGradient}
-              >
-                <Text style={styles.modalSubmitText}>
-                  {saving ? 'Adding...' : `Add ${config.offeringLabel.slice(0, -1)}`}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // --- Render Content ---
+  // --- Render Tab Content ---
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview':
@@ -1040,6 +1601,7 @@ const loadDashboard = useCallback(async () => {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#4A7DFF" />
           <Text style={styles.loadingText}>Loading dashboard...</Text>
         </View>
       </SafeAreaView>
@@ -1133,7 +1695,8 @@ const loadDashboard = useCallback(async () => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {renderAddModal()}
+      {renderCatalogBrowser()}
+      {renderCustomizeModal()}
     </SafeAreaView>
   );
 };
@@ -1152,6 +1715,7 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#8A8AAE',
     fontSize: 14,
+    marginTop: 10,
   },
   header: {
     flexDirection: 'row',
@@ -1428,7 +1992,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
   },
   activityCardCustomer: {
     color: '#8A8AAE',
@@ -1438,21 +2001,6 @@ const styles = StyleSheet.create({
     color: '#1F2F5F',
     fontSize: 14,
     fontWeight: '600',
-  },
-  activityCardActions: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  activityCardAction: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  activityCardActionText: {
-    color: '#4A7DFF',
-    fontSize: 11,
-    fontWeight: '500',
   },
   filterChips: {
     flexDirection: 'row',
@@ -1812,41 +2360,209 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
-  catalogResults: {
-    marginBottom: 12,
-    maxHeight: 200,
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
   },
-  catalogItem: {
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#8A8AAE',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  setupBtn: {
+    backgroundColor: '#4A7DFF',
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 10,
+  },
+  setupBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  emptyOfferings: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  emptyOfferingsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2F5F',
+    marginTop: 12,
+  },
+  emptyOfferingsSubtext: {
+    fontSize: 13,
+    color: '#8A8AAE',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  browseCatalogBtn: {
+    backgroundColor: '#4A7DFF',
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  browseCatalogBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // --- Modal Styles ---
+  modalFullScreen: {
+    flex: 1,
+    backgroundColor: '#F8F9FC',
+  },
+  modalFullHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8ECF4',
+  },
+  modalFullTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+  },
+  searchContainer: {
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
-    backgroundColor: '#F8F9FC',
-    borderRadius: 8,
-    marginBottom: 6,
+    backgroundColor: '#F5F7FA',
+    borderRadius: 10,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: '#E8ECF4',
   },
-  catalogItemSelected: {
-    borderColor: '#4A7DFF',
-    backgroundColor: 'rgba(74, 125, 255, 0.05)',
-  },
-  catalogImage: {
-    width: 36,
-    height: 36,
-    borderRadius: 6,
-    marginRight: 10,
-  },
-  catalogInfo: {
+  searchInput: {
     flex: 1,
-  },
-  catalogName: {
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     color: '#1F2F5F',
-    fontSize: 13,
+    fontSize: 14,
+  },
+  categoryFilters: {
+    maxHeight: 44,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8ECF4',
+  },
+  categoryFiltersContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    gap: 8,
+  },
+  categoryFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 16,
+    backgroundColor: '#F5F7FA',
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  categoryFilterChipActive: {
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    borderColor: '#4A7DFF',
+  },
+  categoryFilterText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+  },
+  categoryFilterTextActive: {
+    color: '#4A7DFF',
     fontWeight: '500',
   },
-  catalogCategory: {
+  catalogLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  catalogLoadingText: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 10,
+  },
+  catalogEmpty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  catalogEmptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+    marginTop: 12,
+  },
+  catalogEmptySubtext: {
+    fontSize: 14,
+    color: '#8A8AAE',
+    marginTop: 4,
+  },
+  catalogListContent: {
+    padding: 16,
+    gap: 8,
+  },
+  catalogItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    marginBottom: 8,
+  },
+  catalogItemImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  catalogItemInfo: {
+    flex: 1,
+  },
+  catalogItemName: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  catalogItemCategory: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  catalogItemBrand: {
     color: '#8A8AAE',
     fontSize: 11,
+    marginTop: 2,
+  },
+  catalogItemDuration: {
+    color: '#8A8AAE',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  catalogItemSelect: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
   modalOverlay: {
     flex: 1,
@@ -1858,7 +2574,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
-    maxHeight: height * 0.8,
+    maxHeight: height * 0.85,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1875,6 +2591,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
     marginTop: 12,
+    marginBottom: 20,
   },
   modalSubmitDisabled: {
     opacity: 0.5,
@@ -1911,34 +2628,131 @@ const styles = StyleSheet.create({
     height: 80,
     textAlignVertical: 'top',
   },
-  emptyState: {
+  discountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  discountInput: {
     flex: 1,
+  },
+  discountTypeContainer: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  discountTypeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: '#F5F7FA',
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  discountTypeActive: {
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    borderColor: '#4A7DFF',
+  },
+  discountTypeText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  discountTypeTextActive: {
+    color: '#4A7DFF',
+  },
+  imageUploadRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  imagePreviewContainer: {
+    position: 'relative',
+  },
+  imagePreview: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+  },
+  imageRemoveBtn: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+  },
+  imageAddBtn: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    backgroundColor: '#F5F7FA',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    borderStyle: 'dashed',
   },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+  imageAddText: {
+    color: '#4A7DFF',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  specRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  specLabel: {
     color: '#1F2F5F',
-    marginTop: 12,
+    fontSize: 12,
+    fontWeight: '500',
+    minWidth: 80,
   },
-  emptySubtitle: {
+  specInput: {
+    flex: 1,
+    backgroundColor: '#F5F7FA',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    color: '#1F2F5F',
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F6FA',
+  },
+  toggleLabel: {
+    color: '#1F2F5F',
     fontSize: 14,
-    color: '#8A8AAE',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20,
   },
-  setupBtn: {
-    backgroundColor: '#4A7DFF',
-    paddingVertical: 12,
-    paddingHorizontal: 32,
+  catalogPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    backgroundColor: '#F8F9FC',
     borderRadius: 10,
+    marginBottom: 16,
   },
-  setupBtnText: {
-    color: '#FFFFFF',
+  catalogPreviewImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+  },
+  catalogPreviewInfo: {
+    flex: 1,
+  },
+  catalogPreviewName: {
+    color: '#1F2F5F',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
+  },
+  catalogPreviewCategory: {
+    color: '#8A8AAE',
+    fontSize: 12,
   },
 });

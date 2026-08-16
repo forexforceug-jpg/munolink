@@ -1,3 +1,5 @@
+// src/layouts/DesktopLayout.tsx
+
 import React, { ReactNode } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Sidebar } from '../components/Sidebar';
@@ -19,14 +21,21 @@ interface Props {
   onSharePress?: (opportunity: Opportunity) => void;
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
-  contextPanelView?: 'details' | 'reviews' | null;
-  onContextPanelViewChange?: (view: 'details' | 'reviews' | null) => void;
+  contextPanelView?: 'details' | 'reviews' | 'directions' | null;
+  onContextPanelViewChange?: (view: 'details' | 'reviews' | 'directions' | null) => void;
   // Modal props for Context Panel
   selectedProductId?: string;
   selectedProductTitle?: string;
   selectedOpportunityForModal?: Opportunity | null;
   onCloseReviews?: () => void;
   onCloseDetails?: () => void;
+  // AI props
+  aiViewActive?: boolean;
+  onAIClose?: () => void;
+  aiContextHint?: string;
+  // Directions props
+  directionsViewActive?: boolean;
+  onDirectionsClose?: () => void;
 }
 
 export function DesktopLayout({ 
@@ -50,6 +59,11 @@ export function DesktopLayout({
   selectedOpportunityForModal = null,
   onCloseReviews,
   onCloseDetails,
+  aiViewActive = false,
+  onAIClose,
+  aiContextHint = '',
+  directionsViewActive = false,
+  onDirectionsClose,
 }: Props) {
   return (
     <View style={styles.container}>
@@ -66,25 +80,30 @@ export function DesktopLayout({
             </View>
           )}
         </View>
-       {!hideContextPanel && (
-  <View style={{ width: 360, flexShrink: 0 }}>
-    <ContextPanel 
-      opportunity={selectedOpportunity || undefined}
-      onReviewsPress={onReviewsPress}
-      onShowMorePress={onShowMorePress}
-      onSharePress={onSharePress}
-      onAIPress={onAIPress}
-      featuredOpportunities={featuredOpportunities}
-      activeView={contextPanelView}
-      onViewChange={onContextPanelViewChange}
-      selectedProductId={selectedProductId}
-      selectedProductTitle={selectedProductTitle}
-      selectedOpportunity={selectedOpportunityForModal}
-      onCloseReviews={onCloseReviews}
-      onCloseDetails={onCloseDetails}
-    />
-  </View>
-)}
+        {!hideContextPanel && (
+          <View style={{ width: 360, flexShrink: 0 }}>
+            <ContextPanel 
+              opportunity={selectedOpportunity || undefined}
+              onReviewsPress={onReviewsPress}
+              onShowMorePress={onShowMorePress}
+              onSharePress={onSharePress}
+              onAIPress={onAIPress}
+              featuredOpportunities={featuredOpportunities}
+              activeView={contextPanelView}
+              onViewChange={onContextPanelViewChange}
+              selectedProductId={selectedProductId}
+              selectedProductTitle={selectedProductTitle}
+              selectedOpportunity={selectedOpportunityForModal}
+              onCloseReviews={onCloseReviews}
+              onCloseDetails={onCloseDetails}
+              aiViewActive={aiViewActive}
+              onAIClose={onAIClose}
+              aiContextHint={aiContextHint}
+              directionsViewActive={directionsViewActive}
+              onDirectionsClose={onDirectionsClose}
+            />
+          </View>
+        )}
       </View>
       
       {desktopNavArrows && (
@@ -114,14 +133,14 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   feedWrapper: {
-    width: '100%',
+    width: '90%',
     maxWidth: 480,
     height: '100%',
     justifyContent: 'center',
   },
   floatingActionsContainer: {
     position: 'absolute',
-    right: 120,
+    right: 60,
     top: '50%',
     transform: [{ translateY: -150 }],
     zIndex: 9999,

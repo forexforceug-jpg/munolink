@@ -57,10 +57,10 @@ export function Sidebar({ currentRoute, onNavigate }: Props) {
 const styles = StyleSheet.create({
   sidebar: {
     width: 220,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#0D0D1A',
     paddingVertical: 24,
     borderRightWidth: 1,
-    borderRightColor: 'rgba(255,255,255,0.06)',
+    borderRightColor: '#0D0D1A',
   },
   logoContainer: {
     paddingHorizontal: 20,

@@ -228,6 +228,7 @@ export type Database = {
           },
         ]
       }
+      
       individual_providers: {
         Row: {
           address: string | null
@@ -1237,6 +1238,87 @@ export type Database = {
           },
         ]
       }
+      // --- ADD THE BUSINESS DOCUMENTS TABLE HERE ---
+      business_documents: {
+        Row: {
+          id: string
+          business_id: string | null
+          document_type: string
+          file_name: string
+          file_url: string
+          file_size: number | null
+          mime_type: string | null
+          uploaded_by: string
+          uploaded_at: string
+          is_verified: boolean
+          verified_at: string | null
+          verified_by: string | null
+          status: string
+          rejection_reason: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          business_id?: string | null
+          document_type: string
+          file_name: string
+          file_url: string
+          file_size?: number | null
+          mime_type?: string | null
+          uploaded_by: string
+          uploaded_at?: string
+          is_verified?: boolean
+          verified_at?: string | null
+          verified_by?: string | null
+          status?: string
+          rejection_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          business_id?: string | null
+          document_type?: string
+          file_name?: string
+          file_url?: string
+          file_size?: number | null
+          mime_type?: string | null
+          uploaded_by?: string
+          uploaded_at?: string
+          is_verified?: boolean
+          verified_at?: string | null
+          verified_by?: string | null
+          status?: string
+          rejection_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "business_documents_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "shops"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "business_documents_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "business_documents_verified_by_fkey"
+            columns: ["verified_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      // --- END OF BUSINESS DOCUMENTS TABLE ---
     }
     Views: {
       [_ in never]: never
@@ -1443,3 +1525,23 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
+// Keep your BusinessDocument type definition
+export type BusinessDocument = {
+  id: string;
+  business_id: string;
+  document_type: string;
+  file_name: string;
+  file_url: string;
+  file_size: number | null;
+  mime_type: string | null;
+  uploaded_by: string;
+  uploaded_at: string;
+  is_verified: boolean;
+  verified_at: string | null;
+  verified_by: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  rejection_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};

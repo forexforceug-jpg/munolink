@@ -1,3 +1,5 @@
+// src/features/feed/components/FloatingActionRail.tsx
+
 import React, { memo, useRef, useEffect, useState } from 'react';
 import { 
   View, 
@@ -39,10 +41,9 @@ interface FloatingActionRailProps {
   onDirectionsPress: (shopName: string, area: string) => void;
   onSharePress: (opportunity: Opportunity) => void;
   onAIPress: (opportunity: Opportunity) => void;
-  onSavePress?: (opportunity: Opportunity) => void;  // NEW: Save/Wishlist
-  // Optional data overrides for demo/display
+  onSavePress?: (opportunity: Opportunity) => void;
   reviewCount?: number;
-  distance?: number; // in km
+  distance?: number;
   shareCount?: number;
   savedCount?: number;
   isSaved?: boolean;
@@ -52,26 +53,29 @@ const ICONS = {
   reviews: 'chatbubble-ellipses',
   directions: 'map',
   share: 'share-social',
-  save: 'bookmark',        // NEW
-  saveOutline: 'bookmark',  // NEW
+  save: 'bookmark',
+  saveOutline: 'bookmark-outline',
 };
 
+// 🎯 INCREASED SIZES FOR BETTER VISIBILITY
 const DESKTOP_POSITION = {
-  BUTTON_SIZE: 48,
-  SHOP_BUTTON_SIZE: 56,
-  GAP: 32,
-  AI_GAP: -2,
-  ICON_SIZE: 22,  // Slightly smaller to make room for values
-  VALUE_FONT_SIZE: 9,
+  BUTTON_SIZE: 56,
+  SHOP_BUTTON_SIZE: 54,
+  GAP: 24,
+  AI_GAP: -14,
+  ICON_SIZE: 32,
+  VALUE_FONT_SIZE: 12,
+  LABEL_FONT_SIZE: 10,
 };
 
 const MOBILE_POSITION = {
-  BUTTON_SIZE: 44,
-  SHOP_BUTTON_SIZE: 48,
-  GAP: 8,
-  AI_GAP: 15,
-  ICON_SIZE: 20,
-  VALUE_FONT_SIZE: 7,
+  BUTTON_SIZE: 58,
+  SHOP_BUTTON_SIZE: 52,
+  GAP: 7,
+  AI_GAP: 45,
+  ICON_SIZE: 32,
+  VALUE_FONT_SIZE: 11,
+  LABEL_FONT_SIZE: 9,
 };
 
 const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
@@ -120,7 +124,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     callback();
   };
 
-  // Handle Save/Wishlist toggle
   const handleSavePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const newSavedState = !saved;
@@ -132,22 +135,31 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   };
 
-  const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : 44;
-  const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : 48;
-  const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : 20;
-  const valueFontSize = isDesktop ? DESKTOP_POSITION.VALUE_FONT_SIZE : 7;
-  const gap = isDesktop ? DESKTOP_POSITION.GAP : 8;
-  const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : 15;
+  // 🎯 USE INCREASED SIZES
+  const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : MOBILE_POSITION.BUTTON_SIZE;
+  const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : MOBILE_POSITION.SHOP_BUTTON_SIZE;
+  const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : MOBILE_POSITION.ICON_SIZE;
+  const valueFontSize = isDesktop ? DESKTOP_POSITION.VALUE_FONT_SIZE : MOBILE_POSITION.VALUE_FONT_SIZE;
+  const labelFontSize = isDesktop ? DESKTOP_POSITION.LABEL_FONT_SIZE : MOBILE_POSITION.LABEL_FONT_SIZE;
+  const gap = isDesktop ? DESKTOP_POSITION.GAP : MOBILE_POSITION.GAP;
+  const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : MOBILE_POSITION.AI_GAP;
 
   const shopLetter = opportunity.shopName?.charAt(0).toUpperCase() || 'S';
   
-  // Hardcoded logo sizes
   const LOGO_SIZE_DESKTOP = 80;
   const LOGO_SIZE_MOBILE = 70;
   const logoSize = isDesktop ? LOGO_SIZE_DESKTOP : LOGO_SIZE_MOBILE;
 
-  // Format distance
-  const formattedDistance = distance > 0 ? `${distance.toFixed(1)}km` : '--';
+  // Format values - always show something
+  const formattedDistance = distance > 0 ? `${distance.toFixed(1)}km` : '0km';
+  const rating = opportunity.rating ? opportunity.rating.toFixed(1) : '0.0';
+  const displayShareCount = shareCount > 0 ? shareCount : 0;
+  const displaySavedCount = localSavedCount > 0 ? localSavedCount : 0;
+
+  // 🎯 Calculate pulse size based on button size
+  const pulseSize = shopButtonSize + 16; // Slightly larger for better effect
+  const pulseRadius = pulseSize / 2;
+  const pulseMargin = -(pulseSize / 2); // Negative half for centering
 
   return (
     <View style={[styles.container, { gap }]}>
@@ -165,16 +177,13 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.8}
       >
         <View style={styles.shopLetterContainer}>
-          <Text style={[styles.shopLetter, { fontSize: shopButtonSize * 0.45 }]}>
+          <Text style={[styles.shopLetter, { fontSize: shopButtonSize * 0.5 }]}>
             {shopLetter}
           </Text>
         </View>
-        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
-          Shop
-        </Text>
       </TouchableOpacity>
 
-      {/* Reviews Button - Shows Rating */}
+      {/* Reviews Button */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -184,17 +193,17 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.reviews as any} size={iconSize} color="#FFFFFF" />
-        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
-          {opportunity.rating ? opportunity.rating.toFixed(1) : '0.0'}
+        <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
+          {rating}
         </Text>
-        {opportunity.rating && (
+        {opportunity.rating && opportunity.rating > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>{opportunity.rating.toFixed(1)}</Text>
+            <Text style={styles.badgeText}>{rating}</Text>
           </View>
         )}
       </TouchableOpacity>
 
-      {/* Directions Button - Shows Distance */}
+      {/* Directions Button */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -204,12 +213,12 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.directions as any} size={iconSize} color="#FFFFFF" />
-        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
+        <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
           {formattedDistance}
         </Text>
       </TouchableOpacity>
 
-      {/* Share Button - Shows Share Count */}
+      {/* Share Button */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -219,12 +228,12 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.share as any} size={iconSize} color="#FFFFFF" />
-        <Text style={[styles.valueLabel, { fontSize: valueFontSize }]}>
-          {shareCount > 0 ? shareCount : ''}
+        <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
+          {displayShareCount}
         </Text>
       </TouchableOpacity>
 
-      {/* NEW: Save/Wishlist Button - Shows Saved Count */}
+      {/* Save/Wishlist Button */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -238,16 +247,25 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           size={iconSize} 
           color={saved ? '#FF6B6B' : '#FFFFFF'} 
         />
-        <Text style={[styles.valueLabel, { 
+        <Text style={[styles.valueText, { 
           fontSize: valueFontSize,
-          color: saved ? '#FF6B6B' : 'rgba(255,255,255,0.6)'
+          color: saved ? '#FF6B6B' : 'rgba(255,255,255,0.8)'
         }]}>
-          {localSavedCount > 0 ? localSavedCount : ''}
+          {displaySavedCount}
         </Text>
       </TouchableOpacity>
 
-      {/* AI Button with Muno Logo */}
-      <View style={{ marginTop: aiGap }}>
+      {/* 🎯 AI Button with Muno Logo - COMPLETELY FIXED ALIGNMENT */}
+      <View style={[styles.aiWrapper, { marginTop: aiGap }]}>
+        {/* Pulse Animation - Centered behind button */}
+        <Animated.View 
+          style={[
+            styles.aiPulse,
+           
+          ]} 
+        />
+        
+        {/* AI Button */}
         <TouchableOpacity
           style={[
             styles.aiButton,
@@ -257,41 +275,42 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
               borderRadius: shopButtonSize / 2,
             }
           ]}
-          onPress={() => handlePress('AI', () => onAIPress(opportunity))}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            onAIPress(opportunity);
+          }}
           activeOpacity={0.8}
         >
-          <View style={[styles.aiGlow, { padding: 4 }]}>
-            {munoLogo ? (
-              <Image
-                source={munoLogo}
-                style={{ 
-                  width: logoSize,
-                  height: logoSize,
-                }}
-                resizeMode="contain"
-              />
-            ) : (
-              <Text style={[styles.aiFallbackText, { fontSize: shopButtonSize * 0.4 }]}>
-                M
-              </Text>
-            )}
+          {/* 🎯 FIXED: Glow container properly centered */}
+          <View style={styles.aiGlowContainer}>
+            <View style={styles.aiGlow}>
+              {munoLogo ? (
+                <Image
+                  source={munoLogo}
+                  style={{ 
+                    width: logoSize,
+                    height: logoSize,
+                  }}
+                  resizeMode="contain"
+                />
+              ) : (
+                <Text style={[styles.aiFallbackText, { fontSize: shopButtonSize * 0.4 }]}>
+                  M
+                </Text>
+              )}
+            </View>
           </View>
-          <Animated.View 
-            style={[
-              styles.aiPulse,
-              {
-                width: shopButtonSize + 6,
-                height: shopButtonSize + 6,
-                borderRadius: (shopButtonSize + 6) / 2,
-                transform: [{ scale: pulseAnim }],
-                opacity: pulseAnim.interpolate({
-                  inputRange: [1, 1.15],
-                  outputRange: [0.12, 0.3],
-                }),
-              }
-            ]} 
-          />
         </TouchableOpacity>
+        
+        {/* AI Label */}
+        <Text style={[styles.labelText, { 
+          fontSize: labelFontSize,
+          marginTop: 3,
+          color: '#4A7DFF',
+          textAlign: 'center',
+        }]}>
+          AI
+        </Text>
       </View>
     </View>
   );
@@ -357,33 +376,54 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  valueLabel: {
-    color: 'rgba(255,255,255,0.6)',
+  // 🎯 AI Wrapper - Centers everything
+  aiWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    width: '100%',
+  },
+
+  valueText: {
+    color: 'rgba(255,255,255,0.9)',
     fontWeight: '600',
-    marginTop: 2,
+    marginTop: 3,
     textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+    letterSpacing: 0.5,
+  },
+
+  labelText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+    letterSpacing: 0.3,
   },
 
   badge: {
     position: 'absolute',
-    top: -2,
-    right: -2,
+    top: -4,
+    right: -4,
     backgroundColor: '#F1C40F',
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    minWidth: 16,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    minWidth: 18,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
 
   badgeText: {
     color: '#1F2F5F',
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: 'bold',
   },
 
+  // 🎯 AI Button - Properly centered
   aiButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -391,6 +431,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderWidth: 2.5,
     borderColor: '#4A7DFF',
+    zIndex: 2,
     ...Platform.select({
       ios: {
         shadowColor: '#4A7DFF',
@@ -411,19 +452,36 @@ const styles = StyleSheet.create({
     }),
   },
 
-  aiGlow: {
-    backgroundColor: 'rgba(74, 125, 255, 0.06)',
-    borderRadius: 999,
+  // 🎯 FIXED: Glow Container - Centers the glow perfectly
+  aiGlowContainer: {
+    width: '100%',
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    overflow: 'visible',
+    borderRadius: 999,
+    overflow: 'hidden',
   },
 
+  // 🎯 FIXED: Glow - Properly sized and centered
+  aiGlow: {
+    width: '80%',
+    height: '80%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 999,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    overflow: 'hidden',
+  },
+
+  // 🎯 FIXED: Pulse - Perfectly centered behind button
   aiPulse: {
     position: 'absolute',
     borderWidth: 2,
     borderColor: '#4A7DFF',
-    opacity: 0.12,
+    zIndex: 1,
+    // Centering is now handled inline with dynamic marginLeft and marginTop
+    top: '50%',
+    left: '50%',
   },
 
   aiFallbackText: {

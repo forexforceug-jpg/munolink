@@ -1,9 +1,13 @@
+// src/components/ContextPanel.tsx
+
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Opportunity } from '../services/feed.service';
 import { ReviewsBottomSheet } from '../features/feed/components/ReviewsBottomSheet';
 import { SimpleDetailsModal } from '../features/feed/components/SimpleDetailsModal';
+import { AIBottomSheet } from '../features/feed/components/AIBottomSheet';
+import { DirectionsBottomSheet } from '../features/feed/components/DirectionsBottomSheet';
 
 interface Props {
   opportunity?: Opportunity | null;
@@ -12,13 +16,20 @@ interface Props {
   onSharePress?: (opportunity: Opportunity) => void;
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
-  activeView?: 'details' | 'reviews' | null;
-  onViewChange?: (view: 'details' | 'reviews' | null) => void;
+  activeView?: 'details' | 'reviews' | 'directions' | null;
+  onViewChange?: (view: 'details' | 'reviews' | 'directions' | null) => void;
   selectedProductId?: string;
   selectedProductTitle?: string;
   selectedOpportunity?: Opportunity | null;
   onCloseReviews?: () => void;
   onCloseDetails?: () => void;
+  // AI props
+  aiViewActive?: boolean;
+  onAIClose?: () => void;
+  aiContextHint?: string;
+  // Directions props
+  directionsViewActive?: boolean;
+  onDirectionsClose?: () => void;
 }
 
 const FeaturedItem = ({ item, onPress }: any) => (
@@ -46,12 +57,17 @@ export function ContextPanel({
   selectedOpportunity = null,
   onCloseReviews,
   onCloseDetails,
+  aiViewActive = false,
+  onAIClose,
+  aiContextHint = '',
+  directionsViewActive = false,
+  onDirectionsClose,
 }: Props) {
-  const [internalActiveView, setInternalActiveView] = useState<'details' | 'reviews' | null>(null);
+  const [internalActiveView, setInternalActiveView] = useState<'details' | 'reviews' | 'directions' | null>(null);
   
   const activeView = externalActiveView !== undefined ? externalActiveView : internalActiveView;
 
-  const setView = (view: 'details' | 'reviews' | null) => {
+  const setView = (view: 'details' | 'reviews' | 'directions' | null) => {
     setInternalActiveView(view);
     if (onViewChange) {
       onViewChange(view);
@@ -59,6 +75,47 @@ export function ContextPanel({
   };
 
   const PANEL_WIDTH = 340;
+
+  // ============================================================
+  // DIRECTIONS VIEW
+  // ============================================================
+  if (activeView === 'directions' && opportunity) {
+    console.log('📍 Rendering Directions view in ContextPanel');
+    return (
+      <View style={[styles.container, { width: PANEL_WIDTH }]}>
+        <DirectionsBottomSheet
+          isDesktopView={true}
+          opportunity={opportunity}
+          onClose={() => {
+            console.log('🔚 Directions Context Panel closing');
+            setView(null);
+            onDirectionsClose?.();
+          }}
+          panelWidth={PANEL_WIDTH}
+        />
+      </View>
+    );
+  }
+
+  // ============================================================
+  // AI VIEW - Show AI Assistant
+  // ============================================================
+  if (aiViewActive && opportunity) {
+    console.log('🎯 Rendering AI view in ContextPanel');
+    return (
+      <View style={[styles.container, { width: PANEL_WIDTH }]}>
+        <AIBottomSheet
+          isDesktopView={true}
+          opportunity={opportunity}
+          contextHint={aiContextHint}
+          onClose={() => {
+            console.log('🔚 AI Context Panel closing');
+            onAIClose?.();
+          }}
+        />
+      </View>
+    );
+  }
 
   // ============================================================
   // DEFAULT: Show Featured Grid (3 columns)
@@ -181,9 +238,9 @@ export function ContextPanel({
 // ============================================================
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: '#0D0D1A',
     borderLeftWidth: 1,
-    borderLeftColor: 'rgba(255,255,255,0.06)',
+    borderLeftColor: '#0D0D1A',
     flex: 1,
   },
   header: {

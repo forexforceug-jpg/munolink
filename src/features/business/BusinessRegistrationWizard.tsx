@@ -15,6 +15,8 @@ import {
   Alert,
   Animated,
   Image,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,7 +26,19 @@ import { supabase } from '../../lib/supabase';
 import type { Json } from '../../types/database.types';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-
+// Add this type definition at the top of your file, after the imports
+type BusinessDocumentInsert = {
+  business_id: string | null;
+  document_type: string;
+  file_name: string;
+  file_url: string;
+  file_data?: string;
+  file_size?: number;
+  mime_type?: string;
+  uploaded_by: string;
+  status?: string;
+  is_verified?: boolean;
+};
 const { width, height } = Dimensions.get('window');
 
 // --- Business Types (Simplified) ---
@@ -77,41 +91,165 @@ const CATEGORIES: Record<string, any[]> = {
   ],
 };
 
-// --- Dynamic Wizard Questions ---
+// --- Dynamic Wizard Questions (Simplified with options) ---
 const WIZARD_QUESTIONS: Record<string, any[]> = {
   products: [
-    { key: 'brands', label: 'What brands do you sell?', placeholder: 'e.g. Samsung, Apple, Nike' },
-    { key: 'warranty', label: 'Do you offer warranty?', type: 'select', options: ['Yes - 12 months', 'Yes - 24 months', 'No'] },
-    { key: 'delivery', label: 'Do you offer delivery?', type: 'select', options: ['Yes - Free', 'Yes - Paid', 'No'] },
-    { key: 'pickup', label: 'Is in-store pickup available?', type: 'select', options: ['Yes', 'No'] },
-    { key: 'business_hours', label: 'Business Hours', placeholder: 'e.g. Mon-Fri 8AM-8PM, Sat 9AM-6PM' },
+    { 
+      key: 'brands', 
+      label: 'What brands do you sell?', 
+      type: 'multiselect',
+      options: ['Samsung', 'Apple', 'Nike', 'Adidas', 'Sony', 'LG', 'HP', 'Dell', 'Other'],
+      placeholder: 'Select brands you sell'
+    },
+    { 
+      key: 'warranty', 
+      label: 'Do you offer warranty?', 
+      type: 'select', 
+      options: ['Yes - 12 months', 'Yes - 24 months', 'No'] 
+    },
+    { 
+      key: 'delivery', 
+      label: 'Do you offer delivery?', 
+      type: 'select', 
+      options: ['Yes - Free', 'Yes - Paid', 'No'] 
+    },
+    { 
+      key: 'pickup', 
+      label: 'Is in-store pickup available?', 
+      type: 'select', 
+      options: ['Yes', 'No'] 
+    },
+    { 
+      key: 'payment_methods', 
+      label: 'Payment methods accepted?', 
+      type: 'multiselect',
+      options: ['Cash', 'Mobile Money', 'Bank Transfer', 'Card', 'Credit'],
+      placeholder: 'Select payment methods'
+    },
   ],
   services: [
-    { key: 'service_type', label: 'What type of services do you offer?', placeholder: 'e.g. Repairs, Consultations' },
-    { key: 'experience', label: 'Years of experience?', placeholder: 'e.g. 5 years' },
-    { key: 'certification', label: 'Do you have certifications?', type: 'select', options: ['Yes - Licensed', 'Yes - Certified', 'No'] },
-    { key: 'availability', label: 'When are you available?', placeholder: 'e.g. Mon-Fri 9AM-6PM, Sat 10AM-4PM' },
-    { key: 'service_area', label: 'What areas do you cover?', placeholder: 'e.g. Jinja, Kampala' },
+    { 
+      key: 'service_type', 
+      label: 'What type of services do you offer?', 
+      type: 'multiselect',
+      options: ['Repairs', 'Consultations', 'Installation', 'Maintenance', 'Training', 'Other'],
+      placeholder: 'Select service types'
+    },
+    { 
+      key: 'experience', 
+      label: 'Years of experience?', 
+      type: 'select',
+      options: ['Less than 1 year', '1-3 years', '3-5 years', '5-10 years', '10+ years'] 
+    },
+    { 
+      key: 'certification', 
+      label: 'Do you have certifications?', 
+      type: 'select', 
+      options: ['Yes - Licensed', 'Yes - Certified', 'No'] 
+    },
+    { 
+      key: 'availability', 
+      label: 'When are you available?', 
+      type: 'multiselect',
+      options: ['Weekdays', 'Weekends', 'Mornings', 'Afternoons', 'Evenings', '24/7'],
+      placeholder: 'Select availability'
+    },
+    { 
+      key: 'service_area', 
+      label: 'What areas do you cover?', 
+      type: 'multiselect',
+      options: ['Kampala', 'Jinja', 'Entebbe', 'Mukono', 'Gulu', 'Other'],
+      placeholder: 'Select service areas'
+    },
   ],
   menu: [
-    { key: 'cuisine', label: 'What type of cuisine?', placeholder: 'e.g. Italian, Local, Chinese' },
-    { key: 'delivery', label: 'Do you offer delivery?', type: 'select', options: ['Yes - Free', 'Yes - Paid', 'No'] },
-    { key: 'reservations', label: 'Do you accept reservations?', type: 'select', options: ['Yes', 'No'] },
-    { key: 'dietary_options', label: 'Do you have dietary options?', placeholder: 'e.g. Vegetarian, Gluten-free' },
-    { key: 'operating_hours', label: 'Operating Hours', placeholder: 'e.g. Mon-Sun 10AM-10PM' },
+    { 
+      key: 'cuisine', 
+      label: 'What type of cuisine?', 
+      type: 'multiselect',
+      options: ['Italian', 'Local', 'Chinese', 'Indian', 'Mexican', 'Fast Food', 'Other'],
+      placeholder: 'Select cuisine types'
+    },
+    { 
+      key: 'delivery', 
+      label: 'Do you offer delivery?', 
+      type: 'select', 
+      options: ['Yes - Free', 'Yes - Paid', 'No'] 
+    },
+    { 
+      key: 'reservations', 
+      label: 'Do you accept reservations?', 
+      type: 'select', 
+      options: ['Yes', 'No'] 
+    },
+    { 
+      key: 'dietary_options', 
+      label: 'Dietary options available?', 
+      type: 'multiselect',
+      options: ['Vegetarian', 'Vegan', 'Gluten-free', 'Halal', 'Kosher', 'None'],
+      placeholder: 'Select dietary options'
+    },
   ],
   hotel: [
-    { key: 'room_types', label: 'What room types do you have?', placeholder: 'e.g. Standard, Deluxe, Suite' },
-    { key: 'amenities', label: 'What amenities do you offer?', placeholder: 'e.g. Pool, Gym, Restaurant' },
-    { key: 'check_in', label: 'Check-in time?', placeholder: 'e.g. 2:00 PM' },
-    { key: 'check_out', label: 'Check-out time?', placeholder: 'e.g. 12:00 PM' },
-    { key: 'parking', label: 'Do you offer parking?', type: 'select', options: ['Yes - Free', 'Yes - Paid', 'No'] },
+    { 
+      key: 'room_types', 
+      label: 'What room types do you have?', 
+      type: 'multiselect',
+      options: ['Standard', 'Deluxe', 'Suite', 'Executive', 'Family', 'Dormitory'],
+      placeholder: 'Select room types'
+    },
+    { 
+      key: 'amenities', 
+      label: 'What amenities do you offer?', 
+      type: 'multiselect',
+      options: ['Pool', 'Gym', 'Restaurant', 'Spa', 'WiFi', 'Parking', 'Conference Room'],
+      placeholder: 'Select amenities'
+    },
+    { 
+      key: 'parking', 
+      label: 'Do you offer parking?', 
+      type: 'select', 
+      options: ['Yes - Free', 'Yes - Paid', 'No'] 
+    },
+    { 
+      key: 'check_in', 
+      label: 'Check-in time?', 
+      type: 'select',
+      options: ['12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', 'Flexible'] 
+    },
+    { 
+      key: 'check_out', 
+      label: 'Check-out time?', 
+      type: 'select',
+      options: ['10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', 'Flexible'] 
+    },
   ],
   institution: [
-    { key: 'service_type', label: 'What services do you offer?', placeholder: 'e.g. Education, Healthcare' },
-    { key: 'operating_hours', label: 'Operating Hours', placeholder: 'e.g. Mon-Fri 8AM-6PM' },
-    { key: 'capacity', label: 'What is your capacity?', placeholder: 'e.g. 100 students, 50 beds' },
-    { key: 'certification', label: 'Do you have certifications?', type: 'select', options: ['Yes - Licensed', 'Yes - Accredited', 'No'] },
+    { 
+      key: 'service_type', 
+      label: 'What services do you offer?', 
+      type: 'multiselect',
+      options: ['Education', 'Healthcare', 'Banking', 'Religious', 'Community', 'Other'],
+      placeholder: 'Select service types'
+    },
+    { 
+      key: 'capacity', 
+      label: 'What is your capacity?', 
+      type: 'select',
+      options: ['Small (1-50)', 'Medium (51-200)', 'Large (201-500)', 'Very Large (500+)'] 
+    },
+    { 
+      key: 'certification', 
+      label: 'Do you have certifications?', 
+      type: 'select', 
+      options: ['Yes - Licensed', 'Yes - Accredited', 'No'] 
+    },
+    { 
+      key: 'operating_hours', 
+      label: 'Operating hours?', 
+      type: 'select',
+      options: ['24/7', 'Weekdays only', 'Weekends only', 'Custom hours'] 
+    },
   ],
 };
 
@@ -146,7 +284,15 @@ interface DocumentUpload {
   uploaded?: boolean;
   progress?: number;
   preview?: string;
+  document_id?: string;
 }
+
+// --- Location Data ---
+const DISTRICTS = [
+  'Kampala', 'Jinja', 'Entebbe', 'Mukono', 'Gulu', 'Mbarara', 
+  'Masaka', 'Mbale', 'Fort Portal', 'Arua', 'Lira', 'Soroti',
+  'Busia', 'Tororo', 'Iganga', 'Kamuli', 'Kayunga', 'Luwero'
+];
 
 // --- Sub-components ---
 const StepIndicator = ({ currentStep, totalSteps }: any) => (
@@ -189,6 +335,135 @@ const CategoryCard = ({ item, selected, onPress }: any) => (
   </TouchableOpacity>
 );
 
+// --- Multi-Select Component ---
+const MultiSelect = ({ options, selected, onSelect, placeholder }: any) => {
+  const [modalVisible, setModalVisible] = useState(false);
+  
+  const toggleOption = (option: string) => {
+    if (selected.includes(option)) {
+      onSelect(selected.filter((item: string) => item !== option));
+    } else {
+      onSelect([...selected, option]);
+    }
+  };
+
+  return (
+    <View style={styles.multiselectContainer}>
+      <TouchableOpacity
+        style={styles.multiselectTrigger}
+        onPress={() => setModalVisible(true)}
+      >
+        <Text style={selected.length > 0 ? styles.multiselectText : styles.multiselectPlaceholder}>
+          {selected.length > 0 ? selected.join(', ') : placeholder || 'Select options'}
+        </Text>
+        <Ionicons name="chevron-down" size={20} color="#8A8AAE" />
+      </TouchableOpacity>
+
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Options</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#1F2F5F" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={options}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.modalOption,
+                    selected.includes(item) && styles.modalOptionSelected,
+                  ]}
+                  onPress={() => toggleOption(item)}
+                >
+                  <View style={styles.modalOptionCheck}>
+                    {selected.includes(item) && (
+                      <Ionicons name="checkmark-circle" size={24} color="#4A7DFF" />
+                    )}
+                  </View>
+                  <Text style={styles.modalOptionText}>{item}</Text>
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity
+              style={styles.modalDoneButton}
+              onPress={() => setModalVisible(false)}
+            >
+              <Text style={styles.modalDoneText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+};
+
+// --- Select Component ---
+const Select = ({ options, selected, onSelect, placeholder }: any) => {
+  const [modalVisible, setModalVisible] = useState(false);
+
+  return (
+    <View style={styles.selectContainer}>
+      <TouchableOpacity
+        style={styles.selectTrigger}
+        onPress={() => setModalVisible(true)}
+      >
+        <Text style={selected ? styles.selectText : styles.selectPlaceholder}>
+          {selected || placeholder || 'Select an option'}
+        </Text>
+        <Ionicons name="chevron-down" size={20} color="#8A8AAE" />
+      </TouchableOpacity>
+
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select an Option</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#1F2F5F" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={options}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.modalOption,
+                    selected === item && styles.modalOptionSelected,
+                  ]}
+                  onPress={() => {
+                    onSelect(item);
+                    setModalVisible(false);
+                  }}
+                >
+                  <Text style={styles.modalOptionText}>{item}</Text>
+                  {selected === item && (
+                    <Ionicons name="checkmark" size={20} color="#4A7DFF" />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+};
+
 const WizardQuestion = ({ question, value, onChange }: any) => {
   const [customText, setCustomText] = useState(value || '');
 
@@ -198,32 +473,38 @@ const WizardQuestion = ({ question, value, onChange }: any) => {
     }
   }, [value]);
 
-  const handleChange = (text: string) => {
-    setCustomText(text);
-    onChange(text);
-  };
-
-  if (question.type === 'select') {
+  // Handle multi-select
+  if (question.type === 'multiselect') {
+    const selected = Array.isArray(value) ? value : [];
     return (
       <View style={styles.wizardQuestion}>
         <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
-        <View style={styles.selectOptions}>
-          {question.options.map((option: string) => (
-            <TouchableOpacity
-              key={option}
-              style={[styles.selectOption, value === option && styles.selectOptionSelected]}
-              onPress={() => onChange(option)}
-            >
-              <Text style={[styles.selectOptionText, value === option && styles.selectOptionTextSelected]}>
-                {option}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <MultiSelect
+          options={question.options}
+          selected={selected}
+          onSelect={(newSelected: string[]) => onChange(newSelected)}
+          placeholder={question.placeholder}
+        />
       </View>
     );
   }
 
+  // Handle single select
+  if (question.type === 'select') {
+    return (
+      <View style={styles.wizardQuestion}>
+        <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
+        <Select
+          options={question.options}
+          selected={value || ''}
+          onSelect={(option: string) => onChange(option)}
+          placeholder="Select an option"
+        />
+      </View>
+    );
+  }
+
+  // Handle text input (fallback)
   return (
     <View style={styles.wizardQuestion}>
       <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
@@ -232,7 +513,10 @@ const WizardQuestion = ({ question, value, onChange }: any) => {
         placeholder={question.placeholder || 'Enter details...'}
         placeholderTextColor="#8A8AAE"
         value={customText}
-        onChangeText={handleChange}
+        onChangeText={(text) => {
+          setCustomText(text);
+          onChange(text);
+        }}
       />
     </View>
   );
@@ -250,6 +534,7 @@ const DocumentUploadBox = ({
   fileSize,
   preview,
   required,
+  docData, // Pass the document data from parent
 }: any) => {
 
   return (
@@ -268,8 +553,8 @@ const DocumentUploadBox = ({
 
       {uploaded && fileName ? (
         <View style={styles.uploadBoxPreview}>
-          {preview ? (
-            <Image source={{ uri: preview }} style={styles.uploadBoxImage} />
+          {preview || (docData?.uri && docData.uri.startsWith('data:')) ? (
+            <Image source={{ uri: docData?.uri || preview }} style={styles.uploadBoxImage} />
           ) : (
             <View style={styles.uploadBoxFileInfo}>
               <Ionicons name="document" size={32} color="#4A7DFF" />
@@ -294,7 +579,10 @@ const DocumentUploadBox = ({
       ) : (
         <TouchableOpacity
           style={styles.uploadBoxDropZone}
-          onPress={() => onUpload(docType)}
+          onPress={() => {
+            console.log('📂 Upload box tapped for:', docType);
+            onUpload(docType);
+          }}
           activeOpacity={0.7}
         >
           <Ionicons name="cloud-upload-outline" size={40} color="#8A8AAE" />
@@ -313,10 +601,11 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
   const [businessType, setBusinessType] = useState<string | null>(null);
   const [category, setCategory] = useState<string | null>(null);
   const [businessName, setBusinessName] = useState('');
-  const [businessAddress, setBusinessAddress] = useState('');
+  const [district, setDistrict] = useState<string | null>(null);
   const [businessDescription, setBusinessDescription] = useState('');
-  const [wizardAnswers, setWizardAnswers] = useState<Record<string, string>>({});
+  const [wizardAnswers, setWizardAnswers] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [shopId, setShopId] = useState<string | null>(null);
   
   // Document upload states
   const [documents, setDocuments] = useState<Record<string, DocumentUpload>>({});
@@ -324,6 +613,8 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
 
   const scrollViewRef = useRef<ScrollView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  const BUCKET_NAME = 'business_documents';
 
   const getWizardType = () => {
     if (!businessType || !category) return null;
@@ -341,19 +632,327 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
     return DOCUMENT_REQUIREMENTS[businessType] || DOCUMENT_REQUIREMENTS.shop;
   };
 
-  // --- Document Upload Functions ---
-  const pickDocument = async (docType: string) => {
+  // --- Test Bucket Connection ---
+  const testBucketConnection = async () => {
+    console.log('🧪 Testing bucket connection...');
+    
     try {
+      const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+      console.log('📦 All buckets:', buckets);
+      
+      if (listError) {
+        console.error('❌ List error:', listError);
+        Alert.alert('Error', 'Failed to list buckets: ' + listError.message);
+        return;
+      }
+      
+      const bucketExists = buckets?.some(b => b.name === BUCKET_NAME);
+      console.log(`🔍 ${BUCKET_NAME} exists?`, bucketExists);
+      
+      if (!bucketExists) {
+        console.log('📦 Creating bucket...');
+        const { data, error } = await supabase.storage.createBucket(BUCKET_NAME, {
+          public: true,
+          allowedMimeTypes: ['image/*', 'application/pdf'],
+          fileSizeLimit: 5242880,
+        });
+        
+        if (error) {
+          console.error('❌ Create error:', error);
+          Alert.alert('Error', 'Failed to create bucket: ' + error.message);
+          return;
+        }
+        console.log('✅ Bucket created:', data);
+      }
+      
+      const { data: files, error: filesError } = await supabase.storage
+        .from(BUCKET_NAME)
+        .list();
+      
+      console.log('📄 Files in bucket:', files);
+      if (filesError) console.error('❌ Files error:', filesError);
+      
+      const testBlob = new Blob(['test'], { type: 'text/plain' });
+      const testPath = `test_${Date.now()}.txt`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(testPath, testBlob, {
+          contentType: 'text/plain',
+          cacheControl: '3600',
+          upsert: true,
+        });
+      
+      if (uploadError) {
+        console.error('❌ Upload test error:', uploadError);
+        Alert.alert('Upload Test Failed', uploadError.message);
+      } else {
+        console.log('✅ Test upload successful:', uploadData);
+        
+        const { data: { publicUrl } } = supabase.storage
+          .from(BUCKET_NAME)
+          .getPublicUrl(testPath);
+        console.log('🔗 Public URL:', publicUrl);
+        
+        await supabase.storage.from(BUCKET_NAME).remove([testPath]);
+        
+        Alert.alert('Success', 'Bucket is working! Test file uploaded and deleted.');
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Test error:', error);
+      Alert.alert('Error', error.message);
+    }
+  };
+
+  // --- Test File Picker for Web ---
+  const testFilePicker = () => {
+    console.log('🧪 Testing file picker directly...');
+    
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf,.jpg,.jpeg,.png';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      
+      input.onchange = (e: any) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          console.log('✅ Test file selected:', file.name);
+          Alert.alert('Success', `File selected: ${file.name}`);
+        } else {
+          console.log('❌ Test failed - no file');
+          Alert.alert('Error', 'No file selected');
+        }
+        if (input.parentNode) {
+          input.parentNode.removeChild(input);
+        }
+      };
+      
+      input.oncancel = () => {
+        console.log('❌ Test cancelled');
+        if (input.parentNode) {
+          input.parentNode.removeChild(input);
+        }
+      };
+      
+      input.click();
+    } else {
+      Alert.alert('Not Web', 'This test is for web platform only');
+    }
+  };
+
+  const uploadDocument = async (docType: string, file: any) => {
+  try {
+    console.log(`🚀 Starting upload for ${docType}`);
+    
+    if (!file || !file.uri) {
+      throw new Error('No file data provided');
+    }
+
+    setUploadingDoc(docType);
+    
+    const userId = user?.id;
+    if (!userId) {
+      Alert.alert('Error', 'Please sign in first');
+      setUploadingDoc(null);
+      return;
+    }
+
+    console.log('📤 Processing file:', file.name);
+
+    // Convert file to Base64
+    let base64Data = '';
+    
+    if (Platform.OS === 'web') {
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      
+      const reader = new FileReader();
+      base64Data = await new Promise((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64 = result.split(',')[1] || result;
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } else {
+      const response = await fetch(file.uri);
+      const blob = await response.blob();
+      
+      const reader = new FileReader();
+      base64Data = await new Promise((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64 = result.split(',')[1] || result;
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    const mimeType = file.mimeType || 'application/octet-stream';
+    const dataUrl = `data:${mimeType};base64,${base64Data}`;
+
+    console.log('✅ File converted to Base64, length:', base64Data.length);
+
+    // Store directly in database as data URL - FIXED with 'as any'
+    const { data: docRecord, error: dbError } = await supabase
+      .from('business_documents')
+      .insert({
+        business_id: shopId || null,
+        document_type: docType,
+        file_name: file.name,
+        file_url: dataUrl,
+        file_data: base64Data,
+        file_size: file.size || 0,
+        mime_type: mimeType,
+        uploaded_by: userId,
+        status: 'pending',
+        is_verified: false,
+      } as any) // <-- THIS FIXES THE TYPE ERROR
+      .select()
+      .single();
+
+    if (dbError) {
+      console.error('❌ Database insert error:', dbError);
+      throw dbError;
+    }
+
+    console.log('✅ Database record created:', docRecord.id);
+
+    setDocuments(prev => ({
+      ...prev,
+      [docType]: { 
+        ...prev[docType], 
+        uri: dataUrl,
+        uploaded: true,
+        progress: 100,
+        document_id: docRecord.id,
+      }
+    }));
+
+    Alert.alert('Success', `${docType} document uploaded successfully!`);
+
+  } catch (error: any) {
+    console.error('❌ Upload error:', error);
+    Alert.alert(
+      'Upload Failed', 
+      error.message || 'Failed to upload document. Please try again.',
+      [{ text: 'OK' }]
+    );
+    
+    setDocuments(prev => ({
+      ...prev,
+      [docType]: { ...prev[docType], progress: 0, uploaded: false }
+    }));
+  } finally {
+    setUploadingDoc(null);
+  }
+};
+
+  const pickDocument = async (docType: string) => {
+    console.log('📂 pickDocument called for:', docType, 'on platform:', Platform.OS);
+
+    try {
+      if (Platform.OS === 'web') {
+        console.log('🌐 Using web file picker for:', docType);
+        
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.pdf,.jpg,.jpeg,.png,.doc,.docx';
+        input.multiple = false;
+        input.style.display = 'none';
+        
+        document.body.appendChild(input);
+        
+        const fileSelected = new Promise((resolve, reject) => {
+          input.onchange = (e: any) => {
+            console.log('📄 File input onchange triggered for:', docType);
+            const file = e.target.files?.[0];
+            if (file) {
+              console.log('📄 Web file selected:', file.name, file.size, file.type);
+              
+              const objectUrl = URL.createObjectURL(file);
+              
+              const fileData = {
+                uri: objectUrl,
+                name: file.name,
+                mimeType: file.type || 'application/pdf',
+                size: file.size,
+                blob: file,
+              };
+              
+              if (input.parentNode) {
+                input.parentNode.removeChild(input);
+              }
+              resolve(fileData);
+            } else {
+              console.log('❌ No file selected');
+              if (input.parentNode) {
+                input.parentNode.removeChild(input);
+              }
+              reject(new Error('No file selected'));
+            }
+          };
+          
+          input.oncancel = () => {
+            console.log('❌ User cancelled file selection for:', docType);
+            if (input.parentNode) {
+              input.parentNode.removeChild(input);
+            }
+            reject(new Error('Cancelled'));
+          };
+        });
+        
+        console.log('🖱️ Clicking file input for:', docType);
+        input.click();
+        
+        try {
+          const fileData = await fileSelected as any;
+          console.log('✅ Web file picked successfully:', fileData.name);
+          
+          setDocuments(prev => ({
+            ...prev,
+            [docType]: {
+              uri: fileData.uri,
+              name: fileData.name,
+              type: fileData.mimeType,
+              size: fileData.size,
+              uploaded: false,
+              progress: 0,
+              preview: fileData.mimeType?.startsWith('image/') ? fileData.uri : undefined,
+            }
+          }));
+          
+          await uploadDocument(docType, fileData);
+          
+        } catch (error: any) {
+          if (error.message !== 'Cancelled') {
+            console.error('❌ File selection error:', error);
+            Alert.alert('Error', 'Failed to select file. Please try again.');
+          } else {
+            console.log('ℹ️ User cancelled file selection');
+          }
+        }
+        return;
+      }
+
+      console.log('📱 Using mobile document picker');
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'image/*'],
         copyToCacheDirectory: true,
       });
 
-      console.log('Document pick result:', result);
+      console.log('📱 Document pick result:', JSON.stringify(result, null, 2));
 
       const resultAny = result as any;
       let file: any = null;
-      
+
       if (resultAny.assets && resultAny.assets.length > 0) {
         const asset = resultAny.assets[0];
         file = {
@@ -369,10 +968,13 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
           mimeType: resultAny.mimeType || 'application/pdf',
           size: resultAny.size || 0,
         };
+      } else if (resultAny.type === 'cancel') {
+        console.log('User cancelled document pick');
+        return;
       }
 
       if (file) {
-        console.log('📄 Document picked:', file);
+        console.log('✅ File picked successfully:', file.name);
         
         setDocuments(prev => ({
           ...prev,
@@ -389,77 +991,95 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
 
         await uploadDocument(docType, file);
       } else {
-        console.log('No document selected or cancelled');
+        console.log('No file selected or unexpected result format');
       }
-    } catch (error) {
-      console.error('Document pick error:', error);
-      Alert.alert('Error', 'Failed to select document. Please try again.');
-    }
-  };
-
-  const uploadDocument = async (docType: string, file: any) => {
-    try {
-      setUploadingDoc(docType);
-      
-      const userId = user?.id;
-      if (!userId) {
-        Alert.alert('Error', 'Please sign in first');
-        setUploadingDoc(null);
-        return;
-      }
-
-      const fileExt = file.name.split('.').pop() || 'pdf';
-      const fileName = `${userId}/${docType}_${Date.now()}.${fileExt}`;
-      const filePath = `business_documents/${fileName}`;
-
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
-      
-      const { data, error } = await supabase.storage
-        .from('business_documents')
-        .upload(filePath, blob, {
-          contentType: file.mimeType || 'application/pdf',
-          cacheControl: '3600',
-          upsert: true,
-        });
-
-      if (error) {
-        console.error('Upload error:', error);
-        throw error;
-      }
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('business_documents')
-        .getPublicUrl(filePath);
-
-      setDocuments(prev => ({
-        ...prev,
-        [docType]: { 
-          ...prev[docType], 
-          uri: publicUrl,
-          uploaded: true,
-          progress: 100 
-        }
-      }));
-
-      console.log('✅ Document uploaded successfully:', publicUrl);
-      Alert.alert('Success', `${docType} document uploaded successfully!`);
-
     } catch (error: any) {
-      console.error('Upload error:', error);
-      Alert.alert('Upload Failed', error.message || 'Failed to upload document. Please try again.');
-      
-      setDocuments(prev => ({
-        ...prev,
-        [docType]: { ...prev[docType], progress: 0, uploaded: false }
-      }));
-    } finally {
-      setUploadingDoc(null);
+      console.error('❌ Document pick error:', error);
+      if (error.message !== 'Cancelled') {
+        Alert.alert('Error', `Failed to select document: ${error.message || 'Unknown error'}`);
+      }
     }
   };
 
   const pickImage = async (docType: string) => {
+    console.log('📸 pickImage called for:', docType, 'on platform:', Platform.OS);
+
     try {
+      if (Platform.OS === 'web') {
+        console.log('🌐 Using web camera picker for:', docType);
+        
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.capture = 'environment';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+        
+        const fileSelected = new Promise((resolve, reject) => {
+          input.onchange = (e: any) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              console.log('📸 Web photo captured:', file.name);
+              const objectUrl = URL.createObjectURL(file);
+              
+              const fileData = {
+                uri: objectUrl,
+                name: file.name || 'photo.jpg',
+                mimeType: file.type || 'image/jpeg',
+                size: file.size || 0,
+                blob: file,
+              };
+              
+              if (input.parentNode) {
+                input.parentNode.removeChild(input);
+              }
+              resolve(fileData);
+            } else {
+              if (input.parentNode) {
+                input.parentNode.removeChild(input);
+              }
+              reject(new Error('No photo captured'));
+            }
+          };
+          
+          input.oncancel = () => {
+            console.log('User cancelled camera');
+            if (input.parentNode) {
+              input.parentNode.removeChild(input);
+            }
+            reject(new Error('Cancelled'));
+          };
+        });
+        
+        input.click();
+        
+        try {
+          const fileData = await fileSelected as any;
+          console.log('✅ Web photo captured successfully');
+          
+          setDocuments(prev => ({
+            ...prev,
+            [docType]: {
+              uri: fileData.uri,
+              name: fileData.name,
+              type: fileData.mimeType,
+              size: fileData.size,
+              uploaded: false,
+              progress: 0,
+              preview: fileData.uri,
+            }
+          }));
+          
+          await uploadDocument(docType, fileData);
+        } catch (error: any) {
+          if (error.message !== 'Cancelled') {
+            console.error('Camera error:', error);
+            Alert.alert('Error', 'Failed to capture photo. Please try again.');
+          }
+        }
+        return;
+      }
+
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Required', 'Please allow access to your camera.');
@@ -496,19 +1116,42 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
 
         await uploadDocument(docType, file);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Camera error:', error);
-      Alert.alert('Error', 'Failed to take photo. Please try again.');
+      if (error.message !== 'Cancelled') {
+        Alert.alert('Error', 'Failed to take photo. Please try again.');
+      }
     }
   };
 
   const showDocumentOptions = (docType: string) => {
+    console.log('🔍 showDocumentOptions called for:', docType);
+    console.log('📱 Platform:', Platform.OS);
+    
+    if (Platform.OS === 'web') {
+      console.log('🌐 Web platform - opening file picker directly for:', docType);
+      pickDocument(docType);
+      return;
+    }
+    
     Alert.alert(
       'Upload Document',
       'Choose an option',
       [
-        { text: 'Choose from Files', onPress: () => pickDocument(docType) },
-        { text: 'Take Photo', onPress: () => pickImage(docType) },
+        { 
+          text: 'Choose from Files', 
+          onPress: () => {
+            console.log('📁 User selected "Choose from Files" for:', docType);
+            pickDocument(docType);
+          }
+        },
+        { 
+          text: 'Take Photo', 
+          onPress: () => {
+            console.log('📸 User selected "Take Photo" for:', docType);
+            pickImage(docType);
+          }
+        },
         { text: 'Cancel', style: 'cancel' },
       ],
       { cancelable: true }
@@ -524,11 +1167,32 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
         { 
           text: 'Remove', 
           style: 'destructive',
-          onPress: () => {
-            setDocuments(prev => ({
-              ...prev,
-              [docType]: { uri: '', name: '', type: '', uploaded: false, progress: 0 }
-            }));
+          onPress: async () => {
+            try {
+              const docData = documents[docType];
+              if (docData?.document_id) {
+                const { error } = await supabase
+                  .from('business_documents')
+                  .delete()
+                  .eq('id', docData.document_id);
+
+                if (error) {
+                  console.error('Error deleting document:', error);
+                  Alert.alert('Error', 'Failed to remove document from database');
+                  return;
+                }
+              }
+
+              setDocuments(prev => ({
+                ...prev,
+                [docType]: { uri: '', name: '', type: '', uploaded: false, progress: 0 }
+              }));
+
+              Alert.alert('Success', 'Document removed successfully');
+            } catch (error) {
+              console.error('Remove error:', error);
+              Alert.alert('Error', 'Failed to remove document');
+            }
           }
         }
       ]
@@ -546,6 +1210,10 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
     }
     if (step === 3 && !businessName.trim()) {
       Alert.alert('Please enter your business name');
+      return;
+    }
+    if (step === 3 && !district) {
+      Alert.alert('Please select your district');
       return;
     }
     setStep(step + 1);
@@ -575,11 +1243,14 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
       return;
     }
 
-    // Check if required documents are uploaded
     const docRequirements = getDocumentRequirements();
     const requiredDocs = docRequirements.filter(doc => doc.required);
     const missingDocs = requiredDocs.filter(doc => !documents[doc.id]?.uploaded);
-    
+
+    console.log('📄 Required docs:', requiredDocs.map(d => d.id));
+    console.log('📄 Uploaded docs:', Object.keys(documents).filter(key => documents[key]?.uploaded));
+    console.log('📄 Missing docs:', missingDocs.map(d => d.id));
+
     if (missingDocs.length > 0) {
       Alert.alert(
         'Documents Required',
@@ -598,12 +1269,8 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
 
     try {
       console.log('📝 Creating business for user:', userId);
-      console.log('📝 Business Name:', businessName);
-      console.log('📝 Business Type:', businessType);
-      console.log('📝 Category:', category);
 
-      // Check if user exists
-      const { data: userById, error: checkByIdError } = await supabase
+      const { data: userById } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
@@ -630,14 +1297,13 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
         console.log('✅ User created in users table');
       }
 
-      // Insert into shops
       console.log('📝 Creating shop...');
       const { data: shopData, error: shopError } = await supabase
         .from('shops')
         .insert({
           owner_id: userId,
           name: businessName.trim(),
-          area: businessAddress.trim() || null,
+          area: district || null,
           description: businessDescription.trim() || null,
           category: category,
           business_type: businessType,
@@ -655,14 +1321,33 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
         throw shopError;
       }
 
-      console.log('✅ Shop created with ID:', shopData.id);
+      const businessId = shopData.id;
+      setShopId(businessId);
+      console.log('✅ Shop created with ID:', businessId);
 
-      // Insert into verification_requests
+      console.log('📝 Updating documents with business ID...');
+      const documentEntries = Object.entries(documents);
+      for (const [docType, docData] of documentEntries) {
+        if (docData.uploaded && docData.uri && docData.document_id) {
+          const { error: updateDocError } = await supabase
+            .from('business_documents')
+            .update({ business_id: businessId })
+            .eq('id', docData.document_id)
+            .eq('uploaded_by', userId);
+
+          if (updateDocError) {
+            console.error('Error updating document:', updateDocError);
+          } else {
+            console.log(`✅ Updated document ${docType} with business ID`);
+          }
+        }
+      }
+
       console.log('📝 Creating verification request...');
       const { error: verificationError } = await supabase
         .from('verification_requests')
         .insert({
-          business_id: shopData.id,
+          business_id: businessId,
           requested_by: userId,
           status: 'pending',
           verification_type: 'business_verification',
@@ -674,21 +1359,22 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
       }
 
       console.log('✅ Verification request created');
+// Cache ONLY document IDs and URLs (not the full Base64 data)
+const docCache: Record<string, any> = {};
+for (const [docType, docData] of documentEntries) {
+  if (docData.uploaded && docData.document_id) {
+    docCache[docType] = {
+      document_id: docData.document_id,
+      uploaded_at: new Date().toISOString()
+    };
+  }
+}
 
-      // Save document URLs to AsyncStorage
-      const docUrls: Record<string, string> = {};
-      Object.keys(documents).forEach(key => {
-        if (documents[key]?.uploaded) {
-          docUrls[key] = documents[key].uri;
-        }
-      });
-      
-      await AsyncStorage.setItem(`documents_${shopData.id}`, JSON.stringify({
-        ...docUrls,
-        uploadedAt: new Date().toISOString(),
-      }));
+// Only cache the IDs, not the full data
+await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
-      // Update user role
+      console.log('✅ Document cache saved to AsyncStorage');
+
       const userRole = businessType === 'shop' ? 'shop_owner' : 
                        businessType === 'service' ? 'service_provider' : 
                        'institution_representative';
@@ -815,9 +1501,9 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
         </LinearGradient>
       </View>
 
-      <Text style={styles.stepTitle}>What do you call it?</Text>
+      <Text style={styles.stepTitle}>Tell us about your business</Text>
       <Text style={styles.stepSubtitle}>
-        Tell us about your business identity
+        Just a few details about your business
       </Text>
 
       <View style={styles.formContainer}>
@@ -833,13 +1519,12 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
         </View>
 
         <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Location</Text>
-          <TextInput
-            style={styles.formInput}
-            placeholder="Where can customers find you?"
-            placeholderTextColor="#8A8AAE"
-            value={businessAddress}
-            onChangeText={setBusinessAddress}
+          <Text style={styles.formLabel}>District *</Text>
+          <Select
+            options={DISTRICTS}
+            selected={district || ''}
+            onSelect={(value: string) => setDistrict(value)}
+            placeholder="Select your district"
           />
         </View>
 
@@ -894,9 +1579,9 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
           </LinearGradient>
         </View>
 
-        <Text style={styles.stepTitle}>Let's customize it for your category</Text>
+        <Text style={styles.stepTitle}>Let's customize your business</Text>
         <Text style={styles.stepSubtitle}>
-          This helps us create a better experience for your customers
+          Select options to help us create a better experience for your customers
         </Text>
 
         <View style={styles.wizardContainer}>
@@ -904,8 +1589,8 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
             <WizardQuestion
               key={q.key}
               question={q}
-              value={wizardAnswers[q.key] || ''}
-              onChange={(value: string) =>
+              value={wizardAnswers[q.key] || (q.type === 'multiselect' ? [] : '')}
+              onChange={(value: any) =>
                 setWizardAnswers((prev) => ({ ...prev, [q.key]: value }))
               }
             />
@@ -968,9 +1653,28 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
               fileSize={documents[doc.id]?.size ? `${(documents[doc.id].size || 0 / 1024).toFixed(0)} KB` : undefined}
               preview={documents[doc.id]?.preview}
               required={doc.required}
+              docData={documents[doc.id]}
             />
           ))}
         </View>
+
+        <TouchableOpacity
+          style={[styles.continueButton, { marginTop: 10, backgroundColor: '#9B59B6' }]}
+          onPress={testBucketConnection}
+        >
+          <View style={[styles.continueGradient, { backgroundColor: '#9B59B6' }]}>
+            <Text style={styles.continueButtonText}>🧪 Test Bucket Connection</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.continueButton, { marginTop: 10, backgroundColor: '#FF6B6B' }]}
+          onPress={testFilePicker}
+        >
+          <View style={[styles.continueGradient, { backgroundColor: '#FF6B6B' }]}>
+            <Text style={styles.continueButtonText}>🧪 Test File Picker</Text>
+          </View>
+        </TouchableOpacity>
 
         <View style={styles.verificationNote}>
           <Ionicons name="information-circle-outline" size={16} color="#8A8AAE" />
@@ -1667,5 +2371,112 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     marginTop: 12,
+  },
+  // Multi-select and Select styles
+  multiselectContainer: {
+    marginBottom: 4,
+  },
+  multiselectTrigger: {
+    backgroundColor: '#F8F9FC',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  multiselectText: {
+    color: '#1F2F5F',
+    fontSize: 15,
+    flex: 1,
+  },
+  multiselectPlaceholder: {
+    color: '#8A8AAE',
+    fontSize: 15,
+    flex: 1,
+  },
+  selectContainer: {
+    marginBottom: 4,
+  },
+  selectTrigger: {
+    backgroundColor: '#F8F9FC',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  selectText: {
+    color: '#1F2F5F',
+    fontSize: 15,
+    flex: 1,
+  },
+  selectPlaceholder: {
+    color: '#8A8AAE',
+    fontSize: 15,
+    flex: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: height * 0.7,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8ECF4',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  modalOptionSelected: {
+    backgroundColor: 'rgba(74, 125, 255, 0.05)',
+  },
+  modalOptionCheck: {
+    width: 30,
+    alignItems: 'center',
+  },
+  modalOptionText: {
+    fontSize: 16,
+    color: '#1F2F5F',
+    flex: 1,
+  },
+  modalDoneButton: {
+    backgroundColor: '#4A7DFF',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  modalDoneText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
