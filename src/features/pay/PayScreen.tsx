@@ -1,3 +1,5 @@
+// src/features/pay/PayScreen.tsx
+
 import React, { useState } from 'react';
 import {
   View,
@@ -41,7 +43,7 @@ const transactionFilters = ['All', 'Payments', 'Top Ups', 'Refunds', 'Withdrawal
 
 // --- Sub-components ---
 
-// Pay Hub Option Card
+// Pay Option Card
 const PayOptionCard = ({ icon, title, description, onPress }: any) => (
   <TouchableOpacity style={styles.optionCard} onPress={onPress}>
     <View style={styles.optionIconContainer}>
@@ -132,11 +134,10 @@ const GuestPayView = ({ navigation }: any) => (
   </View>
 );
 
-// --- PayContent Component (Extracted for reuse) ---
-const PayContent = ({ navigation }: any) => {
+// --- Desktop Pay Content ---
+const DesktopPayContent = ({ navigation }: any) => {
   const { isAuthenticated } = useAuth();
   
-  const [activeTab, setActiveTab] = useState('hub');
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [selectedMethod, setSelectedMethod] = useState('1');
   const [amount, setAmount] = useState('');
@@ -147,191 +148,65 @@ const PayContent = ({ navigation }: any) => {
 
   const walletBalance = 1250000;
 
-  // If not authenticated, show guest view
   if (!isAuthenticated) {
     return <GuestPayView navigation={navigation} />;
   }
 
-  // Render Pay Hub
-  const renderHub = () => (
-    <ScrollView 
-      style={styles.hubContainer}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.hubContent}
-    >
-      {/* Wallet Balance Card */}
-      <View style={styles.balanceCard}>
-        <LinearGradient
-          colors={['#4A7DFF', '#6B94FF']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.balanceGradient}
-        >
-          <Text style={styles.balanceLabel}>Available Balance</Text>
-          <Text style={styles.balanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
-          <View style={styles.balanceActions}>
-            <TouchableOpacity style={styles.balanceAction} onPress={() => setShowAddMoney(true)}>
-              <Ionicons name="add-circle-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.balanceActionText}>Add Money</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.balanceAction} onPress={() => setShowWithdraw(true)}>
-              <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.balanceActionText}>Withdraw</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.balanceAction}>
-              <Ionicons name="swap-horizontal-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.balanceActionText}>Send</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.balanceAction}>
-              <Ionicons name="business-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.balanceActionText}>Bank</Text>
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
+  return (
+    <View style={styles.desktopContainer}>
+      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+      
+      <View style={styles.desktopHeader}>
+        <Text style={styles.desktopHeaderTitle}>Pay</Text>
+        <Text style={styles.desktopHeaderSubtitle}>Manage your payments and wallet</Text>
       </View>
 
-      {/* Payment Methods */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Payment Methods</Text>
-          <TouchableOpacity>
-            <Text style={styles.sectionAction}>Manage</Text>
-          </TouchableOpacity>
-        </View>
-        {paymentMethods.map((method) => (
-          <PaymentMethodItem 
-            key={method.id} 
-            method={method} 
-            isSelected={selectedMethod === method.id}
-            onSelect={setSelectedMethod}
-          />
-        ))}
-      </View>
-
-      {/* Pay Options */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <PayOptionCard
-          icon="🛒"
-          title="Checkout"
-          description="Pay for items and services"
-          onPress={() => setShowCheckout(true)}
-        />
-        <PayOptionCard
-          icon="📊"
-          title="Transactions"
-          description="View payment history"
-          onPress={() => setShowTransactions(true)}
-        />
-        <PayOptionCard
-          icon="💳"
-          title="Payment Methods"
-          description="Manage cards and accounts"
-          onPress={() => Alert.alert('Payment Methods', 'Manage your payment methods')}
-        />
-        <PayOptionCard
-          icon="📱"
-          title="Mobile Money"
-          description="MTN, Airtel & more"
-          onPress={() => Alert.alert('Mobile Money', 'Manage mobile money accounts')}
-        />
-      </View>
-
-      {/* Recent Transactions Preview */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
-          <TouchableOpacity onPress={() => setShowTransactions(true)}>
-            <Text style={styles.sectionAction}>View All</Text>
-          </TouchableOpacity>
-        </View>
-        {recentTransactions.slice(0, 3).map((item) => (
-          <TransactionItem key={item.id} item={item} />
-        ))}
-      </View>
-    </ScrollView>
-  );
-
-  // Render Checkout
-  const renderCheckout = () => (
-    <Modal
-      visible={showCheckout}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowCheckout(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowCheckout(false)}>
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Checkout</Text>
-            <TouchableOpacity onPress={() => setShowCheckout(false)}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.checkoutContent}>
-            {/* Delivery Address */}
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Delivery Address</Text>
-              <View style={styles.addressCard}>
-                <Text style={styles.addressName}>John Doe</Text>
-                <Text style={styles.addressLine}>123 Main Street, Jinja</Text>
-                <Text style={styles.addressLine}>Central Region, Uganda</Text>
-                <Text style={styles.addressPhone}>+256 700 000 000</Text>
-              </View>
-            </View>
-
-            {/* Order Items */}
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Order Items</Text>
-              <View style={styles.orderItem}>
-                <View style={styles.orderItemImage} />
-                <View style={styles.orderItemInfo}>
-                  <Text style={styles.orderItemName}>Samsung Galaxy S25</Text>
-                  <Text style={styles.orderItemVariation}>128GB • Phantom Black</Text>
-                  <Text style={styles.orderItemPrice}>UGX 2,850,000</Text>
+      <ScrollView 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.desktopScrollContent}
+      >
+        <View style={styles.desktopGrid}>
+          {/* Left Column */}
+          <View style={styles.desktopLeftColumn}>
+            {/* Balance Card */}
+            <View style={styles.desktopBalanceCard}>
+              <LinearGradient
+                colors={['#4A7DFF', '#6B94FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.balanceGradient}
+              >
+                <Text style={styles.balanceLabel}>Available Balance</Text>
+                <Text style={styles.balanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
+                <View style={styles.balanceActions}>
+                  <TouchableOpacity style={styles.balanceAction} onPress={() => setShowAddMoney(true)}>
+                    <Ionicons name="add-circle-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.balanceActionText}>Add Money</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.balanceAction} onPress={() => setShowWithdraw(true)}>
+                    <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.balanceActionText}>Withdraw</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.balanceAction}>
+                    <Ionicons name="swap-horizontal-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.balanceActionText}>Send</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.balanceAction}>
+                    <Ionicons name="business-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.balanceActionText}>Bank</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.orderItemQty}>x1</Text>
-              </View>
-              <View style={styles.orderItem}>
-                <View style={styles.orderItemImage} />
-                <View style={styles.orderItemInfo}>
-                  <Text style={styles.orderItemName}>Phone Charger Type-C</Text>
-                  <Text style={styles.orderItemVariation}>Original Samsung</Text>
-                  <Text style={styles.orderItemPrice}>UGX 45,000</Text>
-                </View>
-                <Text style={styles.orderItemQty}>x2</Text>
-              </View>
+              </LinearGradient>
             </View>
 
-            {/* Price Summary */}
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Price Summary</Text>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Subtotal</Text>
-                <Text style={styles.priceValue}>UGX 2,940,000</Text>
+            {/* Payment Methods */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Payment Methods</Text>
+                <TouchableOpacity>
+                  <Text style={styles.sectionAction}>Manage</Text>
+                </TouchableOpacity>
               </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Delivery Fee</Text>
-                <Text style={styles.priceValue}>UGX 15,000</Text>
-              </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Wallet Savings</Text>
-                <Text style={[styles.priceValue, { color: '#2ECC71' }]}>- UGX 147,000</Text>
-              </View>
-              <View style={[styles.priceRow, styles.priceTotal]}>
-                <Text style={styles.priceTotalLabel}>Total</Text>
-                <Text style={styles.priceTotalValue}>UGX 2,808,000</Text>
-              </View>
-            </View>
-
-            {/* Payment Method */}
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Payment Method</Text>
               {paymentMethods.map((method) => (
                 <PaymentMethodItem 
                   key={method.id} 
@@ -341,174 +216,303 @@ const PayContent = ({ navigation }: any) => {
                 />
               ))}
             </View>
+          </View>
 
-            {/* Bottom spacer */}
-            <View style={styles.bottomSpacer} />
-          </ScrollView>
-
-          {/* Sticky Pay Button */}
-          <View style={styles.stickyCheckoutBar}>
-            <View style={styles.checkoutTotalPreview}>
-              <Text style={styles.checkoutTotalLabel}>Total</Text>
-              <Text style={styles.checkoutTotalAmount}>UGX 2,808,000</Text>
+          {/* Right Column */}
+          <View style={styles.desktopRightColumn}>
+            {/* Quick Actions */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Quick Actions</Text>
+              <PayOptionCard
+                icon="🛒"
+                title="Checkout"
+                description="Pay for items and services"
+                onPress={() => setShowCheckout(true)}
+              />
+              <PayOptionCard
+                icon="📊"
+                title="Transactions"
+                description="View payment history"
+                onPress={() => setShowTransactions(true)}
+              />
+              <PayOptionCard
+                icon="💳"
+                title="Payment Methods"
+                description="Manage cards and accounts"
+                onPress={() => Alert.alert('Payment Methods', 'Manage your payment methods')}
+              />
+              <PayOptionCard
+                icon="📱"
+                title="Mobile Money"
+                description="MTN, Airtel & more"
+                onPress={() => Alert.alert('Mobile Money', 'Manage mobile money accounts')}
+              />
             </View>
-            <TouchableOpacity style={styles.payNowButton}>
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.payNowGradient}
-              >
-                <Text style={styles.payNowText}>Pay Now</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
 
-  // Render Transactions
-  const renderTransactions = () => (
-    <Modal
-      visible={showTransactions}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowTransactions(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowTransactions(false)}>
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Transactions</Text>
-            <TouchableOpacity onPress={() => setShowTransactions(false)}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Filter Chips */}
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterContainer}
-            contentContainerStyle={styles.filterContent}
-          >
-            {transactionFilters.map((filter) => (
-              <TouchableOpacity
-                key={filter}
-                style={[
-                  styles.filterChip,
-                  selectedFilter === filter && styles.filterChipActive,
-                ]}
-                onPress={() => setSelectedFilter(filter)}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    selectedFilter === filter && styles.filterChipTextActive,
-                  ]}
-                >
-                  {filter}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Transactions List */}
-          <FlatList
-            data={recentTransactions}
-            renderItem={({ item }) => <TransactionItem item={item} />}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.transactionsList}
-            showsVerticalScrollIndicator={false}
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // Render Add Money Modal
-  const renderAddMoney = () => (
-    <Modal
-      visible={showAddMoney}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowAddMoney(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={[styles.modalContent, styles.addMoneyModal]}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add Money</Text>
-            <TouchableOpacity onPress={() => setShowAddMoney(false)}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.addMoneyContent}>
-            <Text style={styles.addMoneyLabel}>Select Amount</Text>
-            <View style={styles.amountOptions}>
-              {[50000, 100000, 250000, 500000, 1000000].map((amt) => (
-                <TouchableOpacity
-                  key={amt}
-                  style={[styles.amountOption, parseInt(amount) === amt && styles.amountOptionSelected]}
-                  onPress={() => setAmount(amt.toString())}
-                >
-                  <Text style={[styles.amountOptionText, parseInt(amount) === amt && styles.amountOptionTextSelected]}>
-                    UGX {amt.toLocaleString()}
-                  </Text>
+            {/* Recent Transactions */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Recent Transactions</Text>
+                <TouchableOpacity onPress={() => setShowTransactions(true)}>
+                  <Text style={styles.sectionAction}>View All</Text>
                 </TouchableOpacity>
+              </View>
+              {recentTransactions.slice(0, 3).map((item) => (
+                <TransactionItem key={item.id} item={item} />
               ))}
             </View>
-
-            <Text style={styles.addMoneyLabel}>Or Enter Amount</Text>
-            <TextInput
-              style={styles.amountInput}
-              placeholder="Enter amount"
-              placeholderTextColor="#8A8AAE"
-              keyboardType="numeric"
-              value={amount}
-              onChangeText={setAmount}
-            />
-
-            <TouchableOpacity style={styles.fundButton}>
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.fundGradient}
-              >
-                <Text style={styles.fundButtonText}>Add Money</Text>
-              </LinearGradient>
-            </TouchableOpacity>
           </View>
         </View>
-      </View>
-    </Modal>
-  );
+      </ScrollView>
 
-  // Render Withdraw Modal
-  const renderWithdraw = () => (
-    <Modal
-      visible={showWithdraw}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowWithdraw(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={[styles.modalContent, styles.addMoneyModal]}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Withdraw</Text>
-            <TouchableOpacity onPress={() => setShowWithdraw(false)}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
+      {/* Modals */}
+      {renderModals({ 
+        showCheckout, setShowCheckout, 
+        showTransactions, setShowTransactions,
+        showAddMoney, setShowAddMoney,
+        showWithdraw, setShowWithdraw,
+        selectedMethod, setSelectedMethod,
+        selectedFilter, setSelectedFilter,
+        amount, setAmount,
+        paymentMethods 
+      })}
+    </View>
+  );
+};
+
+// --- Mobile Pay Content ---
+const MobilePayContent = ({ navigation }: any) => {
+  const { isAuthenticated } = useAuth();
+  
+  const [selectedFilter, setSelectedFilter] = useState('All');
+  const [selectedMethod, setSelectedMethod] = useState('1');
+  const [amount, setAmount] = useState('');
+  const [showAddMoney, setShowAddMoney] = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [showTransactions, setShowTransactions] = useState(false);
+
+  const walletBalance = 1250000;
+
+  if (!isAuthenticated) {
+    return <GuestPayView navigation={navigation} />;
+  }
+
+  return (
+    <SafeAreaView style={styles.mobileContainer}>
+      <StatusBar barStyle="light-content" />
+
+      <View style={styles.mobileHeader}>
+        <Text style={styles.mobileHeaderTitle}>Pay</Text>
+      </View>
+
+      <ScrollView 
+        style={styles.hubContainer}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.hubContent}
+      >
+        {/* Balance Card */}
+        <View style={styles.balanceCard}>
+          <LinearGradient
+            colors={['#4A7DFF', '#6B94FF']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.balanceGradient}
+          >
+            <Text style={styles.balanceLabel}>Available Balance</Text>
+            <Text style={styles.balanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
+            <View style={styles.balanceActions}>
+              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowAddMoney(true)}>
+                <Ionicons name="add-circle-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.balanceActionText}>Add Money</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowWithdraw(true)}>
+                <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.balanceActionText}>Withdraw</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.balanceAction}>
+                <Ionicons name="swap-horizontal-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.balanceActionText}>Send</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.balanceAction}>
+                <Ionicons name="business-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.balanceActionText}>Bank</Text>
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+        </View>
+
+        {/* Payment Methods */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Payment Methods</Text>
+            <TouchableOpacity>
+              <Text style={styles.sectionAction}>Manage</Text>
             </TouchableOpacity>
           </View>
+          {paymentMethods.map((method) => (
+            <PaymentMethodItem 
+              key={method.id} 
+              method={method} 
+              isSelected={selectedMethod === method.id}
+              onSelect={setSelectedMethod}
+            />
+          ))}
+        </View>
 
-          <View style={styles.addMoneyContent}>
-            <Text style={styles.addMoneyLabel}>Select Destination</Text>
-            {paymentMethods.map((method) => (
+        {/* Quick Actions */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <PayOptionCard
+            icon="🛒"
+            title="Checkout"
+            description="Pay for items and services"
+            onPress={() => setShowCheckout(true)}
+          />
+          <PayOptionCard
+            icon="📊"
+            title="Transactions"
+            description="View payment history"
+            onPress={() => setShowTransactions(true)}
+          />
+          <PayOptionCard
+            icon="💳"
+            title="Payment Methods"
+            description="Manage cards and accounts"
+            onPress={() => Alert.alert('Payment Methods', 'Manage your payment methods')}
+          />
+          <PayOptionCard
+            icon="📱"
+            title="Mobile Money"
+            description="MTN, Airtel & more"
+            onPress={() => Alert.alert('Mobile Money', 'Manage mobile money accounts')}
+          />
+        </View>
+
+        {/* Recent Transactions */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+            <TouchableOpacity onPress={() => setShowTransactions(true)}>
+              <Text style={styles.sectionAction}>View All</Text>
+            </TouchableOpacity>
+          </View>
+          {recentTransactions.slice(0, 3).map((item) => (
+            <TransactionItem key={item.id} item={item} />
+          ))}
+        </View>
+      </ScrollView>
+
+      {/* Modals */}
+      {renderModals({ 
+        showCheckout, setShowCheckout, 
+        showTransactions, setShowTransactions,
+        showAddMoney, setShowAddMoney,
+        showWithdraw, setShowWithdraw,
+        selectedMethod, setSelectedMethod,
+        selectedFilter, setSelectedFilter,
+        amount, setAmount,
+        paymentMethods 
+      })}
+    </SafeAreaView>
+  );
+};
+
+// --- Modal Renderer ---
+const renderModals = ({ 
+  showCheckout, setShowCheckout, 
+  showTransactions, setShowTransactions,
+  showAddMoney, setShowAddMoney,
+  showWithdraw, setShowWithdraw,
+  selectedMethod, setSelectedMethod,
+  selectedFilter, setSelectedFilter,
+  amount, setAmount,
+  paymentMethods 
+}: any) => (
+  <>
+    {renderCheckoutModal({ showCheckout, setShowCheckout, selectedMethod, setSelectedMethod, paymentMethods })}
+    {renderTransactionsModal({ showTransactions, setShowTransactions, selectedFilter, setSelectedFilter })}
+    {renderAddMoneyModal({ showAddMoney, setShowAddMoney, amount, setAmount })}
+    {renderWithdrawModal({ showWithdraw, setShowWithdraw, selectedMethod, setSelectedMethod, amount, setAmount, paymentMethods })}
+  </>
+);
+
+// --- Modal Components ---
+const renderCheckoutModal = ({ showCheckout, setShowCheckout, selectedMethod, setSelectedMethod, paymentMethods }: any) => (
+  <Modal
+    visible={showCheckout}
+    transparent={true}
+    animationType="slide"
+    onRequestClose={() => setShowCheckout(false)}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={styles.modalContent}>
+        <View style={styles.modalHeader}>
+          <TouchableOpacity onPress={() => setShowCheckout(false)}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>Checkout</Text>
+          <TouchableOpacity onPress={() => setShowCheckout(false)}>
+            <Ionicons name="close" size={24} color="#8A8AAE" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.checkoutContent}>
+          <View style={styles.checkoutSection}>
+            <Text style={styles.checkoutSectionTitle}>Delivery Address</Text>
+            <View style={styles.addressCard}>
+              <Text style={styles.addressName}>John Doe</Text>
+              <Text style={styles.addressLine}>123 Main Street, Jinja</Text>
+              <Text style={styles.addressLine}>Central Region, Uganda</Text>
+              <Text style={styles.addressPhone}>+256 700 000 000</Text>
+            </View>
+          </View>
+
+          <View style={styles.checkoutSection}>
+            <Text style={styles.checkoutSectionTitle}>Order Items</Text>
+            <View style={styles.orderItem}>
+              <View style={styles.orderItemImage} />
+              <View style={styles.orderItemInfo}>
+                <Text style={styles.orderItemName}>Samsung Galaxy S25</Text>
+                <Text style={styles.orderItemVariation}>128GB • Phantom Black</Text>
+                <Text style={styles.orderItemPrice}>UGX 2,850,000</Text>
+              </View>
+              <Text style={styles.orderItemQty}>x1</Text>
+            </View>
+            <View style={styles.orderItem}>
+              <View style={styles.orderItemImage} />
+              <View style={styles.orderItemInfo}>
+                <Text style={styles.orderItemName}>Phone Charger Type-C</Text>
+                <Text style={styles.orderItemVariation}>Original Samsung</Text>
+                <Text style={styles.orderItemPrice}>UGX 45,000</Text>
+              </View>
+              <Text style={styles.orderItemQty}>x2</Text>
+            </View>
+          </View>
+
+          <View style={styles.checkoutSection}>
+            <Text style={styles.checkoutSectionTitle}>Price Summary</Text>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceLabel}>Subtotal</Text>
+              <Text style={styles.priceValue}>UGX 2,940,000</Text>
+            </View>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceLabel}>Delivery Fee</Text>
+              <Text style={styles.priceValue}>UGX 15,000</Text>
+            </View>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceLabel}>Wallet Savings</Text>
+              <Text style={[styles.priceValue, { color: '#2ECC71' }]}>- UGX 147,000</Text>
+            </View>
+            <View style={[styles.priceRow, styles.priceTotal]}>
+              <Text style={styles.priceTotalLabel}>Total</Text>
+              <Text style={styles.priceTotalValue}>UGX 2,808,000</Text>
+            </View>
+          </View>
+
+          <View style={styles.checkoutSection}>
+            <Text style={styles.checkoutSectionTitle}>Payment Method</Text>
+            {paymentMethods.map((method: any) => (
               <PaymentMethodItem 
                 key={method.id} 
                 method={method} 
@@ -516,52 +520,202 @@ const PayContent = ({ navigation }: any) => {
                 onSelect={setSelectedMethod}
               />
             ))}
-
-            <Text style={[styles.addMoneyLabel, { marginTop: 16 }]}>Amount to Withdraw</Text>
-            <TextInput
-              style={styles.amountInput}
-              placeholder="Enter amount"
-              placeholderTextColor="#8A8AAE"
-              keyboardType="numeric"
-              value={amount}
-              onChangeText={setAmount}
-            />
-
-            <TouchableOpacity style={styles.fundButton}>
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.fundGradient}
-              >
-                <Text style={styles.fundButtonText}>Withdraw</Text>
-              </LinearGradient>
-            </TouchableOpacity>
           </View>
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+
+        <View style={styles.stickyCheckoutBar}>
+          <View style={styles.checkoutTotalPreview}>
+            <Text style={styles.checkoutTotalLabel}>Total</Text>
+            <Text style={styles.checkoutTotalAmount}>UGX 2,808,000</Text>
+          </View>
+          <TouchableOpacity style={styles.payNowButton}>
+            <LinearGradient
+              colors={['#4A7DFF', '#6B94FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.payNowGradient}
+            >
+              <Text style={styles.payNowText}>Pay Now</Text>
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
       </View>
-    </Modal>
-  );
+    </View>
+  </Modal>
+);
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+const renderTransactionsModal = ({ showTransactions, setShowTransactions, selectedFilter, setSelectedFilter }: any) => (
+  <Modal
+    visible={showTransactions}
+    transparent={true}
+    animationType="slide"
+    onRequestClose={() => setShowTransactions(false)}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={styles.modalContent}>
+        <View style={styles.modalHeader}>
+          <TouchableOpacity onPress={() => setShowTransactions(false)}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.modalTitle}>Transactions</Text>
+          <TouchableOpacity onPress={() => setShowTransactions(false)}>
+            <Ionicons name="close" size={24} color="#8A8AAE" />
+          </TouchableOpacity>
+        </View>
 
-      {/* Main Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Pay</Text>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterContainer}
+          contentContainerStyle={styles.filterContent}
+        >
+          {transactionFilters.map((filter) => (
+            <TouchableOpacity
+              key={filter}
+              style={[
+                styles.filterChip,
+                selectedFilter === filter && styles.filterChipActive,
+              ]}
+              onPress={() => setSelectedFilter(filter)}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  selectedFilter === filter && styles.filterChipTextActive,
+                ]}
+              >
+                {filter}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <FlatList
+          data={recentTransactions}
+          renderItem={({ item }) => <TransactionItem item={item} />}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.transactionsList}
+          showsVerticalScrollIndicator={false}
+        />
       </View>
+    </View>
+  </Modal>
+);
 
-      {renderHub()}
-      {renderCheckout()}
-      {renderTransactions()}
-      {renderAddMoney()}
-      {renderWithdraw()}
-    </SafeAreaView>
-  );
-};
+const renderAddMoneyModal = ({ showAddMoney, setShowAddMoney, amount, setAmount }: any) => (
+  <Modal
+    visible={showAddMoney}
+    transparent={true}
+    animationType="slide"
+    onRequestClose={() => setShowAddMoney(false)}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={[styles.modalContent, styles.addMoneyModal]}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Add Money</Text>
+          <TouchableOpacity onPress={() => setShowAddMoney(false)}>
+            <Ionicons name="close" size={24} color="#8A8AAE" />
+          </TouchableOpacity>
+        </View>
 
-// --- Main PayScreen Component (Wrapped with ResponsiveLayout) ---
+        <View style={styles.addMoneyContent}>
+          <Text style={styles.addMoneyLabel}>Select Amount</Text>
+          <View style={styles.amountOptions}>
+            {[50000, 100000, 250000, 500000, 1000000].map((amt) => (
+              <TouchableOpacity
+                key={amt}
+                style={[styles.amountOption, parseInt(amount) === amt && styles.amountOptionSelected]}
+                onPress={() => setAmount(amt.toString())}
+              >
+                <Text style={[styles.amountOptionText, parseInt(amount) === amt && styles.amountOptionTextSelected]}>
+                  UGX {amt.toLocaleString()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.addMoneyLabel}>Or Enter Amount</Text>
+          <TextInput
+            style={styles.amountInput}
+            placeholder="Enter amount"
+            placeholderTextColor="#8A8AAE"
+            keyboardType="numeric"
+            value={amount}
+            onChangeText={setAmount}
+          />
+
+          <TouchableOpacity style={styles.fundButton}>
+            <LinearGradient
+              colors={['#4A7DFF', '#6B94FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.fundGradient}
+            >
+              <Text style={styles.fundButtonText}>Add Money</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  </Modal>
+);
+
+const renderWithdrawModal = ({ showWithdraw, setShowWithdraw, selectedMethod, setSelectedMethod, amount, setAmount, paymentMethods }: any) => (
+  <Modal
+    visible={showWithdraw}
+    transparent={true}
+    animationType="slide"
+    onRequestClose={() => setShowWithdraw(false)}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={[styles.modalContent, styles.addMoneyModal]}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Withdraw</Text>
+          <TouchableOpacity onPress={() => setShowWithdraw(false)}>
+            <Ionicons name="close" size={24} color="#8A8AAE" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.addMoneyContent}>
+          <Text style={styles.addMoneyLabel}>Select Destination</Text>
+          {paymentMethods.map((method: any) => (
+            <PaymentMethodItem 
+              key={method.id} 
+              method={method} 
+              isSelected={selectedMethod === method.id}
+              onSelect={setSelectedMethod}
+            />
+          ))}
+
+          <Text style={[styles.addMoneyLabel, { marginTop: 16 }]}>Amount to Withdraw</Text>
+          <TextInput
+            style={styles.amountInput}
+            placeholder="Enter amount"
+            placeholderTextColor="#8A8AAE"
+            keyboardType="numeric"
+            value={amount}
+            onChangeText={setAmount}
+          />
+
+          <TouchableOpacity style={styles.fundButton}>
+            <LinearGradient
+              colors={['#4A7DFF', '#6B94FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.fundGradient}
+            >
+              <Text style={styles.fundButtonText}>Withdraw</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  </Modal>
+);
+
+// --- Main PayScreen Component ---
 export const PayScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -571,19 +725,77 @@ export const PayScreen = ({ navigation }: any) => {
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
-      fullWidth={true} // ← Full width on desktop
+      fullWidth={true}
     >
-      <PayContent navigation={navigation} />
+      {isDesktop ? (
+        <DesktopPayContent navigation={navigation} />
+      ) : (
+        <MobilePayContent navigation={navigation} />
+      )}
     </ResponsiveLayout>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  // ============================================================
+  // DESKTOP STYLES - DARK THEME
+  // ============================================================
+  desktopContainer: {
+    flex: 1,
+    backgroundColor: '#1A2A4F',
+    padding: 24,
+  },
+  desktopHeader: {
+    marginBottom: 24,
+  },
+  desktopHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
+  },
+  desktopScrollContent: {
+    paddingBottom: 40,
+  },
+  desktopGrid: {
+    flexDirection: 'row',
+    gap: 24,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  desktopLeftColumn: {
+    flex: 1,
+    minWidth: 300,
+    maxWidth: 450,
+  },
+  desktopRightColumn: {
+    flex: 2,
+    minWidth: 400,
+  },
+  desktopBalanceCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 20,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+
+  // ============================================================
+  // MOBILE STYLES
+  // ============================================================
+  mobileContainer: {
     flex: 1,
     backgroundColor: '#1F2F5F',
   },
-  header: {
+  mobileHeader: {
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
@@ -591,18 +803,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  headerTitle: {
+  mobileHeaderTitle: {
     color: '#FFFFFF',
     fontSize: 28,
     fontWeight: 'bold',
   },
-  hubContainer: {
-    flex: 1,
-  },
-  hubContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
+
+  // ============================================================
+  // SHARED STYLES - DARK THEME
+  // ============================================================
   // Guest Mode
   guestContainer: {
     flex: 1,
@@ -636,6 +845,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     marginBottom: 12,
     width: '100%',
+    maxWidth: 300,
     alignItems: 'center',
   },
   guestButtonText: {
@@ -647,6 +857,16 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 14,
   },
+
+  // Hub
+  hubContainer: {
+    flex: 1,
+  },
+  hubContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+
   // Balance Card
   balanceCard: {
     marginBottom: 20,
@@ -669,6 +889,7 @@ const styles = StyleSheet.create({
   },
   balanceActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   balanceAction: {
@@ -685,6 +906,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
+
   // Section
   section: {
     marginBottom: 20,
@@ -704,6 +926,7 @@ const styles = StyleSheet.create({
     color: '#4A7DFF',
     fontSize: 13,
   },
+
   // Option Card
   optionCard: {
     flexDirection: 'row',
@@ -739,6 +962,7 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
   },
+
   // Transaction Item
   transactionItem: {
     flexDirection: 'row',
@@ -791,6 +1015,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+
   // Payment Method
   paymentMethodItem: {
     flexDirection: 'row',
@@ -842,6 +1067,7 @@ const styles = StyleSheet.create({
     borderColor: '#4A7DFF',
     backgroundColor: '#4A7DFF',
   },
+
   // Modal
   modalOverlay: {
     flex: 1,
@@ -870,6 +1096,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
+
   // Checkout
   checkoutContent: {
     paddingBottom: 100,
@@ -1008,12 +1235,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+
   // Filter Chips
   filterContainer: {
     marginBottom: 12,
   },
   filterContent: {
     gap: 8,
+    paddingHorizontal: 4,
   },
   filterChip: {
     paddingHorizontal: 14,
@@ -1038,6 +1267,7 @@ const styles = StyleSheet.create({
   transactionsList: {
     paddingBottom: 20,
   },
+
   // Add Money / Withdraw
   addMoneyModal: {
     height: height * 0.7,

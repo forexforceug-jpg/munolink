@@ -57,7 +57,6 @@ const ICONS = {
   saveOutline: 'bookmark-outline',
 };
 
-// 🎯 INCREASED SIZES FOR BETTER VISIBILITY
 const DESKTOP_POSITION = {
   BUTTON_SIZE: 56,
   SHOP_BUTTON_SIZE: 54,
@@ -93,8 +92,16 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   isSaved = false,
 }) => {
   const { isDesktop } = useBreakpoint();
+  
+  // ✅ Sync local state with props when opportunity changes
   const [saved, setSaved] = useState(isSaved);
   const [localSavedCount, setLocalSavedCount] = useState(savedCount);
+
+  // ✅ Update state when props change (new opportunity)
+  useEffect(() => {
+    setSaved(isSaved);
+    setLocalSavedCount(savedCount);
+  }, [isSaved, savedCount, opportunity.id]); // Re-run when opportunity changes
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -105,13 +112,13 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           toValue: 1.15,
           duration: 1000,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
           duration: 1000,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ])
     );
@@ -135,7 +142,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   };
 
-  // 🎯 USE INCREASED SIZES
   const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : MOBILE_POSITION.BUTTON_SIZE;
   const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : MOBILE_POSITION.SHOP_BUTTON_SIZE;
   const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : MOBILE_POSITION.ICON_SIZE;
@@ -150,16 +156,10 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const LOGO_SIZE_MOBILE = 70;
   const logoSize = isDesktop ? LOGO_SIZE_DESKTOP : LOGO_SIZE_MOBILE;
 
-  // Format values - always show something
   const formattedDistance = distance > 0 ? `${distance.toFixed(1)}km` : '0km';
   const rating = opportunity.rating ? opportunity.rating.toFixed(1) : '0.0';
   const displayShareCount = shareCount > 0 ? shareCount : 0;
   const displaySavedCount = localSavedCount > 0 ? localSavedCount : 0;
-
-  // 🎯 Calculate pulse size based on button size
-  const pulseSize = shopButtonSize + 16; // Slightly larger for better effect
-  const pulseRadius = pulseSize / 2;
-  const pulseMargin = -(pulseSize / 2); // Negative half for centering
 
   return (
     <View style={[styles.container, { gap }]}>
@@ -233,7 +233,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* Save/Wishlist Button */}
+      {/* ✅ Save/Wishlist Button - Now properly syncs with props */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -255,17 +255,8 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* 🎯 AI Button with Muno Logo - COMPLETELY FIXED ALIGNMENT */}
+      {/* AI Button */}
       <View style={[styles.aiWrapper, { marginTop: aiGap }]}>
-        {/* Pulse Animation - Centered behind button */}
-        <Animated.View 
-          style={[
-            styles.aiPulse,
-           
-          ]} 
-        />
-        
-        {/* AI Button */}
         <TouchableOpacity
           style={[
             styles.aiButton,
@@ -281,7 +272,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           }}
           activeOpacity={0.8}
         >
-          {/* 🎯 FIXED: Glow container properly centered */}
           <View style={styles.aiGlowContainer}>
             <View style={styles.aiGlow}>
               {munoLogo ? (
@@ -302,7 +292,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           </View>
         </TouchableOpacity>
         
-        {/* AI Label */}
         <Text style={[styles.labelText, { 
           fontSize: labelFontSize,
           marginTop: 3,
@@ -376,7 +365,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  // 🎯 AI Wrapper - Centers everything
   aiWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -423,7 +411,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // 🎯 AI Button - Properly centered
   aiButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -452,7 +439,6 @@ const styles = StyleSheet.create({
     }),
   },
 
-  // 🎯 FIXED: Glow Container - Centers the glow perfectly
   aiGlowContainer: {
     width: '100%',
     height: '100%',
@@ -462,7 +448,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  // 🎯 FIXED: Glow - Properly sized and centered
   aiGlow: {
     width: '80%',
     height: '80%',
@@ -471,17 +456,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
     overflow: 'hidden',
-  },
-
-  // 🎯 FIXED: Pulse - Perfectly centered behind button
-  aiPulse: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: '#4A7DFF',
-    zIndex: 1,
-    // Centering is now handled inline with dynamic marginLeft and marginTop
-    top: '50%',
-    left: '50%',
   },
 
   aiFallbackText: {

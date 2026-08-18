@@ -1,3 +1,5 @@
+// src/features/business/BusinessDashboardScreen.tsx
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -23,9 +25,12 @@ import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database.types';
 import * as ImagePicker from 'expo-image-picker';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
+// --- Types ---
 type Shop = Database['public']['Tables']['shops']['Row'];
 type Transaction = Database['public']['Tables']['transactions']['Row'];
 type CatalogItem = Database['public']['Tables']['catalog']['Row'];
@@ -89,8 +94,9 @@ const BUSINESS_CONFIGS: Record<string, any> = {
 };
 
 // --- Main Component ---
-export const BusinessDashboardScreen = ({ navigation }: any) => {
+const BusinessDashboardContent = ({ navigation }: any) => {
   const { user } = useAuth();
+  const { isDesktop } = useBreakpoint();
   const [business, setBusiness] = useState<Shop | null>(null);
   const [businessType, setBusinessType] = useState<string>('shop');
   const [category, setCategory] = useState<string>('');
@@ -241,76 +247,33 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
   }, [user?.id]);
 
   // Load offerings separately
-const loadOfferings = async (shop: Shop, bizType: string) => {
-  if (bizType === 'shop') {
-    // SIMPLIFIED QUERY - try without the join first
-    const { data: productData, error: productError } = await supabase
-      .from('shop_products')
-      .select(`
-        *,
-        catalog:catalog_id (
-          id,
-          name,
-          description,
-          images,
-          specifications,
-          category,
-          brand
-        )
-      `)
-      .eq('shop_id', shop.id)
-      .order('created_at', { ascending: false });
-
-    if (productError) {
-      console.error('Product load error:', productError);
-      // If the join fails, try without it
-      if (productError.code === 'PGRST200' || productError.message?.includes('could not find')) {
-        console.log('⚠️ Join failed, trying without join...');
-        const { data: fallbackData, error: fallbackError } = await supabase
-          .from('shop_products')
-          .select('*')
-          .eq('shop_id', shop.id)
-          .order('created_at', { ascending: false });
-        
-        if (!fallbackError && fallbackData) {
-          setOfferings(fallbackData);
-        }
-        return;
-      }
-      return;
-    }
-    
-    if (productData) {
-      setOfferings(productData);
-    }
-  } else if (bizType === 'service' || bizType === 'institution') {
-    if (shop.owner_id) {
-      const { data: serviceData, error: serviceError } = await supabase
-        .from('provider_services')
+  const loadOfferings = async (shop: Shop, bizType: string) => {
+    if (bizType === 'shop') {
+      const { data: productData, error: productError } = await supabase
+        .from('shop_products')
         .select(`
           *,
-          service_catalog:service_id (
+          catalog:catalog_id (
             id,
             name,
             description,
             images,
-            duration,
+            specifications,
             category,
-            specifications
+            brand
           )
         `)
-        .eq('user_id', shop.owner_id)
+        .eq('shop_id', shop.id)
         .order('created_at', { ascending: false });
 
-      if (serviceError) {
-        console.error('Service load error:', serviceError);
-        // Fallback without join
-        if (serviceError.code === 'PGRST200' || serviceError.message?.includes('could not find')) {
+      if (productError) {
+        console.error('Product load error:', productError);
+        if (productError.code === 'PGRST200' || productError.message?.includes('could not find')) {
           console.log('⚠️ Join failed, trying without join...');
           const { data: fallbackData, error: fallbackError } = await supabase
-            .from('provider_services')
+            .from('shop_products')
             .select('*')
-            .eq('user_id', shop.owner_id)
+            .eq('shop_id', shop.id)
             .order('created_at', { ascending: false });
           
           if (!fallbackError && fallbackData) {
@@ -319,13 +282,52 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
         }
         return;
       }
+      
+      if (productData) {
+        setOfferings(productData);
+      }
+    } else if (bizType === 'service' || bizType === 'institution') {
+      if (shop.owner_id) {
+        const { data: serviceData, error: serviceError } = await supabase
+          .from('provider_services')
+          .select(`
+            *,
+            service_catalog:service_id (
+              id,
+              name,
+              description,
+              images,
+              duration,
+              category,
+              specifications
+            )
+          `)
+          .eq('user_id', shop.owner_id)
+          .order('created_at', { ascending: false });
 
-      if (serviceData) {
-        setOfferings(serviceData);
+        if (serviceError) {
+          console.error('Service load error:', serviceError);
+          if (serviceError.code === 'PGRST200' || serviceError.message?.includes('could not find')) {
+            console.log('⚠️ Join failed, trying without join...');
+            const { data: fallbackData, error: fallbackError } = await supabase
+              .from('provider_services')
+              .select('*')
+              .eq('user_id', shop.owner_id)
+              .order('created_at', { ascending: false });
+            
+            if (!fallbackError && fallbackData) {
+              setOfferings(fallbackData);
+            }
+          }
+          return;
+        }
+
+        if (serviceData) {
+          setOfferings(serviceData);
+        }
       }
     }
-  }
-};
+  };
 
   useEffect(() => {
     loadDashboard();
@@ -379,7 +381,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
 
       setCatalogResults(data || []);
 
-      // Extract unique categories
       const categories = ['All', ...new Set(data?.map((item: any) => item.category).filter(Boolean))];
       setCatalogCategories(categories);
 
@@ -402,7 +403,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
   const handleSelectCatalogItem = async (item: any) => {
     setSelectedCatalogItem(item);
     
-    // Pre-fill customization with catalog data
     const specs = item.specifications || {};
     const editableSpecs: Record<string, any> = {};
     Object.keys(specs).forEach(key => {
@@ -423,7 +423,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
       stock: '',
     });
 
-    // If shop and supports attributes, load product attributes
     if (businessType === 'shop' && config.supportsAttributes) {
       await loadProductAttributes(item.id);
     }
@@ -448,7 +447,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
 
       setProductAttributes(data || []);
       
-      // Initialize attribute values
       const attributeValues: Record<string, string> = {};
       data?.forEach((attr: ProductAttribute) => {
         attributeValues[attr.attribute_name] = '';
@@ -526,12 +524,10 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
         }
       }
 
-      // --- Step 1: Insert into the appropriate table ---
       let offeringId: string | null = null;
       let shopProductId: string | null = null;
 
       if (businessType === 'shop') {
-        // For shops: insert into shop_products
         const offeringData = {
           shop_id: business.id,
           catalog_id: selectedCatalogItem.id,
@@ -550,8 +546,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
 
         if (error) {
           console.error('❌ Shop product insert error:', error);
-          
-          // Check for specific foreign key errors
           if (error.message?.includes('catalog_id')) {
             throw new Error('Invalid catalog item. Please try again.');
           }
@@ -565,13 +559,11 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
         shopProductId = data.id;
         console.log('✅ Shop product created:', offeringId);
 
-        // --- Step 2: Handle product attributes for shops ---
         if (config.supportsAttributes && Object.keys(customOffering.attributeValues).length > 0) {
           await handleProductAttributes(selectedCatalogItem.id, shopProductId);
         }
 
       } else {
-        // For services and institutions: insert into provider_services
         const offeringData: any = {
           user_id: business.owner_id,
           service_id: selectedCatalogItem.id,
@@ -593,7 +585,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
 
         if (error) {
           console.error('❌ Provider service insert error:', error);
-          
           if (error.message?.includes('service_id')) {
             throw new Error('Invalid service. Please try again.');
           }
@@ -613,7 +604,6 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
         [{ text: 'OK' }]
       );
       
-      // Reset and refresh
       setShowCustomizeModal(false);
       setSelectedCatalogItem(null);
       setProductAttributes([]);
@@ -644,9 +634,9 @@ const loadOfferings = async (shop: Shop, bizType: string) => {
   const handleProductAttributes = async (catalogId: string, productId: string) => {
     try {
       const attributeValues = customOffering.attributeValues || {};
-const entries = Object.entries(attributeValues).filter(([_, value]) => 
-  value && typeof value === 'string' && value.trim() !== ''
-);
+      const entries = Object.entries(attributeValues).filter(([_, value]) => 
+        value && typeof value === 'string' && value.trim() !== ''
+      );
       if (entries.length === 0) {
         console.log('No attribute values to save');
         return;
@@ -655,7 +645,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
       console.log('📤 Saving product attributes:', entries);
 
       for (const [attributeName, value] of entries) {
-        // 1. Find existing product_attribute or create one
         let { data: existingAttribute, error: findError } = await supabase
           .from('product_attributes')
           .select('id')
@@ -671,17 +660,16 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
         let attributeId: string;
 
         if (!existingAttribute) {
-          // Create new product_attribute
           const { data: newAttr, error: createError } = await supabase
-  .from('product_attributes')
-  .insert({
-    catalog_id: catalogId,
-    attribute_name: attributeName,
-    attribute_value: typeof value === 'string' ? value : String(value),
-    attribute_type: 'text',
-  })
-  .select()
-  .single();
+            .from('product_attributes')
+            .insert({
+              catalog_id: catalogId,
+              attribute_name: attributeName,
+              attribute_value: typeof value === 'string' ? value : String(value),
+              attribute_type: 'text',
+            })
+            .select()
+            .single();
 
           if (createError) {
             console.error('Error creating attribute:', createError);
@@ -692,24 +680,22 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
           attributeId = existingAttribute.id;
         }
 
-        // 2. Insert into product_attribute_values
         const { error: valueError } = await supabase
-  .from('product_attribute_values')
-  .insert({
-    product_id: productId,
-    attribute_id: attributeId,
-    value: typeof value === 'string' ? value : String(value),
-  });
+          .from('product_attribute_values')
+          .insert({
+            product_id: productId,
+            attribute_id: attributeId,
+            value: typeof value === 'string' ? value : String(value),
+          });
 
         if (valueError) {
           console.error('Error inserting attribute value:', valueError);
-          // If duplicate, update instead
           if (valueError.code === '23505') {
             const { error: updateError } = await supabase
-  .from('product_attribute_values')
-  .update({ value: typeof value === 'string' ? value : String(value) })
-  .eq('product_id', productId)
-  .eq('attribute_id', attributeId);
+              .from('product_attribute_values')
+              .update({ value: typeof value === 'string' ? value : String(value) })
+              .eq('product_id', productId)
+              .eq('attribute_id', attributeId);
             if (updateError) {
               console.error('Error updating attribute value:', updateError);
             }
@@ -759,7 +745,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
           </View>
         </View>
 
-        {/* Category Filters */}
         {catalogCategories.length > 1 && (
           <ScrollView
             horizontal
@@ -869,7 +854,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
-            {/* Catalog Item Preview */}
             {selectedCatalogItem && (
               <View style={styles.catalogPreview}>
                 <Image
@@ -885,7 +869,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               </View>
             )}
 
-            {/* Price */}
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>Your Price (UGX) *</Text>
               <TextInput
@@ -898,7 +881,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               />
             </View>
 
-            {/* Discount */}
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>Discount</Text>
               <View style={styles.discountRow}>
@@ -937,7 +919,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               </View>
             </View>
 
-            {/* Stock (for shops) */}
             {businessType === 'shop' && (
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>Stock Quantity</Text>
@@ -952,7 +933,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               </View>
             )}
 
-            {/* Custom Images */}
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>Your Images</Text>
               <View style={styles.imageUploadRow}>
@@ -974,7 +954,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               </View>
             </View>
 
-            {/* Custom Name & Description */}
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>Custom Name (Optional)</Text>
               <TextInput
@@ -999,7 +978,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               />
             </View>
 
-            {/* Specifications */}
             {Object.keys(customOffering.specifications).length > 0 && (
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>Specifications</Text>
@@ -1025,7 +1003,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               </View>
             )}
 
-            {/* Product Attributes (for shops) */}
             {businessType === 'shop' && productAttributes.length > 0 && (
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>Product Attributes</Text>
@@ -1054,7 +1031,6 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
               </View>
             )}
 
-            {/* Toggles */}
             <View style={styles.toggleRow}>
               <Text style={styles.toggleLabel}>
                 {businessType === 'shop' ? 'In Stock' : 'Available'}
@@ -1130,7 +1106,7 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
     statItems[lastStatIndex].label = config.offeringLabel || 'Offerings';
 
     return (
-      <View style={styles.statsGrid}>
+      <View style={[styles.statsGrid, isDesktop && styles.statsGridDesktop]}>
         {statItems.map((stat, index) => (
           <View key={index} style={[styles.statCard, { backgroundColor: stat.color + '10' }]}>
             <Text style={styles.statIcon}>{stat.icon}</Text>
@@ -1144,7 +1120,7 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
 
   // --- Render Quick Actions ---
   const renderQuickActions = () => (
-    <View style={styles.quickActions}>
+    <View style={[styles.quickActions, isDesktop && styles.quickActionsDesktop]}>
       {(config.quickActions || []).map((action: string, index: number) => {
         let icon = '';
         let onPress = () => {};
@@ -1597,112 +1573,317 @@ const entries = Object.entries(attributeValues).filter(([_, value]) =>
     ];
   };
 
+  // --- Loading State ---
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4A7DFF" />
-          <Text style={styles.loadingText}>Loading dashboard...</Text>
-        </View>
-      </SafeAreaView>
+      <View style={[styles.loadingContainer, isDesktop && styles.loadingContainerDesktop]}>
+        <ActivityIndicator size="large" color="#4A7DFF" />
+        <Text style={styles.loadingText}>Loading dashboard...</Text>
+      </View>
     );
   }
 
+  // --- No Business State ---
   if (!business) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.emptyState}>
-          <Ionicons name="storefront-outline" size={48} color="#8A8AAE" />
-          <Text style={styles.emptyTitle}>No business found</Text>
-          <Text style={styles.emptySubtitle}>Set up your business to start selling on Munolink.</Text>
-          <TouchableOpacity style={styles.setupBtn} onPress={() => navigation.navigate('BusinessRegistration')}>
-            <Text style={styles.setupBtnText}>Set Up Business</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <View style={[styles.emptyState, isDesktop && styles.emptyStateDesktop]}>
+        <Ionicons name="storefront-outline" size={48} color="#8A8AAE" />
+        <Text style={styles.emptyTitle}>No business found</Text>
+        <Text style={styles.emptySubtitle}>Set up your business to start selling on Munolink.</Text>
+        <TouchableOpacity style={styles.setupBtn} onPress={() => navigation.navigate('BusinessRegistration')}>
+          <Text style={styles.setupBtnText}>Set Up Business</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
   const tabs = getTabs();
 
+  // --- Main Render ---
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Business Dashboard</Text>
-        <TouchableOpacity>
-          <Ionicons name="notifications-outline" size={24} color="#1F2F5F" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.banner}>
-        <View>
-          <Text style={styles.bannerName}>{business.name}</Text>
-          <Text style={styles.bannerType}>{category || 'Uncategorized'}</Text>
+      {/* Desktop Header */}
+      {isDesktop ? (
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopHeaderTitle}>Business Dashboard</Text>
+          <Text style={styles.desktopHeaderSubtitle}>Manage your business on Munolink</Text>
         </View>
-        <View style={styles.bannerStatus}>
-          <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
-          <Text style={[styles.bannerStatusText, { color: business.is_active ? '#2ECC71' : '#F1C40F' }]}>
-            {business.is_active ? 'Active' : 'Inactive'}
-          </Text>
-        </View>
-      </View>
-
-      <TouchableOpacity style={styles.walletCompact} onPress={() => setActiveTab('wallet')}>
-        <View style={styles.walletCompactLeft}>
-          <Text style={styles.walletCompactLabel}>Wallet Balance</Text>
-          <Text style={styles.walletCompactAmount}>
-            {balanceVisible ? `UGX ${walletBalance.toLocaleString()}` : '****'}
-          </Text>
-        </View>
-        <View style={styles.walletCompactRight}>
-          <Ionicons name="chevron-forward" size={20} color="#4A7DFF" />
-        </View>
-      </TouchableOpacity>
-
-      <View style={styles.tabsContainer}>
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-            onPress={() => setActiveTab(tab.key)}
-          >
-            <Ionicons
-              name={tab.icon as any}
-              size={18}
-              color={activeTab === tab.key ? '#4A7DFF' : '#8A8AAE'}
-            />
-            <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
-              {tab.label}
-            </Text>
+      ) : (
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
           </TouchableOpacity>
-        ))}
-      </View>
+          <Text style={styles.headerTitle}>Business Dashboard</Text>
+          <TouchableOpacity>
+            <Ionicons name="notifications-outline" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+        </View>
+      )}
 
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.contentContainer}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
-        }
-      >
-        {renderTabContent()}
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
+      {isDesktop ? (
+        // --- DESKTOP LAYOUT ---
+        <View style={styles.desktopGrid}>
+          {/* Left Column */}
+          <View style={styles.desktopLeftColumn}>
+            <View style={styles.bannerDesktop}>
+              <View>
+                <Text style={styles.bannerNameDesktop}>{business.name}</Text>
+                <Text style={styles.bannerTypeDesktop}>{category || 'Uncategorized'}</Text>
+              </View>
+              <View style={styles.bannerStatus}>
+                <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
+                <Text style={[styles.bannerStatusText, { color: business.is_active ? '#2ECC71' : '#F1C40F' }]}>
+                  {business.is_active ? 'Active' : 'Inactive'}
+                </Text>
+              </View>
+            </View>
+            {renderStats()}
+            {renderQuickActions()}
+            {renderRecentActivity()}
+          </View>
+
+          {/* Right Column */}
+          <View style={styles.desktopRightColumn}>
+            <View style={styles.tabsContainerDesktop}>
+              {tabs.map((tab) => (
+                <TouchableOpacity
+                  key={tab.key}
+                  style={[styles.tabDesktop, activeTab === tab.key && styles.tabActiveDesktop]}
+                  onPress={() => setActiveTab(tab.key)}
+                >
+                  <Ionicons
+                    name={tab.icon as any}
+                    size={18}
+                    color={activeTab === tab.key ? '#4A7DFF' : '#8A8AAE'}
+                  />
+                  <Text style={[styles.tabLabelDesktop, activeTab === tab.key && styles.tabLabelActiveDesktop]}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <ScrollView
+              style={styles.contentDesktop}
+              contentContainerStyle={styles.contentContainerDesktop}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
+              }
+            >
+              {renderTabContent()}
+              <View style={styles.bottomSpacer} />
+            </ScrollView>
+          </View>
+        </View>
+      ) : (
+        // --- MOBILE LAYOUT ---
+        <>
+          <View style={styles.banner}>
+            <View>
+              <Text style={styles.bannerName}>{business.name}</Text>
+              <Text style={styles.bannerType}>{category || 'Uncategorized'}</Text>
+            </View>
+            <View style={styles.bannerStatus}>
+              <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
+              <Text style={[styles.bannerStatusText, { color: business.is_active ? '#2ECC71' : '#F1C40F' }]}>
+                {business.is_active ? 'Active' : 'Inactive'}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity style={styles.walletCompact} onPress={() => setActiveTab('wallet')}>
+            <View style={styles.walletCompactLeft}>
+              <Text style={styles.walletCompactLabel}>Wallet Balance</Text>
+              <Text style={styles.walletCompactAmount}>
+                {balanceVisible ? `UGX ${walletBalance.toLocaleString()}` : '****'}
+              </Text>
+            </View>
+            <View style={styles.walletCompactRight}>
+              <Ionicons name="chevron-forward" size={20} color="#4A7DFF" />
+            </View>
+          </TouchableOpacity>
+
+          <View style={styles.tabsContainer}>
+            {tabs.map((tab) => (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+                onPress={() => setActiveTab(tab.key)}
+              >
+                <Ionicons
+                  name={tab.icon as any}
+                  size={18}
+                  color={activeTab === tab.key ? '#4A7DFF' : '#8A8AAE'}
+                />
+                <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <ScrollView
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
+            }
+          >
+            {renderTabContent()}
+            <View style={styles.bottomSpacer} />
+          </ScrollView>
+        </>
+      )}
 
       {renderCatalogBrowser()}
       {renderCustomizeModal()}
-    </SafeAreaView>
+    </View>
   );
 };
 
-// --- Styles ---
+// --- Main Component (Wrapped with ResponsiveLayout) ---
+export const BusinessDashboardScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="BusinessDashboard" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true}
+      fullWidth={true}
+    >
+      <BusinessDashboardContent navigation={navigation} />
+    </ResponsiveLayout>
+  );
+};
+
+// src/features/business/BusinessDashboardScreen.tsx - Styles
+
 const styles = StyleSheet.create({
+  // ============================================================
+  // DESKTOP STYLES
+  // ============================================================
+  containerDesktop: {
+    backgroundColor: '#F8F9FC',
+    padding: 24,
+  },
+  loadingContainerDesktop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyStateDesktop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  desktopHeader: {
+    marginBottom: 24,
+  },
+  desktopHeaderTitle: {
+    color: '#1F2F5F',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
+  },
+  desktopGrid: {
+    flexDirection: 'row',
+    gap: 24,
+    maxWidth: 1400,
+    width: '100%',
+    alignSelf: 'center',
+    flex: 1,
+  },
+  desktopLeftColumn: {
+    flex: 1,
+    minWidth: 350,
+    maxWidth: 500,
+  },
+  desktopRightColumn: {
+    flex: 2,
+    minWidth: 450,
+  },
+  bannerDesktop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    marginBottom: 16,
+  },
+  bannerNameDesktop: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+  },
+  bannerTypeDesktop: {
+    fontSize: 13,
+    color: '#8A8AAE',
+    marginTop: 2,
+  },
+  tabsContainerDesktop: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  tabDesktop: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  tabActiveDesktop: {
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+  },
+  tabLabelDesktop: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  tabLabelActiveDesktop: {
+    color: '#4A7DFF',
+  },
+  contentDesktop: {
+    flex: 1,
+  },
+  contentContainerDesktop: {
+    paddingBottom: 40,
+  },
+  statsGridDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  quickActionsDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+
+  // ============================================================
+  // MOBILE STYLES
+  // ============================================================
   container: {
     flex: 1,
     backgroundColor: '#F8F9FC',
@@ -1838,6 +2019,10 @@ const styles = StyleSheet.create({
   bottomSpacer: {
     height: 20,
   },
+
+  // ============================================================
+  // SHARED STYLES
+  // ============================================================
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -2418,7 +2603,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // --- Modal Styles ---
+
+  // ============================================================
+  // MODAL STYLES
+  // ============================================================
   modalFullScreen: {
     flex: 1,
     backgroundColor: '#F8F9FC',
@@ -2756,3 +2944,4 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 });
+  // PLUS the new desktop styles below

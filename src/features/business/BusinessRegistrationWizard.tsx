@@ -1,3 +1,5 @@
+// src/features/business/BusinessRegistrationWizard.tsx
+
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -26,7 +28,12 @@ import { supabase } from '../../lib/supabase';
 import type { Json } from '../../types/database.types';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-// Add this type definition at the top of your file, after the imports
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
+
+const { width, height } = Dimensions.get('window');
+
+// --- Types ---
 type BusinessDocumentInsert = {
   business_id: string | null;
   document_type: string;
@@ -39,7 +46,6 @@ type BusinessDocumentInsert = {
   status?: string;
   is_verified?: boolean;
 };
-const { width, height } = Dimensions.get('window');
 
 // --- Business Types (Simplified) ---
 const BUSINESS_TYPES = [
@@ -91,7 +97,7 @@ const CATEGORIES: Record<string, any[]> = {
   ],
 };
 
-// --- Dynamic Wizard Questions (Simplified with options) ---
+// --- Dynamic Wizard Questions ---
 const WIZARD_QUESTIONS: Record<string, any[]> = {
   products: [
     { 
@@ -473,7 +479,6 @@ const WizardQuestion = ({ question, value, onChange }: any) => {
     }
   }, [value]);
 
-  // Handle multi-select
   if (question.type === 'multiselect') {
     const selected = Array.isArray(value) ? value : [];
     return (
@@ -489,7 +494,6 @@ const WizardQuestion = ({ question, value, onChange }: any) => {
     );
   }
 
-  // Handle single select
   if (question.type === 'select') {
     return (
       <View style={styles.wizardQuestion}>
@@ -504,7 +508,6 @@ const WizardQuestion = ({ question, value, onChange }: any) => {
     );
   }
 
-  // Handle text input (fallback)
   return (
     <View style={styles.wizardQuestion}>
       <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
@@ -534,9 +537,8 @@ const DocumentUploadBox = ({
   fileSize,
   preview,
   required,
-  docData, // Pass the document data from parent
+  docData,
 }: any) => {
-
   return (
     <View style={styles.uploadBox}>
       <View style={styles.uploadBoxHeader}>
@@ -594,9 +596,11 @@ const DocumentUploadBox = ({
   );
 };
 
-// --- Main Component ---
-export const BusinessRegistrationWizard = ({ navigation }: any) => {
+// --- Main BusinessRegistrationWizard Component ---
+const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   const { user } = useAuth();
+  const { isDesktop } = useBreakpoint();
+  
   const [step, setStep] = useState(1);
   const [businessType, setBusinessType] = useState<string | null>(null);
   const [category, setCategory] = useState<string | null>(null);
@@ -607,7 +611,6 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
   const [isLoading, setIsLoading] = useState(false);
   const [shopId, setShopId] = useState<string | null>(null);
   
-  // Document upload states
   const [documents, setDocuments] = useState<Record<string, DocumentUpload>>({});
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
 
@@ -744,116 +747,114 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
   };
 
   const uploadDocument = async (docType: string, file: any) => {
-  try {
-    console.log(`🚀 Starting upload for ${docType}`);
-    
-    if (!file || !file.uri) {
-      throw new Error('No file data provided');
-    }
-
-    setUploadingDoc(docType);
-    
-    const userId = user?.id;
-    if (!userId) {
-      Alert.alert('Error', 'Please sign in first');
-      setUploadingDoc(null);
-      return;
-    }
-
-    console.log('📤 Processing file:', file.name);
-
-    // Convert file to Base64
-    let base64Data = '';
-    
-    if (Platform.OS === 'web') {
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
+    try {
+      console.log(`🚀 Starting upload for ${docType}`);
       
-      const reader = new FileReader();
-      base64Data = await new Promise((resolve, reject) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64 = result.split(',')[1] || result;
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    } else {
-      const response = await fetch(file.uri);
-      const blob = await response.blob();
-      
-      const reader = new FileReader();
-      base64Data = await new Promise((resolve, reject) => {
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64 = result.split(',')[1] || result;
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    }
-
-    const mimeType = file.mimeType || 'application/octet-stream';
-    const dataUrl = `data:${mimeType};base64,${base64Data}`;
-
-    console.log('✅ File converted to Base64, length:', base64Data.length);
-
-    // Store directly in database as data URL - FIXED with 'as any'
-    const { data: docRecord, error: dbError } = await supabase
-      .from('business_documents')
-      .insert({
-        business_id: shopId || null,
-        document_type: docType,
-        file_name: file.name,
-        file_url: dataUrl,
-        file_data: base64Data,
-        file_size: file.size || 0,
-        mime_type: mimeType,
-        uploaded_by: userId,
-        status: 'pending',
-        is_verified: false,
-      } as any) // <-- THIS FIXES THE TYPE ERROR
-      .select()
-      .single();
-
-    if (dbError) {
-      console.error('❌ Database insert error:', dbError);
-      throw dbError;
-    }
-
-    console.log('✅ Database record created:', docRecord.id);
-
-    setDocuments(prev => ({
-      ...prev,
-      [docType]: { 
-        ...prev[docType], 
-        uri: dataUrl,
-        uploaded: true,
-        progress: 100,
-        document_id: docRecord.id,
+      if (!file || !file.uri) {
+        throw new Error('No file data provided');
       }
-    }));
 
-    Alert.alert('Success', `${docType} document uploaded successfully!`);
+      setUploadingDoc(docType);
+      
+      const userId = user?.id;
+      if (!userId) {
+        Alert.alert('Error', 'Please sign in first');
+        setUploadingDoc(null);
+        return;
+      }
 
-  } catch (error: any) {
-    console.error('❌ Upload error:', error);
-    Alert.alert(
-      'Upload Failed', 
-      error.message || 'Failed to upload document. Please try again.',
-      [{ text: 'OK' }]
-    );
-    
-    setDocuments(prev => ({
-      ...prev,
-      [docType]: { ...prev[docType], progress: 0, uploaded: false }
-    }));
-  } finally {
-    setUploadingDoc(null);
-  }
-};
+      console.log('📤 Processing file:', file.name);
+
+      let base64Data = '';
+      
+      if (Platform.OS === 'web') {
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        
+        const reader = new FileReader();
+        base64Data = await new Promise((resolve, reject) => {
+          reader.onload = () => {
+            const result = reader.result as string;
+            const base64 = result.split(',')[1] || result;
+            resolve(base64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        
+        const reader = new FileReader();
+        base64Data = await new Promise((resolve, reject) => {
+          reader.onload = () => {
+            const result = reader.result as string;
+            const base64 = result.split(',')[1] || result;
+            resolve(base64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      const mimeType = file.mimeType || 'application/octet-stream';
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
+
+      console.log('✅ File converted to Base64, length:', base64Data.length);
+
+      const { data: docRecord, error: dbError } = await supabase
+        .from('business_documents')
+        .insert({
+          business_id: shopId || null,
+          document_type: docType,
+          file_name: file.name,
+          file_url: dataUrl,
+          file_data: base64Data,
+          file_size: file.size || 0,
+          mime_type: mimeType,
+          uploaded_by: userId,
+          status: 'pending',
+          is_verified: false,
+        } as any)
+        .select()
+        .single();
+
+      if (dbError) {
+        console.error('❌ Database insert error:', dbError);
+        throw dbError;
+      }
+
+      console.log('✅ Database record created:', docRecord.id);
+
+      setDocuments(prev => ({
+        ...prev,
+        [docType]: { 
+          ...prev[docType], 
+          uri: dataUrl,
+          uploaded: true,
+          progress: 100,
+          document_id: docRecord.id,
+        }
+      }));
+
+      Alert.alert('Success', `${docType} document uploaded successfully!`);
+
+    } catch (error: any) {
+      console.error('❌ Upload error:', error);
+      Alert.alert(
+        'Upload Failed', 
+        error.message || 'Failed to upload document. Please try again.',
+        [{ text: 'OK' }]
+      );
+      
+      setDocuments(prev => ({
+        ...prev,
+        [docType]: { ...prev[docType], progress: 0, uploaded: false }
+      }));
+    } finally {
+      setUploadingDoc(null);
+    }
+  };
 
   const pickDocument = async (docType: string) => {
     console.log('📂 pickDocument called for:', docType, 'on platform:', Platform.OS);
@@ -1359,19 +1360,18 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
       }
 
       console.log('✅ Verification request created');
-// Cache ONLY document IDs and URLs (not the full Base64 data)
-const docCache: Record<string, any> = {};
-for (const [docType, docData] of documentEntries) {
-  if (docData.uploaded && docData.document_id) {
-    docCache[docType] = {
-      document_id: docData.document_id,
-      uploaded_at: new Date().toISOString()
-    };
-  }
-}
 
-// Only cache the IDs, not the full data
-await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
+      const docCache: Record<string, any> = {};
+      for (const [docType, docData] of documentEntries) {
+        if (docData.uploaded && docData.document_id) {
+          docCache[docType] = {
+            document_id: docData.document_id,
+            uploaded_at: new Date().toISOString()
+          };
+        }
+      }
+
+      await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
       console.log('✅ Document cache saved to AsyncStorage');
 
@@ -1427,7 +1427,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
   // --- Render Step 1: Business Type ---
   const renderStep1 = () => (
-    <View style={styles.stepContainer}>
+    <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
       <View style={styles.stepIconContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
@@ -1442,7 +1442,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
         Choose the type that best describes your business
       </Text>
 
-      <View style={styles.businessTypesGrid}>
+      <View style={[styles.businessTypesGrid, isDesktop && styles.businessTypesGridDesktop]}>
         {BUSINESS_TYPES.map((type) => (
           <BusinessTypeCard
             key={type.id}
@@ -1460,7 +1460,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
     const categories = businessType ? CATEGORIES[businessType] || [] : [];
 
     return (
-      <View style={styles.stepContainer}>
+      <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
         <View style={styles.stepIconContainer}>
           <LinearGradient
             colors={['#4A7DFF', '#6B94FF']}
@@ -1475,7 +1475,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
           Choose the category that best fits your business
         </Text>
 
-        <View style={styles.categoriesGrid}>
+        <View style={[styles.categoriesGrid, isDesktop && styles.categoriesGridDesktop]}>
           {categories.map((cat) => (
             <CategoryCard
               key={cat.id}
@@ -1491,7 +1491,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
   // --- Render Step 3: Business Identity ---
   const renderStep3 = () => (
-    <View style={styles.stepContainer}>
+    <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
       <View style={styles.stepIconContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
@@ -1506,7 +1506,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
         Just a few details about your business
       </Text>
 
-      <View style={styles.formContainer}>
+      <View style={[styles.formContainer, isDesktop && styles.formContainerDesktop]}>
         <View style={styles.formGroup}>
           <Text style={styles.formLabel}>Business Name *</Text>
           <TextInput
@@ -1550,7 +1550,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
     if (questions.length === 0) {
       return (
-        <View style={styles.stepContainer}>
+        <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
           <View style={styles.stepIconContainer}>
             <LinearGradient
               colors={['#4A7DFF', '#6B94FF']}
@@ -1569,7 +1569,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
     }
 
     return (
-      <View style={styles.stepContainer}>
+      <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
         <View style={styles.stepIconContainer}>
           <LinearGradient
             colors={['#4A7DFF', '#6B94FF']}
@@ -1584,7 +1584,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
           Select options to help us create a better experience for your customers
         </Text>
 
-        <View style={styles.wizardContainer}>
+        <View style={[styles.wizardContainer, isDesktop && styles.wizardContainerDesktop]}>
           {questions.map((q) => (
             <WizardQuestion
               key={q.key}
@@ -1605,7 +1605,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
     const docRequirements = getDocumentRequirements();
 
     return (
-      <View style={styles.stepContainer}>
+      <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
         <View style={styles.stepIconContainer}>
           <LinearGradient
             colors={['#4A7DFF', '#6B94FF']}
@@ -1620,7 +1620,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
           Upload the required documents to verify your business
         </Text>
 
-        <View style={styles.verificationContainer}>
+        <View style={[styles.verificationContainer, isDesktop && styles.verificationContainerDesktop]}>
           <View style={styles.verificationItem}>
             <View style={[styles.verificationIcon, { backgroundColor: '#E8F5E9' }]}>
               <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
@@ -1639,7 +1639,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
            'Upload your institution registration and accreditation documents'}
         </Text>
 
-        <View style={styles.uploadBoxContainer}>
+        <View style={[styles.uploadBoxContainer, isDesktop && styles.uploadBoxContainerDesktop]}>
           {docRequirements.map((doc) => (
             <DocumentUploadBox
               key={doc.id}
@@ -1707,7 +1707,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
   // --- Render Step 6: Success ---
   const renderSuccess = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim }]}>
+    <Animated.View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop, { opacity: fadeAnim }]}>
       <View style={styles.successContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
@@ -1722,7 +1722,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
         {businessName} is now registered on Munolink.
       </Text>
 
-      <View style={styles.successFeatures}>
+      <View style={[styles.successFeatures, isDesktop && styles.successFeaturesDesktop]}>
         <View style={styles.successFeature}>
           <View style={styles.successFeatureIcon}>
             <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
@@ -1760,7 +1760,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
         </View>
       </View>
 
-      <TouchableOpacity style={styles.continueButton} onPress={handleFinish}>
+      <TouchableOpacity style={[styles.continueButton, isDesktop && styles.continueButtonDesktop]} onPress={handleFinish}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
           start={{ x: 0, y: 0 }}
@@ -1800,7 +1800,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
   const totalSteps = 6;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
@@ -1808,7 +1808,7 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
-        <View style={styles.header}>
+        <View style={[styles.header, isDesktop && styles.headerDesktop]}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
           </TouchableOpacity>
@@ -1826,15 +1826,15 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
 
         <ScrollView
           ref={scrollViewRef}
-          style={styles.content}
-          contentContainerStyle={styles.contentContainer}
+          style={[styles.content, isDesktop && styles.contentDesktop]}
+          contentContainerStyle={[styles.contentContainer, isDesktop && styles.contentContainerDesktop]}
           showsVerticalScrollIndicator={false}
         >
           {renderStep()}
         </ScrollView>
 
         {step < 6 && (
-          <View style={styles.navigationBar}>
+          <View style={[styles.navigationBar, isDesktop && styles.navigationBarDesktop]}>
             {step > 1 ? (
               <TouchableOpacity style={styles.prevButton} onPress={prevStep}>
                 <Text style={styles.prevButtonText}>Back</Text>
@@ -1862,7 +1862,96 @@ await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
   );
 };
 
+// --- Main Component (Wrapped with ResponsiveLayout) ---
+export const BusinessRegistrationWizard = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="BusinessRegistration" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true}
+      fullWidth={true}
+    >
+      <BusinessRegistrationWizardContent navigation={navigation} />
+    </ResponsiveLayout>
+  );
+};
+
 const styles = StyleSheet.create({
+  // ============================================================
+  // DESKTOP STYLES
+  // ============================================================
+  containerDesktop: {
+    backgroundColor: '#F8F9FC',
+  },
+  headerDesktop: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 12,
+  },
+  contentDesktop: {
+    paddingHorizontal: 24,
+  },
+  contentContainerDesktop: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
+    paddingBottom: 100,
+  },
+  navigationBarDesktop: {
+    paddingHorizontal: 24,
+  },
+  stepContainerDesktop: {
+    paddingTop: 10,
+  },
+  businessTypesGridDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  categoriesGridDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  formContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  wizardContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  verificationContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  uploadBoxContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  continueButtonDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  successFeaturesDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+
+  // ============================================================
+  // MOBILE STYLES
+  // ============================================================
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -2059,31 +2148,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     color: '#1F2F5F',
     fontSize: 15,
-  },
-  selectOptions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  selectOption: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#F8F9FC',
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  selectOptionSelected: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-    borderColor: '#4A7DFF',
-  },
-  selectOptionText: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  selectOptionTextSelected: {
-    color: '#4A7DFF',
-    fontWeight: '500',
   },
   verificationContainer: {
     gap: 12,

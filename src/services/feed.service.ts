@@ -1,5 +1,4 @@
 // src/services/feed.service.ts
-// COMPLETE REPLACEMENT - Add this entire file
 
 import { supabase } from '../lib/supabase';
 

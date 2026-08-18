@@ -1,4 +1,6 @@
-import React, { useState, useRef } from 'react';
+// src/features/hub/HubScreen.tsx
+
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,172 +13,97 @@ import {
   StatusBar,
   FlatList,
   Animated,
+  ActivityIndicator,
+  Alert,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { supabase } from '../../lib/supabase';
+
+const supabaseAny = supabase as any;
 
 const { width, height } = Dimensions.get('window');
 
-// --- Mock Data ---
-const cartItems = [
-  {
-    id: '1',
-    title: 'Samsung Galaxy S25',
-    provider: 'TechWorld Kampala',
-    price: 2850000,
-    quantity: 1,
-    image: 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=S25',
-    variation: '128GB • Phantom Black',
-    delivery: '2-3 business days',
-    providerAvatar: 'TW',
-    isVerified: true,
-    rating: 4.8,
-    distance: '0.8 km',
-  },
-  {
-    id: '2',
-    title: 'Phone Repair Service',
-    provider: 'QuickFix Mobile',
-    price: 75000,
-    quantity: 1,
-    image: 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=Repair',
-    variation: 'Screen Replacement • 1 hour',
-    delivery: 'Today, 2:00 PM',
-    providerAvatar: 'QF',
-    isVerified: true,
-    rating: 4.5,
-    distance: '1.2 km',
-  },
-  {
-    id: '3',
-    title: 'MacBook Air M3',
-    provider: 'TechWorld Kampala',
-    price: 4500000,
-    quantity: 1,
-    image: 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=MacBook',
-    variation: '16GB • 512GB',
-    delivery: '3-5 business days',
-    providerAvatar: 'TW',
-    isVerified: true,
-    rating: 4.7,
-    distance: '0.8 km',
-  },
-];
+// --- Types ---
+interface CartItem {
+  id: string;
+  title: string;
+  provider: string;
+  price: number;
+  quantity: number;
+  image: string;
+  variation: string;
+  delivery: string;
+  providerAvatar: string;
+  isVerified: boolean;
+  rating: number;
+  distance: string;
+  shop_id: string;
+  catalog_id: string;
+  interaction_id: string;
+  item_type: 'product' | 'service';
+}
 
-const bookings = [
-  {
-    id: '1',
-    service: 'Samsung S25 Screen Repair',
-    provider: 'QuickFix Mobile',
-    date: '2024-01-20',
-    time: '2:00 PM',
-    status: 'Confirmed',
-    location: 'Jinja, Uganda',
-    image: 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=Repair',
-    providerAvatar: 'QF',
-  },
-  {
-    id: '2',
-    service: 'Hotel Room - Deluxe Suite',
-    provider: 'Jinja Heights Hotel',
-    date: '2024-01-25',
-    time: '3:00 PM Check-in',
-    status: 'Pending',
-    location: 'Jinja, Uganda',
-    image: 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=Hotel',
-    providerAvatar: 'JH',
-  },
-];
+interface Booking {
+  id: string;
+  service: string;
+  provider: string;
+  provider_id: string;
+  date: string;
+  time: string;
+  status: string;
+  location: string;
+  image: string;
+  providerAvatar: string;
+  price: number;
+  item_id: string;
+  interaction_id: string;
+  metadata?: any;
+}
 
-const wishlistItems = [
-  {
-    id: '1',
-    title: 'iPhone 16 Pro Max',
-    provider: 'City Electronics',
-    price: 3200000,
-    image: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=iPhone',
-    rating: 4.8,
-    priceDrop: true,
-    stockAlert: false,
-  },
-  {
-    id: '2',
-    title: 'Sony WH-1000XM5',
-    provider: 'AudioWorld',
-    price: 850000,
-    image: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=Sony',
-    rating: 4.9,
-    priceDrop: false,
-    stockAlert: true,
-  },
-  {
-    id: '3',
-    title: 'Dell XPS 16',
-    provider: 'TechWorld Kampala',
-    price: 4800000,
-    image: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Dell',
-    rating: 4.6,
-    priceDrop: false,
-    stockAlert: false,
-  },
-  {
-    id: '4',
-    title: 'Home Cleaning Service',
-    provider: 'CleanHome Ltd',
-    price: 120000,
-    image: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=Cleaning',
-    rating: 4.3,
-    priceDrop: true,
-    stockAlert: false,
-  },
-];
+interface WishlistItem {
+  id: string;
+  title: string;
+  provider: string;
+  price: number;
+  image: string;
+  rating: number;
+  priceDrop: boolean;
+  stockAlert: boolean;
+}
 
-const collections = [
-  {
-    id: '1',
-    name: 'Home Renovation',
-    count: 8,
-    cover: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Home',
-    lastActivity: '2 hours ago',
-  },
-  {
-    id: '2',
-    name: 'Wedding Planning',
-    count: 12,
-    cover: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=Wedding',
-    lastActivity: '1 day ago',
-  },
-  {
-    id: '3',
-    name: 'Electronics Wishlist',
-    count: 5,
-    cover: 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Electronics',
-    lastActivity: '3 days ago',
-  },
-  {
-    id: '4',
-    name: 'Christmas Gifts',
-    count: 6,
-    cover: 'https://via.placeholder.com/150/6B94FF/FFFFFF?text=Gifts',
-    lastActivity: '1 week ago',
-  },
-];
+interface Collection {
+  id: string;
+  name: string;
+  count: number;
+  cover: string;
+  lastActivity: string;
+}
 
-// --- Sub-components ---
+// ============================================================
+// SUB-COMPONENTS
+// ============================================================
 
-// AI Suggestion Banner
+// --- AI Suggestion Banner ---
 const AISuggestionBanner = () => {
   const suggestions = [
-    "🛒 You have three items ready for checkout.",
-    "📅 Your hotel booking is tomorrow.",
-    "💰 This phone in your wishlist has dropped in price.",
+    "🛒 You have items in your cart ready for checkout.",
+    "📅 Don't forget your upcoming bookings.",
+    "💰 Items in your wishlist may have price drops.",
     "📦 Would you like to group these purchases into one payment?",
   ];
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % suggestions.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <TouchableOpacity style={styles.aiBanner}>
@@ -199,8 +126,8 @@ const AISuggestionBanner = () => {
   );
 };
 
-// Cart Item Card
-const CartItemCard = ({ item, onRemove, onUpdateQuantity }: any) => (
+// --- Cart Item Card ---
+const CartItemCard = ({ item, onRemove, onUpdateQuantity, onChangeProvider }: any) => (
   <View style={styles.cartCard}>
     <Image source={{ uri: item.image }} style={styles.cartImage} />
     <View style={styles.cartContent}>
@@ -210,7 +137,11 @@ const CartItemCard = ({ item, onRemove, onUpdateQuantity }: any) => (
           <Ionicons name="close" size={18} color="#8A8AAE" />
         </TouchableOpacity>
       </View>
-      <Text style={styles.cartProvider}>{item.provider}</Text>
+      <TouchableOpacity onPress={() => onChangeProvider(item)}>
+        <Text style={styles.cartProvider}>
+          {item.provider} <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
+        </Text>
+      </TouchableOpacity>
       <Text style={styles.cartVariation}>{item.variation}</Text>
       <View style={styles.cartFooter}>
         <View style={styles.cartPriceQuantity}>
@@ -237,8 +168,8 @@ const CartItemCard = ({ item, onRemove, onUpdateQuantity }: any) => (
   </View>
 );
 
-// Booking Card
-const BookingCard = ({ item }: any) => {
+// --- Booking Card ---
+const BookingCard = ({ item, onCancel, onChangeProvider }: any) => {
   const statusColors = {
     Confirmed: '#2ECC71',
     Pending: '#F1C40F',
@@ -254,7 +185,11 @@ const BookingCard = ({ item }: any) => {
             <Text style={styles.bookingAvatarText}>{item.providerAvatar}</Text>
           </View>
           <View>
-            <Text style={styles.bookingProviderName}>{item.provider}</Text>
+            <TouchableOpacity onPress={() => onChangeProvider(item)}>
+              <Text style={styles.bookingProviderName}>
+                {item.provider} <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
+              </Text>
+            </TouchableOpacity>
             <Text style={styles.bookingService}>{item.service}</Text>
           </View>
         </View>
@@ -277,6 +212,10 @@ const BookingCard = ({ item }: any) => {
           <Ionicons name="location-outline" size={14} color="#8A8AAE" />
           <Text style={styles.bookingDetailText}>{item.location}</Text>
         </View>
+        <View style={styles.bookingDetail}>
+          <Ionicons name="cash-outline" size={14} color="#8A8AAE" />
+          <Text style={styles.bookingDetailText}>UGX {item.price.toLocaleString()}</Text>
+        </View>
       </View>
       <View style={styles.bookingActions}>
         <TouchableOpacity style={styles.bookingActionButton}>
@@ -285,7 +224,10 @@ const BookingCard = ({ item }: any) => {
         <TouchableOpacity style={styles.bookingActionButton}>
           <Text style={styles.bookingActionText}>Reschedule</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.bookingActionButton, styles.bookingActionDanger]}>
+        <TouchableOpacity 
+          style={[styles.bookingActionButton, styles.bookingActionDanger]} 
+          onPress={() => onCancel(item.id)}
+        >
           <Text style={[styles.bookingActionText, styles.bookingActionDangerText]}>Cancel</Text>
         </TouchableOpacity>
       </View>
@@ -293,8 +235,8 @@ const BookingCard = ({ item }: any) => {
   );
 };
 
-// Wishlist Item Card
-const WishlistItem = ({ item }: any) => (
+// --- Wishlist Item Card ---
+const WishlistItemCard = ({ item }: any) => (
   <TouchableOpacity style={styles.wishlistCard}>
     <Image source={{ uri: item.image }} style={styles.wishlistImage} />
     <View style={styles.wishlistInfo}>
@@ -318,7 +260,7 @@ const WishlistItem = ({ item }: any) => (
   </TouchableOpacity>
 );
 
-// Collection Card
+// --- Collection Card ---
 const CollectionCard = ({ item }: any) => (
   <TouchableOpacity style={styles.collectionCard}>
     <Image source={{ uri: item.cover }} style={styles.collectionImage} />
@@ -358,37 +300,426 @@ const GuestHubView = ({ navigation }: any) => (
   </View>
 );
 
-// --- HubContent Component (Extracted for reuse) ---
-const HubContent = ({ navigation }: any) => {
-  const { isAuthenticated } = useAuth();
+// --- Provider Selection Modal ---
+const ProviderSelectionModal = ({ 
+  visible, 
+  onClose, 
+  onSelect, 
+  currentItem,
+  providers 
+}: any) => {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Provider</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={providers}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[
+                  styles.providerOption,
+                  currentItem?.provider === item.name && styles.providerOptionSelected,
+                ]}
+                onPress={() => onSelect(item)}
+              >
+                <View style={styles.providerOptionLeft}>
+                  <View style={styles.providerAvatar}>
+                    <Text style={styles.providerAvatarText}>
+                      {item.name?.charAt(0).toUpperCase() || 'P'}
+                    </Text>
+                  </View>
+                  <View>
+                    <Text style={styles.providerOptionName}>{item.name}</Text>
+                    <Text style={styles.providerOptionLocation}>{item.area || 'Location TBD'}</Text>
+                  </View>
+                </View>
+                {currentItem?.provider === item.name && (
+                  <Ionicons name="checkmark-circle" size={24} color="#4A7DFF" />
+                )}
+              </TouchableOpacity>
+            )}
+            contentContainerStyle={styles.providerList}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+
+const HubContent = ({ navigation }: any) => {
+  const { isAuthenticated, user } = useAuth();
+  const { isDesktop } = useBreakpoint();
+  
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('cart');
-  const [cartItemsState, setCartItemsState] = useState(cartItems);
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [walletBalance, setWalletBalance] = useState(0);
+  
+  // Provider selection state
+  const [showProviderModal, setShowProviderModal] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [availableProviders, setAvailableProviders] = useState<any[]>([]);
+
   const scrollViewRef = useRef<ScrollView>(null);
 
-  const tabs = [
-    { key: 'cart', label: 'Cart', count: cartItemsState.length },
-    { key: 'bookings', label: 'Bookings', count: bookings.length },
-    { key: 'wishlist', label: 'Wishlist', count: wishlistItems.length },
-    { key: 'collections', label: 'Collections', count: collections.length },
-  ];
+  // ============================================================
+  // FETCH CART ITEMS (Products only - 'purchase' action)
+  // ============================================================
+  const fetchCartItems = useCallback(async () => {
+    if (!user?.id) return [];
 
-  const handleRemoveItem = (id: string) => {
-    setCartItemsState(cartItemsState.filter(item => item.id !== id));
-  };
+    try {
+      // Get cart items from user_interactions with 'purchase' action
+      const { data: interactions, error: interactionsError } = await supabaseAny
+        .from('user_interactions')
+        .select('id, item_id, metadata, created_at')
+        .eq('user_id', user.id)
+        .eq('action', 'purchase')
+        .order('created_at', { ascending: false });
 
-  const handleUpdateQuantity = (id: string, quantity: number) => {
-    setCartItemsState(
-      cartItemsState.map(item =>
-        item.id === id ? { ...item, quantity } : item
-      )
-    );
-  };
+      if (interactionsError) {
+        console.error('Error fetching cart:', interactionsError);
+        return [];
+      }
 
+      if (!interactions || interactions.length === 0) {
+        return [];
+      }
+
+      const itemIds = interactions.map((i: any) => i.item_id);
+      
+      // Fetch catalog items (products) only
+      const { data: catalogItems, error: catalogError } = await supabaseAny
+        .from('catalog')
+        .select('*')
+        .in('id', itemIds);
+
+      if (catalogError) {
+        console.error('Error fetching catalog items:', catalogError);
+        return [];
+      }
+
+      // Get shop_products for catalog items
+      const productIds = catalogItems?.map((item: any) => item.id) || [];
+      let shopProducts: any[] = [];
+      if (productIds.length > 0) {
+        const { data, error } = await supabaseAny
+          .from('shop_products')
+          .select('*')
+          .in('catalog_id', productIds);
+        if (!error) shopProducts = data || [];
+      }
+
+      // Get shops
+      const shopIds = shopProducts.map((sp: any) => sp.shop_id).filter(Boolean);
+      let shops: any[] = [];
+      if (shopIds.length > 0) {
+        const { data, error } = await supabaseAny
+          .from('shops')
+          .select('*')
+          .in('id', shopIds);
+        if (!error) shops = data || [];
+      }
+
+      // Build the cart items (products only)
+      const cartItems: CartItem[] = [];
+
+      for (const interaction of interactions) {
+        const item = catalogItems?.find((i: any) => i.id === interaction.item_id);
+        if (!item) continue;
+
+        const shopProduct = shopProducts.find((sp: any) => sp.catalog_id === item.id);
+        const shop = shops.find((s: any) => s.id === shopProduct?.shop_id);
+        const images = item.images || [];
+
+        cartItems.push({
+          id: interaction.id,
+          title: item.name || 'Product',
+          provider: shop?.name || 'Shop',
+          price: shopProduct?.regular_price || 0,
+          quantity: interaction.metadata?.quantity || 1,
+          image: images[0] || 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=Product',
+          variation: item.brand || item.category || 'Standard',
+          delivery: '2-3 business days',
+          providerAvatar: shop?.name?.charAt(0).toUpperCase() || 'S',
+          isVerified: shop?.is_verified || false,
+          rating: shop?.rating || 0,
+          distance: shop?.area || '0 km',
+          shop_id: shop?.id || '',
+          catalog_id: item.id,
+          interaction_id: interaction.id,
+          item_type: 'product',
+        });
+      }
+
+      return cartItems;
+    } catch (error) {
+      console.error('Error fetching cart items:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // ============================================================
+  // FETCH BOOKINGS (Services with 'booking' action)
+  // ============================================================
+  const fetchBookings = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      // Get bookings from user_interactions with 'booking' action
+      const { data: interactions, error: interactionsError } = await supabaseAny
+        .from('user_interactions')
+        .select('id, item_id, metadata, created_at')
+        .eq('user_id', user.id)
+        .eq('action', 'booking')
+        .order('created_at', { ascending: false });
+
+      if (interactionsError) {
+        console.error('Error fetching bookings:', interactionsError);
+        return [];
+      }
+
+      if (!interactions || interactions.length === 0) {
+        return [];
+      }
+
+      const itemIds = interactions.map((i: any) => i.item_id);
+      
+      // Fetch service catalog items
+      const { data: serviceItems, error: serviceError } = await supabaseAny
+        .from('service_catalog')
+        .select('*')
+        .in('id', itemIds);
+
+      if (serviceError) {
+        console.error('Error fetching service items:', serviceError);
+        return [];
+      }
+
+      // Get provider services
+      const serviceCatalogIds = serviceItems?.map((item: any) => item.id) || [];
+      let providerServices: any[] = [];
+      if (serviceCatalogIds.length > 0) {
+        const { data, error } = await supabaseAny
+          .from('provider_services')
+          .select('*')
+          .in('service_id', serviceCatalogIds);
+        if (!error) providerServices = data || [];
+      }
+
+      // Get users for provider services
+      const userIds = providerServices.map((ps: any) => ps.user_id).filter(Boolean);
+      let users: any[] = [];
+      if (userIds.length > 0) {
+        const { data, error } = await supabaseAny
+          .from('users')
+          .select('id, full_name, phone_number')
+          .in('id', userIds);
+        if (!error) users = data || [];
+      }
+
+      // Build booking items
+      const bookingItems: Booking[] = [];
+
+      for (const interaction of interactions) {
+        const item = serviceItems?.find((i: any) => i.id === interaction.item_id);
+        if (!item) continue;
+
+        const providerService = providerServices.find((ps: any) => ps.service_id === item.id);
+        const user = users.find((u: any) => u.id === providerService?.user_id);
+        const images = item.images || [];
+
+        bookingItems.push({
+          id: interaction.id,
+          service: item.name || 'Service',
+          provider: user?.full_name || 'Provider',
+          provider_id: providerService?.user_id || '',
+          date: interaction.metadata?.date || new Date().toLocaleDateString(),
+          time: interaction.metadata?.time || '2:00 PM',
+          status: interaction.metadata?.status || 'Pending',
+          location: interaction.metadata?.location || 'Location TBD',
+          image: images[0] || 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=Service',
+          providerAvatar: user?.full_name?.charAt(0).toUpperCase() || 'P',
+          price: providerService?.price || 0,
+          item_id: item.id,
+          interaction_id: interaction.id,
+        });
+      }
+
+      return bookingItems;
+    } catch (error) {
+      console.error('Error fetching bookings:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // ============================================================
+  // FETCH WISHLIST ITEMS
+  // ============================================================
+  const fetchWishlist = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      const { data: interactions, error: interactionsError } = await supabaseAny
+        .from('user_interactions')
+        .select('item_id, created_at')
+        .eq('user_id', user.id)
+        .eq('action', 'save')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (interactionsError) {
+        console.error('Error fetching wishlist:', interactionsError);
+        return [];
+      }
+
+      if (!interactions || interactions.length === 0) {
+        return [];
+      }
+
+      const itemIds = interactions.map((i: any) => i.item_id);
+      
+      const { data: catalogItems, error: catalogError } = await supabaseAny
+        .from('catalog')
+        .select('*')
+        .in('id', itemIds)
+        .limit(20);
+
+      if (catalogError) {
+        console.error('Error fetching wishlist items:', catalogError);
+        return [];
+      }
+
+      // Get shop_products for pricing
+      const productIds = catalogItems?.map((item: any) => item.id) || [];
+      let shopProducts: any[] = [];
+      if (productIds.length > 0) {
+        const { data, error } = await supabaseAny
+          .from('shop_products')
+          .select('regular_price, shop_id')
+          .in('catalog_id', productIds);
+        if (!error) shopProducts = data || [];
+      }
+
+      // Get shops for names
+      const shopIds = shopProducts.map((sp: any) => sp.shop_id).filter(Boolean);
+      let shops: any[] = [];
+      if (shopIds.length > 0) {
+        const { data, error } = await supabaseAny
+          .from('shops')
+          .select('id, name, rating')
+          .in('id', shopIds);
+        if (!error) shops = data || [];
+      }
+
+      const wishlistData: WishlistItem[] = catalogItems.map((item: any) => {
+        const shopProduct = shopProducts.find((sp: any) => sp.catalog_id === item.id);
+        const shop = shops.find((s: any) => s.id === shopProduct?.shop_id);
+        return {
+          id: item.id,
+          title: item.name,
+          provider: shop?.name || 'Unknown Shop',
+          price: shopProduct?.regular_price || 0,
+          image: item.images?.[0] || 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Product',
+          rating: shop?.rating || 4.0,
+          priceDrop: Math.random() > 0.7,
+          stockAlert: Math.random() > 0.8,
+        };
+      });
+
+      return wishlistData;
+    } catch (error) {
+      console.error('Error fetching wishlist:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // --- Fetch Wallet Balance ---
+  const fetchWalletBalance = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      const { data, error } = await supabaseAny
+        .from('users')
+        .select('wallet_balance')
+        .eq('id', user.id)
+        .single();
+
+      if (error) {
+        console.error('Error fetching wallet balance:', error);
+        return;
+      }
+
+      setWalletBalance(data?.wallet_balance || 0);
+    } catch (error) {
+      console.error('Error fetching wallet balance:', error);
+    }
+  }, [user?.id]);
+
+  // --- Load All Data ---
+  const loadAllData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [cartData, bookingData, wishlistData] = await Promise.all([
+        fetchCartItems(),
+        fetchBookings(),
+        fetchWishlist(),
+      ]);
+
+      setCartItems(cartData);
+      setBookings(bookingData);
+      setWishlistItems(wishlistData);
+      await fetchWalletBalance();
+
+      if (wishlistData.length > 0) {
+        const categories = [...new Set(wishlistData.map(item => item.provider))];
+        const collectionData: Collection[] = categories.slice(0, 4).map((cat, index) => ({
+          id: `col-${index}`,
+          name: cat || 'My Collection',
+          count: wishlistData.filter(item => item.provider === cat).length,
+          cover: wishlistData.find(item => item.provider === cat)?.image || 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Collection',
+          lastActivity: 'Recently',
+        }));
+        setCollections(collectionData);
+      }
+    } catch (error) {
+      console.error('Error loading hub data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchCartItems, fetchBookings, fetchWishlist, fetchWalletBalance]);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      loadAllData();
+    } else {
+      setLoading(false);
+    }
+  }, [isAuthenticated, user?.id, loadAllData]);
+
+  // --- Calculate Cart Total ---
   const calculateTotal = () => {
-    const subtotal = cartItemsState.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const deliveryFee = 15000;
+    const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const deliveryFee = cartItems.length > 0 ? 15000 : 0;
     const walletSavings = Math.round(subtotal * 0.05);
     const total = subtotal + deliveryFee - walletSavings;
     return { subtotal, deliveryFee, walletSavings, total };
@@ -396,18 +727,201 @@ const HubContent = ({ navigation }: any) => {
 
   const { subtotal, deliveryFee, walletSavings, total } = calculateTotal();
 
-  // If not authenticated, show guest view
-  if (!isAuthenticated) {
-    return <GuestHubView navigation={navigation} />;
-  }
+  // --- Handle Remove Item from Cart ---
+  const handleRemoveItem = async (id: string) => {
+    try {
+      const { error } = await supabaseAny
+        .from('user_interactions')
+        .delete()
+        .eq('id', id);
 
-  // If authenticated, show full Hub
+      if (error) {
+        console.error('Error removing item:', error);
+        Alert.alert('Error', 'Failed to remove item from cart');
+        return;
+      }
+
+      setCartItems(cartItems.filter(item => item.id !== id));
+      Alert.alert('Removed', 'Item removed from your cart');
+    } catch (error) {
+      console.error('Error removing item:', error);
+      Alert.alert('Error', 'Failed to remove item');
+    }
+  };
+
+  // --- Handle Cancel Booking ---
+  const handleCancelBooking = async (id: string) => {
+    Alert.alert(
+      'Cancel Booking',
+      'Are you sure you want to cancel this booking?',
+      [
+        { text: 'No', style: 'cancel' },
+        { 
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabaseAny
+                .from('user_interactions')
+                .update({
+                  metadata: {
+                    ...bookings.find(b => b.id === id)?.metadata,
+                    status: 'Cancelled',
+                    cancelled_at: new Date().toISOString()
+                  },
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', id);
+
+              if (error) {
+                console.error('Error cancelling booking:', error);
+                Alert.alert('Error', 'Failed to cancel booking');
+                return;
+              }
+
+              setBookings(bookings.filter(item => item.id !== id));
+              Alert.alert('Cancelled', 'Booking has been cancelled');
+            } catch (error) {
+              console.error('Error cancelling booking:', error);
+              Alert.alert('Error', 'Failed to cancel booking');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // --- Handle Update Quantity in Cart ---
+  const handleUpdateQuantity = useCallback(async (id: string, quantity: number) => {
+    try {
+      const item = cartItems.find(i => i.id === id);
+      if (!item) return;
+
+      const { error } = await supabaseAny
+        .from('user_interactions')
+        .update({
+          metadata: {
+            ...item,
+            quantity: quantity,
+            updated_at: new Date().toISOString()
+          },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error updating quantity:', error);
+        Alert.alert('Error', 'Failed to update quantity');
+        return;
+      }
+
+      setCartItems(
+        cartItems.map(item =>
+          item.id === id ? { ...item, quantity } : item
+        )
+      );
+    } catch (error) {
+      console.error('Error updating quantity:', error);
+      Alert.alert('Error', 'Failed to update quantity');
+    }
+  }, [cartItems]);
+
+  // --- Handle Change Provider ---
+  const handleChangeProvider = async (item: any, newProvider: any) => {
+    try {
+      // Update the interaction with new provider
+      const { error } = await supabaseAny
+        .from('user_interactions')
+        .update({
+          metadata: {
+            ...item,
+            provider: newProvider.name,
+            provider_id: newProvider.id,
+            updated_at: new Date().toISOString()
+          },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', item.id);
+
+      if (error) {
+        console.error('Error updating provider:', error);
+        Alert.alert('Error', 'Failed to change provider');
+        return;
+      }
+
+      // Refresh data
+      await loadAllData();
+      setShowProviderModal(false);
+      Alert.alert('Success', 'Provider changed successfully');
+    } catch (error) {
+      console.error('Error changing provider:', error);
+      Alert.alert('Error', 'Failed to change provider');
+    }
+  };
+
+  // --- Open Provider Selection ---
+  const openProviderSelection = async (item: any) => {
+    setSelectedItem(item);
+    
+    try {
+      // Fetch available providers for this item
+      let providers: any[] = [];
+      
+      if (item.item_type === 'product') {
+        // Get shops that sell this product
+        const { data: shopProducts } = await supabaseAny
+          .from('shop_products')
+          .select('shop_id, shops(id, name, area, rating)')
+          .eq('catalog_id', item.catalog_id);
+          
+        if (shopProducts) {
+          providers = shopProducts.map((sp: any) => ({
+            id: sp.shops.id,
+            name: sp.shops.name,
+            area: sp.shops.area,
+            rating: sp.shops.rating,
+          }));
+        }
+      } else {
+        // Get providers for this service
+        const { data: providerServices } = await supabaseAny
+          .from('provider_services')
+          .select('user_id, users(id, full_name, phone_number)')
+          .eq('service_id', item.item_id);
+          
+        if (providerServices) {
+          providers = providerServices.map((ps: any) => ({
+            id: ps.users.id,
+            name: ps.users.full_name,
+            area: 'Available',
+            rating: 0,
+          }));
+        }
+      }
+      
+      setAvailableProviders(providers);
+      setShowProviderModal(true);
+    } catch (error) {
+      console.error('Error fetching providers:', error);
+      Alert.alert('Error', 'Failed to load providers');
+    }
+  };
+
+  // --- Tabs Configuration ---
+  const tabs = [
+    { key: 'cart', label: 'Cart', count: cartItems.length },
+    { key: 'bookings', label: 'Bookings', count: bookings.length },
+    { key: 'wishlist', label: 'Wishlist', count: wishlistItems.length },
+    { key: 'collections', label: 'Collections', count: collections.length },
+  ];
+
+  // --- Render Functions ---
   const renderTabContent = () => {
     switch (activeTab) {
       case 'cart':
         return (
           <View style={styles.tabContent}>
-            {cartItemsState.length === 0 ? (
+            {cartItems.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>🛒</Text>
                 <Text style={styles.emptyTitle}>Your cart is empty</Text>
@@ -415,12 +929,13 @@ const HubContent = ({ navigation }: any) => {
               </View>
             ) : (
               <>
-                {cartItemsState.map((item) => (
+                {cartItems.map((item) => (
                   <CartItemCard
                     key={item.id}
                     item={item}
                     onRemove={handleRemoveItem}
                     onUpdateQuantity={handleUpdateQuantity}
+                    onChangeProvider={openProviderSelection}
                   />
                 ))}
                 <View style={styles.cartSummary}>
@@ -468,7 +983,12 @@ const HubContent = ({ navigation }: any) => {
               </View>
             ) : (
               bookings.map((item) => (
-                <BookingCard key={item.id} item={item} />
+                <BookingCard
+                  key={item.id}
+                  item={item}
+                  onCancel={handleCancelBooking}
+                  onChangeProvider={openProviderSelection}
+                />
               ))
             )}
           </View>
@@ -486,9 +1006,9 @@ const HubContent = ({ navigation }: any) => {
             ) : (
               <FlatList
                 data={wishlistItems}
-                renderItem={({ item }) => <WishlistItem item={item} />}
+                renderItem={({ item }) => <WishlistItemCard item={item} />}
                 keyExtractor={(item) => item.id}
-                numColumns={2}
+                numColumns={isDesktop ? 3 : 2}
                 scrollEnabled={false}
                 contentContainerStyle={styles.wishlistGrid}
               />
@@ -510,7 +1030,7 @@ const HubContent = ({ navigation }: any) => {
                 data={collections}
                 renderItem={({ item }) => <CollectionCard item={item} />}
                 keyExtractor={(item) => item.id}
-                numColumns={2}
+                numColumns={isDesktop ? 3 : 2}
                 scrollEnabled={false}
                 contentContainerStyle={styles.collectionsGrid}
               />
@@ -523,19 +1043,126 @@ const HubContent = ({ navigation }: any) => {
     }
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+  // --- Loading State ---
+  if (loading) {
+    return (
+      <View style={[styles.loadingContainer, isDesktop && styles.desktopContainer]}>
+        <ActivityIndicator size="large" color="#4A7DFF" />
+        <Text style={styles.loadingText}>Loading your hub...</Text>
+      </View>
+    );
+  }
 
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Hub</Text>
+  // --- Guest View ---
+  if (!isAuthenticated) {
+    return <GuestHubView navigation={navigation} />;
+  }
+
+  // --- Desktop View ---
+  if (isDesktop) {
+    return (
+      <View style={styles.desktopContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopHeaderTitle}>Hub</Text>
+          <Text style={styles.desktopHeaderSubtitle}>Manage your shopping</Text>
+        </View>
+
+        <View style={styles.desktopGrid}>
+          <View style={styles.desktopLeftColumn}>
+            <View style={styles.tabsContainer}>
+              {tabs.map((tab) => (
+                <TouchableOpacity
+                  key={tab.key}
+                  style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+                  onPress={() => setActiveTab(tab.key)}
+                >
+                  <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>
+                    {tab.label}
+                  </Text>
+                  {tab.count > 0 && (
+                    <View style={styles.tabBadge}>
+                      <Text style={styles.tabBadgeText}>{tab.count}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <AISuggestionBanner />
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {renderTabContent()}
+              <View style={styles.bottomSpacer} />
+            </ScrollView>
+          </View>
+
+          {activeTab === 'cart' && cartItems.length > 0 && (
+            <View style={styles.desktopRightColumn}>
+              <View style={styles.summaryPanel}>
+                <Text style={styles.summaryPanelTitle}>Order Summary</Text>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Items</Text>
+                  <Text style={styles.summaryValue}>{cartItems.length}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Subtotal</Text>
+                  <Text style={styles.summaryValue}>UGX {subtotal.toLocaleString()}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Delivery</Text>
+                  <Text style={styles.summaryValue}>UGX {deliveryFee.toLocaleString()}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, styles.summarySavingsLabel]}>Savings</Text>
+                  <Text style={[styles.summaryValue, styles.summarySavings]}>- UGX {walletSavings.toLocaleString()}</Text>
+                </View>
+                <View style={[styles.summaryRow, styles.summaryTotal]}>
+                  <Text style={styles.summaryTotalLabel}>Total</Text>
+                  <Text style={styles.summaryTotalValue}>UGX {total.toLocaleString()}</Text>
+                </View>
+                <TouchableOpacity style={styles.checkoutButton}>
+                  <LinearGradient
+                    colors={['#4A7DFF', '#6B94FF']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.checkoutGradient}
+                  >
+                    <Text style={styles.checkoutText}>Proceed to Pay</Text>
+                    <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Provider Selection Modal */}
+        <ProviderSelectionModal
+          visible={showProviderModal}
+          onClose={() => setShowProviderModal(false)}
+          onSelect={(provider: any) => handleChangeProvider(selectedItem, provider)}
+          currentItem={selectedItem}
+          providers={availableProviders}
+        />
+      </View>
+    );
+  }
+
+  // --- Mobile View ---
+  return (
+    <SafeAreaView style={styles.mobileContainer}>
+      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+
+      <View style={styles.mobileHeader}>
+        <Text style={styles.mobileHeaderTitle}>Hub</Text>
         <View style={styles.headerRight}>
           <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="search-outline" size={22} color="#1F2F5F" />
+            <Ionicons name="search-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="options-outline" size={22} color="#1F2F5F" />
+            <Ionicons name="options-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </View>
@@ -545,10 +1172,8 @@ const HubContent = ({ navigation }: any) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* AI Suggestion Banner */}
         <AISuggestionBanner />
 
-        {/* Tabs */}
         <View style={styles.tabsContainer}>
           {tabs.map((tab) => (
             <TouchableOpacity
@@ -568,17 +1193,27 @@ const HubContent = ({ navigation }: any) => {
           ))}
         </View>
 
-        {/* Tab Content */}
         {renderTabContent()}
 
-        {/* Bottom Spacer */}
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* Provider Selection Modal */}
+      <ProviderSelectionModal
+        visible={showProviderModal}
+        onClose={() => setShowProviderModal(false)}
+        onSelect={(provider: any) => handleChangeProvider(selectedItem, provider)}
+        currentItem={selectedItem}
+        providers={availableProviders}
+      />
     </SafeAreaView>
   );
 };
 
-// --- Main HubScreen Component (Wrapped with ResponsiveLayout) ---
+// ============================================================
+// EXPORT
+// ============================================================
+
 export const HubScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -587,7 +1222,7 @@ export const HubScreen = ({ navigation }: any) => {
       currentRoute="Hub" 
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
-      hideContextPanel={true} // ✅ Hide Context Panel on Hub
+      hideContextPanel={true}
       fullWidth={true}
     >
       <HubContent navigation={navigation} />
@@ -595,26 +1230,154 @@ export const HubScreen = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
-  container: {
+  // ... existing styles ...
+
+  // Modal styles
+  modalOverlay: {
     flex: 1,
-    backgroundColor: '#F8F9FC',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
   },
-  header: {
+  modalContent: {
+    backgroundColor: '#1A2A4F',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: height * 0.7,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  providerList: {
+    paddingBottom: 20,
+  },
+  providerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  providerOptionSelected: {
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+  },
+  providerOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  providerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  providerAvatarText: {
+    color: '#4A7DFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  providerOptionName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  providerOptionLocation: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+
+
+// Also add the missing bookingCard styles if they're not already present
+// ... rest of existing styles ...
+  desktopContainer: {
+    flex: 1,
+    backgroundColor: '#1A2A4F',
+    padding: 24,
+  },
+  desktopHeader: {
+    marginBottom: 24,
+  },
+  desktopHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
+  },
+  desktopGrid: {
+    flexDirection: 'row',
+    gap: 24,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    flex: 1,
+  },
+  desktopLeftColumn: {
+    flex: 2,
+    minWidth: 400,
+  },
+  desktopRightColumn: {
+    flex: 1,
+    minWidth: 300,
+    maxWidth: 400,
+  },
+  summaryPanel: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  summaryPanelTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  mobileContainer: {
+    flex: 1,
+    backgroundColor: '#1F2F5F',
+  },
+  mobileHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(31, 47, 95, 0.9)',
     borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  headerTitle: {
+  mobileHeaderTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#1F2F5F',
+    color: '#FFFFFF',
   },
   headerRight: {
     flexDirection: 'row',
@@ -623,18 +1386,28 @@ const styles = StyleSheet.create({
   headerIcon: {
     padding: 6,
     borderRadius: 20,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   scrollContent: {
     paddingHorizontal: 16,
     paddingBottom: 40,
     flexGrow: 1,
   },
-  // AI Banner
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1F2F5F',
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 12,
+  },
   aiBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 125, 255, 0.05)',
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
     borderRadius: 12,
     padding: 12,
     marginTop: 12,
@@ -647,7 +1420,7 @@ const styles = StyleSheet.create({
   },
   aiBannerText: {
     flex: 1,
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '500',
   },
@@ -665,18 +1438,14 @@ const styles = StyleSheet.create({
   aiBannerDotActive: {
     backgroundColor: '#4A7DFF',
   },
-  // Tabs
   tabsContainer: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 4,
     marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   tab: {
     flex: 1,
@@ -690,7 +1459,7 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   tabActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
   },
   tabText: {
     color: '#8A8AAE',
@@ -717,18 +1486,14 @@ const styles = StyleSheet.create({
   tabContent: {
     paddingBottom: 8,
   },
-  // Cart
   cartCard: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 12,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   cartImage: {
     width: 80,
@@ -746,7 +1511,7 @@ const styles = StyleSheet.create({
   },
   cartTitle: {
     flex: 1,
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
     marginRight: 8,
@@ -773,7 +1538,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cartPrice: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
   },
@@ -786,17 +1551,17 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   cartQtyButtonText: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
   cartQtyText: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '500',
     minWidth: 20,
@@ -806,17 +1571,13 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 11,
   },
-  // Cart Summary
   cartSummary: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 14,
     marginTop: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -828,7 +1589,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   summaryValue: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 13,
   },
   summarySavingsLabel: {
@@ -839,12 +1600,12 @@ const styles = StyleSheet.create({
   },
   summaryTotal: {
     borderTopWidth: 1,
-    borderTopColor: '#E8ECF4',
+    borderTopColor: 'rgba(255,255,255,0.05)',
     paddingTop: 8,
     marginTop: 4,
   },
   summaryTotalLabel: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -869,17 +1630,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  // Bookings
   bookingCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 12,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   bookingHeader: {
     flexDirection: 'row',
@@ -896,7 +1653,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(74, 125, 255, 0.1)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -906,7 +1663,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   bookingProviderName: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '500',
   },
@@ -944,7 +1701,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   bookingActionButton: {
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
@@ -960,21 +1717,17 @@ const styles = StyleSheet.create({
   bookingActionDangerText: {
     color: '#E74C3C',
   },
-  // Wishlist
   wishlistGrid: {
     gap: 8,
   },
   wishlistCard: {
     flex: 1,
     margin: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 10,
     padding: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   wishlistImage: {
     width: '100%',
@@ -986,7 +1739,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   wishlistTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '500',
   },
@@ -1026,7 +1779,6 @@ const styles = StyleSheet.create({
   wishlistAlertDangerText: {
     color: '#E74C3C',
   },
-  // Collections
   collectionsGrid: {
     gap: 8,
   },
@@ -1066,7 +1818,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
-  // Empty State
   emptyState: {
     alignItems: 'center',
     paddingVertical: 40,
@@ -1076,7 +1827,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   emptyTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
   },
@@ -1085,20 +1836,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
   },
-  // Guest Mode
   guestContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
-    backgroundColor: '#F8F9FC',
+    backgroundColor: '#1F2F5F',
   },
   guestIcon: {
     fontSize: 48,
     marginBottom: 16,
   },
   guestTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 20,
     fontWeight: 'bold',
     textAlign: 'center',
@@ -1126,6 +1876,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     marginBottom: 12,
     width: '100%',
+    maxWidth: 300,
     alignItems: 'center',
   },
   guestButtonText: {

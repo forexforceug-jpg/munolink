@@ -1,3 +1,5 @@
+// src/components/Sidebar.tsx
+
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,23 +11,25 @@ interface Props {
 
 const NAV_ITEMS = [
   { name: 'Discover', icon: 'compass', route: 'Discover' },
-  { name: 'Hub', icon: 'grid', route: 'Hub' },
-  { name: 'Pay', icon: 'card', route: 'Pay' },
-  { name: 'Inbox', icon: 'chatbubbles', route: 'Inbox' },
-  { name: 'Account', icon: 'person', route: 'Account' },
+  { name: 'Search', icon: 'search-outline', route: 'Search' },
+  { name: 'Explore', icon: 'compass-outline', route: 'Explore' },
+  { name: 'Hub', icon: 'grid-outline', route: 'Hub' },
+  { name: 'Pay', icon: 'card-outline', route: 'Pay' },
+  { name: 'Inbox', icon: 'chatbubbles-outline', route: 'Inbox' },
+  { name: 'Account', icon: 'person-outline', route: 'Account' },
 ];
 
 export function Sidebar({ currentRoute, onNavigate }: Props) {
   return (
     <View style={styles.sidebar}>
       <View style={styles.logoContainer}>
-        {/* ✅ image logo */}
         <Image 
           source={require('../../assets/logo.png')} 
           style={styles.logoImage}
           resizeMode="contain"
         />
       </View>
+      
       {NAV_ITEMS.map((item) => (
         <TouchableOpacity
           key={item.route}

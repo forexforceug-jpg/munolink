@@ -23,17 +23,14 @@ interface Props {
   featuredOpportunities?: Opportunity[];
   contextPanelView?: 'details' | 'reviews' | 'directions' | null;
   onContextPanelViewChange?: (view: 'details' | 'reviews' | 'directions' | null) => void;
-  // Modal props for Context Panel
   selectedProductId?: string;
   selectedProductTitle?: string;
   selectedOpportunityForModal?: Opportunity | null;
   onCloseReviews?: () => void;
   onCloseDetails?: () => void;
-  // AI props
   aiViewActive?: boolean;
   onAIClose?: () => void;
   aiContextHint?: string;
-  // Directions props
   directionsViewActive?: boolean;
   onDirectionsClose?: () => void;
 }
@@ -70,8 +67,8 @@ export function DesktopLayout({
       <View style={styles.main}>
         <Sidebar currentRoute={currentRoute} onNavigate={onNavigate} />
         
-        <View style={styles.feedContainer}>
-          <View style={styles.feedWrapper}>
+        <View style={[styles.feedContainer, fullWidth && styles.feedContainerFull]}>
+          <View style={[styles.feedWrapper, fullWidth && styles.feedWrapperFull]}>
             {children}
           </View>
           {floatingActions && (
@@ -80,6 +77,7 @@ export function DesktopLayout({
             </View>
           )}
         </View>
+        
         {!hideContextPanel && (
           <View style={{ width: 360, flexShrink: 0 }}>
             <ContextPanel 
@@ -132,11 +130,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
+  feedContainerFull: {
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+  },
   feedWrapper: {
     width: '90%',
     maxWidth: 480,
     height: '100%',
     justifyContent: 'center',
+  },
+  feedWrapperFull: {
+    width: '100%',
+    maxWidth: '100%',
+    height: '100%',
+    justifyContent: 'flex-start',
   },
   floatingActionsContainer: {
     position: 'absolute',

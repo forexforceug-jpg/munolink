@@ -1,3 +1,5 @@
+// src/features/account/AccountScreen.tsx
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -12,6 +14,7 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -118,21 +121,19 @@ const GuestProfile = ({ navigation }: any) => (
   </View>
 );
 
-// --- AccountContent Component (Extracted for reuse) ---
-const AccountContent = ({ navigation }: any) => {
+// --- Desktop Account Content ---
+const DesktopAccountContent = ({ navigation }: any) => {
   const { user, isAuthenticated } = useAuth();
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userShops, setUserShops] = useState<Shop[]>([]);
   const [showBalance, setShowBalance] = useState(true);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [stats, setStats] = useState({
     totalOrders: 0,
     totalReviews: 0,
     joinedYear: new Date().getFullYear(),
   });
 
-  // Fetch user data from Supabase
   useEffect(() => {
     if (isAuthenticated && user?.id) {
       fetchUserData();
@@ -146,7 +147,6 @@ const AccountContent = ({ navigation }: any) => {
       setLoading(true);
       const userId = user?.id;
 
-      // Fetch user profile
       const { data: profile, error: profileError } = await supabase
         .from('users')
         .select('*')
@@ -156,7 +156,6 @@ const AccountContent = ({ navigation }: any) => {
       if (profileError) throw profileError;
       setUserProfile(profile);
 
-      // Fetch user's shops
       const { data: shops, error: shopsError } = await supabase
         .from('shops')
         .select('id, name, is_verified, rating, review_count, logo_url')
@@ -165,19 +164,10 @@ const AccountContent = ({ navigation }: any) => {
       if (shopsError) throw shopsError;
       setUserShops(shops || []);
 
-      // Set joined year from profile
       if (profile?.created_at) {
         const joinedDate = new Date(profile.created_at);
         setStats(prev => ({ ...prev, joinedYear: joinedDate.getFullYear() }));
       }
-
-      // Fetch order count (mock for now - you'll need to implement this)
-      // const { count: orderCount } = await supabase
-      //   .from('transactions')
-      //   .select('*', { count: 'exact', head: true })
-      //   .eq('user_id', userId);
-      // setStats(prev => ({ ...prev, totalOrders: orderCount || 0 }));
-
     } catch (error) {
       console.error('Error fetching user data:', error);
     } finally {
@@ -187,12 +177,10 @@ const AccountContent = ({ navigation }: any) => {
 
   const handleMenuItemPress = (id: string) => {
     console.log('🔗 Menu item pressed:', id);
-    
     if (id === 'start_business') {
       navigation.navigate('BusinessRegistration');
       return;
     }
-    
     Alert.alert('Navigation', `Navigating to ${id}`);
   };
 
@@ -207,7 +195,304 @@ const AccountContent = ({ navigation }: any) => {
     );
   };
 
-  // --- Loading State ---
+  if (loading) {
+    return (
+      <View style={styles.desktopCentered}>
+        <ActivityIndicator size="large" color="#4A7DFF" />
+        <Text style={styles.loadingText}>Loading your account...</Text>
+      </View>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <View style={styles.desktopContainer}>
+        <View style={styles.desktopGuestWrapper}>
+          <GuestProfile navigation={navigation} />
+          <View style={styles.desktopMenuGrid}>
+            <View style={styles.menuContainer}>
+              <View style={styles.menuItem}>
+                <View style={styles.menuIconContainer}>
+                  <Ionicons name="language-outline" size={22} color="#4A7DFF" />
+                </View>
+                <View style={styles.menuContent}>
+                  <Text style={styles.menuLabel}>Language</Text>
+                  <Text style={styles.menuSubtitle}>English</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              </View>
+              <View style={styles.menuItem}>
+                <View style={styles.menuIconContainer}>
+                  <Ionicons name="location-outline" size={22} color="#4A7DFF" />
+                </View>
+                <View style={styles.menuContent}>
+                  <Text style={styles.menuLabel}>Location</Text>
+                  <Text style={styles.menuSubtitle}>Jinja, Uganda</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              </View>
+              <View style={styles.menuItem}>
+                <View style={styles.menuIconContainer}>
+                  <Ionicons name="moon-outline" size={22} color="#4A7DFF" />
+                </View>
+                <View style={styles.menuContent}>
+                  <Text style={styles.menuLabel}>Appearance</Text>
+                  <Text style={styles.menuSubtitle}>System Default</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              </View>
+              <View style={styles.menuItem}>
+                <View style={styles.menuIconContainer}>
+                  <Ionicons name="notifications-outline" size={22} color="#4A7DFF" />
+                </View>
+                <View style={styles.menuContent}>
+                  <Text style={styles.menuLabel}>Notifications</Text>
+                  <Text style={styles.menuSubtitle}>On</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  const displayName = userProfile?.full_name || user?.name || 'User';
+  const displayPhone = userProfile?.phone_number || user?.phone || '';
+  const avatarUrl = userProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4A7DFF&color=fff&size=100`;
+  const isVerified = userProfile?.kyc_verified || false;
+  const walletBalance = userProfile?.wallet_balance || 0;
+  const lifetimeSavings = userProfile?.lifetime_savings || 0;
+  const shopCount = userShops.length;
+  const hasBusiness = shopCount > 0;
+
+  return (
+    <View style={styles.desktopContainer}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F8F9FC" />
+      
+      <ScrollView 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.desktopScrollContent}
+      >
+        {/* Desktop Grid Layout */}
+        <View style={styles.desktopGrid}>
+          {/* Left Column - Profile & Wallet */}
+          <View style={styles.desktopLeftColumn}>
+            {/* Profile Section */}
+            <View style={styles.desktopProfileSection}>
+              <View style={styles.profileSection}>
+                <View style={styles.profileLeft}>
+                  <View style={styles.profileImageContainer}>
+                    <Image source={{ uri: avatarUrl }} style={styles.profileImage} />
+                    <TouchableOpacity style={styles.cameraButton}>
+                      <Ionicons name="camera" size={14} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.profileInfo}>
+                  <View style={styles.profileNameRow}>
+                    <Text style={styles.profileName}>{displayName}</Text>
+                    {isVerified && (
+                      <View style={styles.verifiedBadge}>
+                        <Text style={styles.verifiedBadgeText}>✓</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.profileDetail}>
+                    <Ionicons name="call-outline" size={14} color="#8A8AAE" />
+                    <Text style={styles.profileDetailText}>{displayPhone}</Text>
+                  </View>
+                  <View style={styles.profileDetail}>
+                    <Ionicons name="briefcase-outline" size={14} color="#8A8AAE" />
+                    <Text style={styles.profileDetailText}>
+                      {hasBusiness ? `${shopCount} Business${shopCount > 1 ? 'es' : ''}` : 'No business yet'}
+                    </Text>
+                  </View>
+                  <Text style={styles.profileJoined}>Joined {stats.joinedYear}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Wallet Card */}
+            <TouchableOpacity style={styles.desktopWalletCard}>
+              <LinearGradient
+                colors={['#4A7DFF', '#6B94FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.walletGradient}
+              >
+                <View style={styles.walletHeader}>
+                  <Text style={styles.walletTitle}>Munolink Wallet</Text>
+                  <Text style={styles.walletView}>View Wallet ›</Text>
+                </View>
+                <View style={styles.walletBalanceRow}>
+                  <View style={styles.walletBalanceContainer}>
+                    <Text style={styles.walletBalanceLabel}>Available Balance</Text>
+                    <View style={styles.walletBalanceRow}>
+                      <Text style={styles.walletBalance}>
+                        {showBalance ? `UGX ${walletBalance.toLocaleString()}` : '••••••'}
+                      </Text>
+                      <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
+                        <Ionicons 
+                          name={showBalance ? 'eye-outline' : 'eye-off-outline'} 
+                          size={20} 
+                          color="rgba(255,255,255,0.7)" 
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <TouchableOpacity style={styles.addMoneyButton}>
+                    <Text style={styles.addMoneyText}>+ Add Money</Text>
+                  </TouchableOpacity>
+                </View>
+                {lifetimeSavings > 0 && (
+                  <View style={styles.lifetimeSavingsContainer}>
+                    <Text style={styles.lifetimeSavingsLabel}>💰 Lifetime Savings</Text>
+                    <Text style={styles.lifetimeSavingsValue}>UGX {lifetimeSavings.toLocaleString()}</Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Quick Access Shortcuts - Desktop */}
+            <View style={styles.desktopShortcutsContainer}>
+              {shortcuts.map((item) => (
+                <ShortcutItem key={item.id} item={item} count={0} />
+              ))}
+            </View>
+          </View>
+
+          {/* Right Column - Menu Items */}
+          <View style={styles.desktopRightColumn}>
+            <View style={styles.menuContainer}>
+              {menuItems.map((item) => (
+                <MenuItem key={item.id} item={item} onPress={handleMenuItemPress} />
+              ))}
+            </View>
+
+            {/* Business Card */}
+            {hasBusiness && (
+              <View style={styles.businessCard}>
+                <LinearGradient
+                  colors={['#1A2A4F', '#2A3F6F']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.businessGradient}
+                >
+                  <View style={styles.businessHeader}>
+                    <Text style={styles.businessTitle}>🏪 My Business</Text>
+                    <TouchableOpacity onPress={() => navigation.navigate('BusinessDashboard')}>
+                      <Text style={styles.businessManage}>Manage ›</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {userShops.map((shop) => (
+                    <View key={shop.id} style={styles.businessItem}>
+                      <View style={styles.businessItemLeft}>
+                        <Text style={styles.businessItemName}>{shop.name}</Text>
+                        {shop.is_verified && (
+                          <View style={styles.verifiedBadge}>
+                            <Text style={styles.verifiedBadgeText}>✓</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.businessItemRight}>
+                        {shop.rating && (
+                          <Text style={styles.businessItemRating}>⭐ {shop.rating.toFixed(1)}</Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </LinearGradient>
+              </View>
+            )}
+
+            {/* Log Out Button */}
+            <TouchableOpacity style={styles.desktopLogoutButton} onPress={handleLogout}>
+              <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
+              <Text style={styles.logoutText}>Log Out</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
+// --- Mobile Account Content ---
+const MobileAccountContent = ({ navigation }: any) => {
+  const { user, isAuthenticated } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userShops, setUserShops] = useState<Shop[]>([]);
+  const [showBalance, setShowBalance] = useState(true);
+  const [stats, setStats] = useState({
+    totalOrders: 0,
+    totalReviews: 0,
+    joinedYear: new Date().getFullYear(),
+  });
+
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      fetchUserData();
+    } else {
+      setLoading(false);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  const fetchUserData = async () => {
+    try {
+      setLoading(true);
+      const userId = user?.id;
+
+      const { data: profile, error: profileError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+      setUserProfile(profile);
+
+      const { data: shops, error: shopsError } = await supabase
+        .from('shops')
+        .select('id, name, is_verified, rating, review_count, logo_url')
+        .eq('owner_id', userId);
+
+      if (shopsError) throw shopsError;
+      setUserShops(shops || []);
+
+      if (profile?.created_at) {
+        const joinedDate = new Date(profile.created_at);
+        setStats(prev => ({ ...prev, joinedYear: joinedDate.getFullYear() }));
+      }
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMenuItemPress = (id: string) => {
+    console.log('🔗 Menu item pressed:', id);
+    if (id === 'start_business') {
+      navigation.navigate('BusinessRegistration');
+      return;
+    }
+    Alert.alert('Navigation', `Navigating to ${id}`);
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log Out', style: 'destructive' },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -220,13 +505,11 @@ const AccountContent = ({ navigation }: any) => {
     );
   }
 
-  // --- Guest View ---
   if (!isAuthenticated) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-        {/* Top Bar */}
         <View style={styles.topBar}>
           <Text style={styles.logo}>Munolink</Text>
           <TouchableOpacity style={styles.locationContainer}>
@@ -250,7 +533,6 @@ const AccountContent = ({ navigation }: any) => {
         >
           <GuestProfile navigation={navigation} />
 
-          {/* Settings Section - Available to guests */}
           <View style={styles.menuContainer}>
             <View style={styles.menuItem}>
               <View style={styles.menuIconContainer}>
@@ -294,7 +576,6 @@ const AccountContent = ({ navigation }: any) => {
             </View>
           </View>
 
-          {/* Help & About */}
           <View style={styles.menuContainer}>
             <View style={styles.menuItem}>
               <View style={styles.menuIconContainer}>
@@ -328,7 +609,6 @@ const AccountContent = ({ navigation }: any) => {
             </View>
           </View>
 
-          {/* Locked Features */}
           <View style={styles.lockedFeatures}>
             <Text style={styles.lockedTitle}>🔒 Unlock features:</Text>
             <View style={styles.lockedRow}>
@@ -359,7 +639,6 @@ const AccountContent = ({ navigation }: any) => {
     );
   }
 
-  // --- Authenticated User View ---
   const displayName = userProfile?.full_name || user?.name || 'User';
   const displayPhone = userProfile?.phone_number || user?.phone || '';
   const avatarUrl = userProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4A7DFF&color=fff&size=100`;
@@ -373,7 +652,6 @@ const AccountContent = ({ navigation }: any) => {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Top Bar */}
       <View style={styles.topBar}>
         <Text style={styles.logo}>Munolink</Text>
         <TouchableOpacity style={styles.locationContainer}>
@@ -395,7 +673,6 @@ const AccountContent = ({ navigation }: any) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Profile Section */}
         <View style={styles.profileSection}>
           <View style={styles.profileLeft}>
             <View style={styles.profileImageContainer}>
@@ -427,7 +704,6 @@ const AccountContent = ({ navigation }: any) => {
           </View>
         </View>
 
-        {/* Wallet Card */}
         <TouchableOpacity style={styles.walletCard}>
           <LinearGradient
             colors={['#4A7DFF', '#6B94FF']}
@@ -468,21 +744,18 @@ const AccountContent = ({ navigation }: any) => {
           </LinearGradient>
         </TouchableOpacity>
 
-        {/* Quick Access Shortcuts */}
         <View style={styles.shortcutsContainer}>
           {shortcuts.map((item) => (
             <ShortcutItem key={item.id} item={item} count={0} />
           ))}
         </View>
 
-        {/* Menu Items */}
         <View style={styles.menuContainer}>
           {menuItems.map((item) => (
             <MenuItem key={item.id} item={item} onPress={handleMenuItemPress} />
           ))}
         </View>
 
-        {/* My Business Card (if user has a shop) */}
         {hasBusiness && (
           <View style={styles.businessCard}>
             <LinearGradient
@@ -518,22 +791,34 @@ const AccountContent = ({ navigation }: any) => {
           </View>
         )}
 
-        {/* Log Out Button */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
           <Text style={styles.logoutText}>Log Out</Text>
         </TouchableOpacity>
 
-        {/* Bottom Spacer */}
         <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
   );
 };
 
-// --- Main AccountScreen Component (Wrapped with ResponsiveLayout) ---
+// --- Main AccountScreen Component ---
 export const AccountScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
+
+  if (isDesktop) {
+    return (
+      <ResponsiveLayout 
+        currentRoute="Account" 
+        onNavigate={(route) => navigation?.navigate(route)}
+        floatingActions={null}
+        hideContextPanel={true}
+        fullWidth={true}
+      >
+        <DesktopAccountContent navigation={navigation} />
+      </ResponsiveLayout>
+    );
+  }
 
   return (
     <ResponsiveLayout 
@@ -543,7 +828,7 @@ export const AccountScreen = ({ navigation }: any) => {
       hideContextPanel={true}
       fullWidth={true}
     >
-      <AccountContent navigation={navigation} />
+      <MobileAccountContent navigation={navigation} />
     </ResponsiveLayout>
   );
 };
@@ -564,6 +849,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 12,
   },
+  // ============================================================
+  // MOBILE STYLES
+  // ============================================================
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -726,6 +1014,11 @@ const styles = StyleSheet.create({
   profileDetailText: {
     color: '#8A8AAE',
     fontSize: 13,
+  },
+  profileJoined: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 4,
   },
   // Wallet Card
   walletCard: {
@@ -995,5 +1288,89 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 20,
+  },
+
+  // ============================================================
+  // DESKTOP STYLES
+  // ============================================================
+  desktopContainer: {
+    flex: 1,
+    backgroundColor: '#F8F9FC',
+    padding: 24,
+  },
+  desktopCentered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  desktopScrollContent: {
+    paddingBottom: 40,
+  },
+  desktopGrid: {
+    flexDirection: 'row',
+    gap: 24,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  desktopLeftColumn: {
+    flex: 1,
+    minWidth: 300,
+    maxWidth: 420,
+  },
+  desktopRightColumn: {
+    flex: 2,
+    minWidth: 400,
+  },
+  desktopProfileSection: {
+    marginBottom: 16,
+  },
+  desktopWalletCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  desktopShortcutsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  desktopGuestWrapper: {
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  desktopMenuGrid: {
+    flexDirection: 'row',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  desktopLogoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingVertical: 14,
+    marginTop: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
 });

@@ -109,11 +109,11 @@ export const ShopBottomSheet: React.FC<ShopBottomSheetProps> = ({
             images: catalog?.images || [],
           };
         });
-
+ 
         setProducts(formattedProducts);
       } else {
         setProducts([]);
-      }
+      } 
     } catch (error) {
       console.error('Error fetching shop data:', error);
     } finally {

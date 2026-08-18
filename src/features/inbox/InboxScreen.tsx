@@ -1,3 +1,5 @@
+// src/features/inbox/InboxScreen.tsx
+
 import React, { useState, useRef } from 'react';
 import {
   View,
@@ -204,7 +206,7 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => {
             <Text style={styles.aiAvatarText}>AI</Text>
           </LinearGradient>
         ) : (
-          <View style={[styles.avatarCircle, { backgroundColor: item.type === 'chat' ? 'rgba(74, 125, 255, 0.1)' : '#F5F7FA' }]}>
+          <View style={[styles.avatarCircle, { backgroundColor: item.type === 'chat' ? 'rgba(74, 125, 255, 0.15)' : 'rgba(255,255,255,0.05)' }]}>
             <Text style={[styles.avatarText, item.type !== 'chat' && styles.avatarTextSystem]}>
               {item.avatar}
             </Text>
@@ -310,8 +312,8 @@ const GuestInboxView = ({ navigation }: any) => (
   </View>
 );
 
-// --- InboxContent Component (Extracted for reuse) ---
-const InboxContent = ({ navigation }: any) => {
+// --- Desktop Inbox Content ---
+const DesktopInboxContent = ({ navigation }: any) => {
   const { isAuthenticated } = useAuth();
   
   const [activeFilter, setActiveFilter] = useState('all');
@@ -322,24 +324,12 @@ const InboxContent = ({ navigation }: any) => {
   const [showSearch, setShowSearch] = useState(false);
   const [filteredConversations, setFilteredConversations] = useState(conversations);
 
-  // If not authenticated, show guest view
   if (!isAuthenticated) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Inbox</Text>
-          <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.headerIcon}>
-              <Ionicons name="search-outline" size={22} color="#1F2F5F" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerIcon}>
-              <Ionicons name="options-outline" size={22} color="#1F2F5F" />
-            </TouchableOpacity>
-          </View>
-        </View>
+      <View style={styles.desktopContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
         <GuestInboxView navigation={navigation} />
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -377,13 +367,11 @@ const InboxContent = ({ navigation }: any) => {
     setFilteredConversations(filtered);
   };
 
-  // Handle conversation press
   const handleConversationPress = (conversation: any) => {
     setSelectedConversation(conversation);
     setShowChat(true);
   };
 
-  // Handle send message
   const handleSendMessage = () => {
     if (!newMessage.trim()) return;
 
@@ -401,7 +389,6 @@ const InboxContent = ({ navigation }: any) => {
     setNewMessage('');
   };
 
-  // Handle AI suggestion press
   const handleAISuggestion = (suggestion: string) => {
     const message = {
       id: Date.now().toString(),
@@ -429,7 +416,6 @@ const InboxContent = ({ navigation }: any) => {
     }, 1000);
   };
 
-  // Handle long press
   const handleLongPress = (conversation: any) => {
     Alert.alert(
       conversation.title,
@@ -444,7 +430,6 @@ const InboxContent = ({ navigation }: any) => {
     );
   };
 
-  // Render conversation list
   const renderConversation = ({ item }: any) => (
     <ConversationCard
       item={item}
@@ -453,8 +438,283 @@ const InboxContent = ({ navigation }: any) => {
     />
   );
 
-  // --- Chat View ---
-  const renderChatView = () => {
+  return (
+    <View style={styles.desktopContainer}>
+      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+      
+      <View style={styles.desktopHeader}>
+        <Text style={styles.desktopHeaderTitle}>Inbox</Text>
+        <Text style={styles.desktopHeaderSubtitle}>Your conversations and updates</Text>
+      </View>
+
+      <View style={styles.desktopGrid}>
+        {/* Left Column - Conversation List */}
+        <View style={styles.desktopLeftColumn}>
+          {/* Search */}
+          <View style={styles.searchContainer}>
+            <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search conversations..."
+              placeholderTextColor="#8A8AAE"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+
+          {/* Filter Chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterContainer}
+            contentContainerStyle={styles.filterContent}
+          >
+            {filterOptions.map((filter) => {
+              const count = filter.key === 'all'
+                ? conversations.filter(c => c.unread > 0).length
+                : filter.key === 'unread'
+                  ? conversations.filter(c => c.unread > 0).length
+                  : 0;
+
+              return (
+                <TouchableOpacity
+                  key={filter.key}
+                  style={[
+                    styles.filterChip,
+                    activeFilter === filter.key && styles.filterChipActive,
+                  ]}
+                  onPress={() => applyFilter(filter.key)}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      activeFilter === filter.key && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {filter.label}
+                  </Text>
+                  {count > 0 && (
+                    <View style={styles.filterBadge}>
+                      <Text style={styles.filterBadgeText}>{count}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Conversations List */}
+          <FlatList
+            data={filteredConversations}
+            renderItem={renderConversation}
+            keyExtractor={(item) => item.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.conversationsList}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>💬</Text>
+                <Text style={styles.emptyTitle}>No conversations</Text>
+                <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
+              </View>
+            }
+          />
+        </View>
+
+        {/* Right Column - Chat View */}
+        <View style={styles.desktopRightColumn}>
+          {selectedConversation ? (
+            <View style={styles.desktopChatContainer}>
+              {/* Chat Header */}
+              <View style={styles.chatHeader}>
+                <View style={styles.chatHeaderInfo}>
+                  <Text style={styles.chatHeaderTitle}>{selectedConversation.title}</Text>
+                  <Text style={styles.chatHeaderStatus}>{selectedConversation.status}</Text>
+                </View>
+                <View style={styles.chatHeaderRight}>
+                  <TouchableOpacity style={styles.chatHeaderIcon}>
+                    <Ionicons name="call-outline" size={20} color="#4A7DFF" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.chatHeaderIcon}>
+                    <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Messages */}
+              <FlatList
+                data={selectedConversation.messages}
+                renderItem={({ item }) => (
+                  <MessageBubble message={item} isMe={item.sender === 'me'} />
+                )}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={styles.messagesList}
+                inverted={false}
+              />
+
+              {/* AI Suggestions */}
+              <AISuggestions onPress={handleAISuggestion} />
+
+              {/* Input */}
+              <View style={styles.chatInputContainer}>
+                <TouchableOpacity style={styles.attachButton}>
+                  <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.chatInput}
+                  placeholder="Type a message..."
+                  placeholderTextColor="#8A8AAE"
+                  value={newMessage}
+                  onChangeText={setNewMessage}
+                  multiline
+                />
+                <TouchableOpacity style={styles.aiChatButton}>
+                  <Ionicons name="sparkles" size={20} color="#4A7DFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+                  onPress={handleSendMessage}
+                  disabled={!newMessage.trim()}
+                >
+                  <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.desktopEmptyChat}>
+              <Text style={styles.desktopEmptyChatIcon}>💬</Text>
+              <Text style={styles.desktopEmptyChatTitle}>Select a conversation</Text>
+              <Text style={styles.desktopEmptyChatSubtext}>Choose a conversation from the list to start chatting</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// --- Mobile Inbox Content ---
+const MobileInboxContent = ({ navigation }: any) => {
+  const { isAuthenticated } = useAuth();
+  
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [selectedConversation, setSelectedConversation] = useState<any>(null);
+  const [showChat, setShowChat] = useState(false);
+  const [newMessage, setNewMessage] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+  const [filteredConversations, setFilteredConversations] = useState(conversations);
+
+  if (!isAuthenticated) {
+    return <GuestInboxView navigation={navigation} />;
+  }
+
+  // Filter conversations
+  const applyFilter = (filterKey: string) => {
+    setActiveFilter(filterKey);
+    let filtered = [...conversations];
+
+    switch (filterKey) {
+      case 'chats':
+        filtered = filtered.filter(c => c.type === 'chat');
+        break;
+      case 'orders':
+        filtered = filtered.filter(c => c.type === 'order');
+        break;
+      case 'bookings':
+        filtered = filtered.filter(c => c.type === 'booking');
+        break;
+      case 'payments':
+        filtered = filtered.filter(c => c.type === 'payment');
+        break;
+      case 'ai':
+        filtered = filtered.filter(c => c.type === 'ai');
+        break;
+      case 'support':
+        filtered = filtered.filter(c => c.type === 'support');
+        break;
+      case 'unread':
+        filtered = filtered.filter(c => c.unread > 0);
+        break;
+      default:
+        break;
+    }
+
+    setFilteredConversations(filtered);
+  };
+
+  const handleConversationPress = (conversation: any) => {
+    setSelectedConversation(conversation);
+    setShowChat(true);
+  };
+
+  const handleSendMessage = () => {
+    if (!newMessage.trim()) return;
+
+    const message = {
+      id: Date.now().toString(),
+      sender: 'me',
+      text: newMessage.trim(),
+      time: 'Just now',
+    };
+
+    setSelectedConversation((prev: any) => ({
+      ...prev,
+      messages: [...prev.messages, message],
+    }));
+    setNewMessage('');
+  };
+
+  const handleAISuggestion = (suggestion: string) => {
+    const message = {
+      id: Date.now().toString(),
+      sender: 'me',
+      text: suggestion,
+      time: 'Just now',
+    };
+
+    setSelectedConversation((prev: any) => ({
+      ...prev,
+      messages: [...prev.messages, message],
+    }));
+
+    setTimeout(() => {
+      const aiResponse = {
+        id: (Date.now() + 1).toString(),
+        sender: 'them',
+        text: `🤖 Let me help you with "${suggestion}". I'll find the best answer for you.`,
+        time: 'Just now',
+      };
+      setSelectedConversation((prev: any) => ({
+        ...prev,
+        messages: [...prev.messages, aiResponse],
+      }));
+    }, 1000);
+  };
+
+  const handleLongPress = (conversation: any) => {
+    Alert.alert(
+      conversation.title,
+      'Choose an action',
+      [
+        { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
+        { text: 'Mute', onPress: () => console.log('Mute') },
+        { text: 'Archive', onPress: () => console.log('Archive') },
+        { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
+  const renderConversation = ({ item }: any) => (
+    <ConversationCard
+      item={item}
+      onPress={handleConversationPress}
+      onLongPress={handleLongPress}
+    />
+  );
+
+  // --- Chat View Modal ---
+  const renderChatModal = () => {
     if (!selectedConversation) return null;
 
     return (
@@ -468,7 +728,7 @@ const InboxContent = ({ navigation }: any) => {
           {/* Chat Header */}
           <View style={styles.chatHeader}>
             <TouchableOpacity onPress={() => setShowChat(false)}>
-              <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
             </TouchableOpacity>
             <View style={styles.chatHeaderInfo}>
               <Text style={styles.chatHeaderTitle}>{selectedConversation.title}</Text>
@@ -528,18 +788,18 @@ const InboxContent = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <SafeAreaView style={styles.mobileContainer}>
+      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
 
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Inbox</Text>
+      <View style={styles.mobileHeader}>
+        <Text style={styles.mobileHeaderTitle}>Inbox</Text>
         <View style={styles.headerRight}>
           <TouchableOpacity style={styles.headerIcon} onPress={() => setShowSearch(!showSearch)}>
-            <Ionicons name={showSearch ? 'close-outline' : 'search-outline'} size={22} color="#1F2F5F" />
+            <Ionicons name={showSearch ? 'close-outline' : 'search-outline'} size={22} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="options-outline" size={22} color="#1F2F5F" />
+            <Ionicons name="options-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </View>
@@ -620,17 +880,16 @@ const InboxContent = ({ navigation }: any) => {
           />
         )}
 
-        {/* Bottom Spacer */}
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
       {/* Chat Modal */}
-      {renderChatView()}
+      {renderChatModal()}
     </SafeAreaView>
   );
 };
 
-// --- Main InboxScreen Component (Wrapped with ResponsiveLayout) ---
+// --- Main InboxScreen Component ---
 export const InboxScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -640,34 +899,117 @@ export const InboxScreen = ({ navigation }: any) => {
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
-      fullWidth={true} // ← Full width on desktop
+      fullWidth={true}
     >
-      <InboxContent navigation={navigation} />
+      {isDesktop ? (
+        <DesktopInboxContent navigation={navigation} />
+      ) : (
+        <MobileInboxContent navigation={navigation} />
+      )}
     </ResponsiveLayout>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  // ============================================================
+  // DESKTOP STYLES - DARK THEME
+  // ============================================================
+  desktopContainer: {
     flex: 1,
-    backgroundColor: '#F8F9FC',
+    backgroundColor: '#1A2A4F',
+    padding: 24,
   },
-  header: {
+  desktopHeader: {
+    marginBottom: 24,
+  },
+  desktopHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
+  },
+  desktopGrid: {
+    flexDirection: 'row',
+    gap: 24,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    flex: 1,
+  },
+  desktopLeftColumn: {
+    flex: 1,
+    minWidth: 350,
+    maxWidth: 450,
+  },
+  desktopRightColumn: {
+    flex: 2,
+    minWidth: 400,
+  },
+  desktopChatContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    overflow: 'hidden',
+  },
+  desktopEmptyChat: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    padding: 40,
+  },
+  desktopEmptyChatIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  desktopEmptyChatTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  desktopEmptyChatSubtext: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  // ============================================================
+  // MOBILE STYLES - DARK THEME
+  // ============================================================
+  mobileContainer: {
+    flex: 1,
+    backgroundColor: '#1F2F5F',
+  },
+  mobileHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(31, 47, 95, 0.9)',
     borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  headerTitle: {
+  mobileHeaderTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#1F2F5F',
+    color: '#FFFFFF',
   },
+
+  // ============================================================
+  // SHARED STYLES - DARK THEME
+  // ============================================================
   headerRight: {
     flexDirection: 'row',
     gap: 8,
@@ -675,43 +1017,46 @@ const styles = StyleSheet.create({
   headerIcon: {
     padding: 6,
     borderRadius: 20,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     marginHorizontal: 16,
     marginTop: 8,
     marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   searchInput: {
     flex: 1,
     marginLeft: 8,
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
   },
   scrollContent: {
     paddingHorizontal: 16,
     paddingBottom: 40,
   },
+
   // Guest Mode
   guestContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
-    backgroundColor: '#F8F9FC',
+    backgroundColor: '#1F2F5F',
   },
   guestIcon: {
     fontSize: 48,
     marginBottom: 16,
   },
   guestTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 20,
     fontWeight: 'bold',
     textAlign: 'center',
@@ -731,6 +1076,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     marginBottom: 12,
     width: '100%',
+    maxWidth: 300,
     alignItems: 'center',
   },
   guestButtonText: {
@@ -742,6 +1088,7 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 14,
   },
+
   // Filter Chips
   filterContainer: {
     marginTop: 12,
@@ -756,14 +1103,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
-    borderColor: '#E8ECF4',
+    borderColor: 'rgba(255,255,255,0.05)',
     marginRight: 6,
     gap: 4,
   },
   filterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderColor: '#4A7DFF',
   },
   filterChipText: {
@@ -787,6 +1134,7 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: 'bold',
   },
+
   // Empty State
   emptyState: {
     alignItems: 'center',
@@ -797,7 +1145,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   emptyTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
   },
@@ -806,21 +1154,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
   },
+
   // Conversation List
   conversationsList: {
     paddingBottom: 8,
   },
   conversationCard: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   conversationAvatar: {
     position: 'relative',
@@ -839,7 +1185,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   avatarTextSystem: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
   },
   aiAvatarGradient: {
     width: 48,
@@ -884,7 +1230,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   conversationTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -915,7 +1261,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   conversationMessageUnread: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontWeight: '500',
   },
   statusBadge: {
@@ -938,10 +1284,11 @@ const styles = StyleSheet.create({
   bottomSpacer: {
     height: 20,
   },
+
   // Chat View
   chatContainer: {
     flex: 1,
-    backgroundColor: '#F8F9FC',
+    backgroundColor: '#1A2A4F',
   },
   chatHeader: {
     flexDirection: 'row',
@@ -949,16 +1296,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    borderBottomColor: 'rgba(255,255,255,0.05)',
   },
   chatHeaderInfo: {
     flex: 1,
     marginLeft: 12,
   },
   chatHeaderTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -973,7 +1320,7 @@ const styles = StyleSheet.create({
   chatHeaderIcon: {
     padding: 6,
     borderRadius: 20,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   messagesList: {
     paddingHorizontal: 16,
@@ -1015,10 +1362,10 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 4,
   },
   messageThem: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderBottomLeftRadius: 4,
     borderWidth: 1,
-    borderColor: '#E8ECF4',
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   messageText: {
     fontSize: 14,
@@ -1028,7 +1375,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   messageTextThem: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
   },
   messageTime: {
     fontSize: 10,
@@ -1041,6 +1388,7 @@ const styles = StyleSheet.create({
   messageTimeThem: {
     color: '#8A8AAE',
   },
+
   // AI Suggestions
   aiSuggestions: {
     flexDirection: 'row',
@@ -1049,14 +1397,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 6,
     borderTopWidth: 1,
-    borderTopColor: '#E8ECF4',
-    backgroundColor: '#FFFFFF',
+    borderTopColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
   },
   aiSuggestionChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -1068,15 +1416,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
   },
+
   // Chat Input
   chatInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.02)',
     borderTopWidth: 1,
-    borderTopColor: '#E8ECF4',
+    borderTopColor: 'rgba(255,255,255,0.05)',
     gap: 8,
   },
   attachButton: {
@@ -1084,11 +1433,11 @@ const styles = StyleSheet.create({
   },
   chatInput: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
     maxHeight: 80,
   },
@@ -1103,6 +1452,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#E8ECF4',
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
 });

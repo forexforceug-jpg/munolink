@@ -1,3 +1,5 @@
+// src/features/auth/JoinScreen.tsx
+
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -17,6 +19,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
@@ -39,8 +43,9 @@ const StepIndicator = ({ currentStep, totalSteps }: any) => (
 );
 
 // --- Main JoinScreen Component ---
-export const JoinScreen = ({ navigation }: any) => {
-  const { signIn, signInWithPhone, signInWithGoogle } = useAuth();
+const JoinContent = ({ navigation }: any) => {
+  const { signInWithPhone, signInWithGoogle } = useAuth();
+  const { isDesktop } = useBreakpoint();
   const [step, setStep] = useState(1);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -115,7 +120,6 @@ export const JoinScreen = ({ navigation }: any) => {
       
       console.log('📝 Verifying OTP for phone (custom auth):', fullPhone);
       
-      // Use signInWithPhone with just the phone number
       await signInWithPhone(fullPhone);
       
       console.log('✅ User signed in successfully');
@@ -152,12 +156,10 @@ export const JoinScreen = ({ navigation }: any) => {
     }
   };
 
-  // Handle Google Sign-In
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
-      // The auth state will update via the context
       navigation.replace('MainTabs');
     } catch (error: any) {
       console.error('Google sign-in error:', error);
@@ -173,7 +175,7 @@ export const JoinScreen = ({ navigation }: any) => {
 
   // --- Render Step 1: Join Munolink ---
   const renderStep1 = () => (
-    <View style={styles.stepContainer}>
+    <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
       <View style={styles.stepIconContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
@@ -188,7 +190,7 @@ export const JoinScreen = ({ navigation }: any) => {
         Join thousands of people discovering opportunities nearby.
       </Text>
 
-      <View style={styles.methodToggle}>
+      <View style={[styles.methodToggle, isDesktop && styles.methodToggleDesktop]}>
         <TouchableOpacity
           style={[styles.methodOption, method === 'phone' && styles.methodOptionActive]}
           onPress={() => setMethod('phone')}
@@ -207,7 +209,7 @@ export const JoinScreen = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.inputContainer}>
+      <View style={[styles.inputContainer, isDesktop && styles.inputContainerDesktop]}>
         {method === 'phone' ? (
           <View style={styles.phoneInput}>
             <View style={styles.countryCode}>
@@ -248,13 +250,12 @@ export const JoinScreen = ({ navigation }: any) => {
         )}
       </TouchableOpacity>
 
-      <View style={styles.dividerContainer}>
+      <View style={[styles.dividerContainer, isDesktop && styles.dividerContainerDesktop]}>
         <View style={styles.divider} />
         <Text style={styles.dividerText}>or continue with</Text>
         <View style={styles.divider} />
       </View>
 
-      {/* Google Sign-In Button */}
       <TouchableOpacity
         style={[styles.googleButton, isGoogleLoading && styles.googleButtonDisabled]}
         onPress={handleGoogleSignIn}
@@ -276,7 +277,7 @@ export const JoinScreen = ({ navigation }: any) => {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.termsText}>
+      <Text style={[styles.termsText, isDesktop && styles.termsTextDesktop]}>
         By continuing, you agree to our{' '}
         <Text style={styles.termsLink}>Terms of Service</Text> and{' '}
         <Text style={styles.termsLink}>Privacy Policy</Text>
@@ -286,7 +287,7 @@ export const JoinScreen = ({ navigation }: any) => {
 
   // --- Render Step 2: Verify OTP ---
   const renderStep2 = () => (
-    <View style={styles.stepContainer}>
+    <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
       <View style={styles.stepIconContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
@@ -304,7 +305,7 @@ export const JoinScreen = ({ navigation }: any) => {
         </Text>
       </Text>
 
-      <View style={styles.otpContainer}>
+      <View style={[styles.otpContainer, isDesktop && styles.otpContainerDesktop]}>
         {otp.map((digit, index) => (
           <TextInput
             key={index}
@@ -359,7 +360,7 @@ export const JoinScreen = ({ navigation }: any) => {
 
   // --- Render Step 3: Welcome ---
   const renderStep3 = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim }]}>
+    <Animated.View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop, { opacity: fadeAnim }]}>
       <View style={styles.welcomeContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
@@ -374,7 +375,7 @@ export const JoinScreen = ({ navigation }: any) => {
         Here's what you can do now:
       </Text>
 
-      <View style={styles.featuresList}>
+      <View style={[styles.featuresList, isDesktop && styles.featuresListDesktop]}>
         <View style={styles.featureItem}>
           <View style={styles.featureIcon}>
             <Ionicons name="heart" size={20} color="#4A7DFF" />
@@ -425,7 +426,7 @@ export const JoinScreen = ({ navigation }: any) => {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
@@ -433,23 +434,118 @@ export const JoinScreen = ({ navigation }: any) => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
-        <TouchableOpacity style={styles.backArrow} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-        </TouchableOpacity>
+        {/* Desktop Header */}
+        {isDesktop && (
+          <View style={styles.desktopHeader}>
+            <Text style={styles.desktopHeaderTitle}>Join Munolink</Text>
+            <Text style={styles.desktopHeaderSubtitle}>Create your account to get started</Text>
+          </View>
+        )}
+
+        {/* Mobile Back Arrow */}
+        {!isDesktop && (
+          <TouchableOpacity style={styles.backArrow} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+        )}
 
         <StepIndicator currentStep={step - 1} totalSteps={3} />
 
-        <View style={styles.content}>
+        <View style={[styles.content, isDesktop && styles.contentDesktop]}>
           {step === 1 && renderStep1()}
           {step === 2 && renderStep2()}
           {step === 3 && renderStep3()}
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 };
 
+// --- Main Component (Wrapped with ResponsiveLayout) ---
+export const JoinScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  if (isDesktop) {
+    return (
+      <ResponsiveLayout 
+        currentRoute="Join" 
+        onNavigate={(route) => navigation?.navigate(route)}
+        floatingActions={null}
+        hideContextPanel={true}
+        fullWidth={true}
+      >
+        <JoinContent navigation={navigation} />
+      </ResponsiveLayout>
+    );
+  }
+
+  return <JoinContent navigation={navigation} />;
+};
+
 const styles = StyleSheet.create({
+  // ... (all styles remain the same as your original file)
+ // DESKTOP STYLES
+  // ============================================================
+  containerDesktop: {
+    backgroundColor: '#F8F9FC',
+    padding: 24,
+  },
+  desktopHeader: {
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+  },
+  desktopHeaderTitle: {
+    color: '#1F2F5F',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
+  },
+  contentDesktop: {
+    maxWidth: 500,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+  },
+  stepContainerDesktop: {
+    paddingTop: 10,
+  },
+  methodToggleDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  inputContainerDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  dividerContainerDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  otpContainerDesktop: {
+    gap: 12,
+  },
+  termsTextDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  featuresListDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+
+  // ============================================================
+  // MOBILE STYLES
+  // ============================================================
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -615,7 +711,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     paddingHorizontal: 16,
   },
-  // Google Button Styles
   googleButton: {
     flexDirection: 'row',
     alignItems: 'center',

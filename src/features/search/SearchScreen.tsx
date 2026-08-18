@@ -1,3 +1,5 @@
+// src/features/search/SearchScreen.tsx
+
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -17,6 +19,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
 
@@ -90,35 +94,47 @@ const RecentItem = ({ item, onPress }: any) => (
   </TouchableOpacity>
 );
 
-// AI Search Result Card
-const AIResultCard = ({ item, index }: any) => (
-  <View style={styles.resultCard}>
-    <Image source={{ uri: item.image }} style={styles.resultImage} />
-    <View style={styles.resultInfo}>
-      <View style={styles.resultHeader}>
-        <Text style={styles.resultTitle}>{item.title}</Text>
-        {item.aiTag && (
-          <View style={styles.resultAITag}>
-            <Ionicons name="sparkles" size={10} color="#4A7DFF" />
-            <Text style={styles.resultAITagText}>AI Pick</Text>
-          </View>
-        )}
+// AI Search Result Card - Grid Layout
+const AIResultCard = ({ item, index, isDesktop }: any) => {
+  const cardWidth = isDesktop ? (width - 120 - 48) / 3 - 12 : '100%';
+  
+  return (
+    <TouchableOpacity 
+      style={[
+        styles.resultCard, 
+        isDesktop && styles.resultCardDesktop,
+        { width: isDesktop ? cardWidth : '100%' }
+      ]}
+      activeOpacity={0.8}
+    >
+      <Image source={{ uri: item.image }} style={[styles.resultImage, isDesktop && styles.resultImageDesktop]} />
+      <View style={styles.resultInfo}>
+        <View style={styles.resultHeader}>
+          <Text style={styles.resultTitle} numberOfLines={1}>{item.title}</Text>
+          {item.aiTag && (
+            <View style={styles.resultAITag}>
+              <Ionicons name="sparkles" size={10} color="#4A7DFF" />
+              <Text style={styles.resultAITagText}>AI Pick</Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.resultShop} numberOfLines={1}>{item.shop}</Text>
+        <Text style={styles.resultPrice}>UGX {item.price.toLocaleString()}</Text>
+        <View style={styles.resultFooter}>
+          <Text style={styles.resultRating}>⭐ {item.rating}</Text>
+          <Text style={styles.resultDistance}>• {item.distance}</Text>
+          <Text style={[styles.resultStatus, { color: item.inStock ? '#2ECC71' : '#E74C3C' }]}>
+            {item.inStock ? 'In Stock' : 'Check Availability'}
+          </Text>
+        </View>
       </View>
-      <Text style={styles.resultShop}>{item.shop}</Text>
-      <Text style={styles.resultPrice}>UGX {item.price.toLocaleString()}</Text>
-      <View style={styles.resultFooter}>
-        <Text style={styles.resultRating}>⭐ {item.rating}</Text>
-        <Text style={styles.resultDistance}>• {item.distance}</Text>
-        <Text style={[styles.resultStatus, { color: item.inStock ? '#2ECC71' : '#E74C3C' }]}>
-          {item.inStock ? 'In Stock' : 'Check Availability'}
-        </Text>
-      </View>
-    </View>
-  </View>
-);
+    </TouchableOpacity>
+  );
+};
 
-// --- Main SearchScreen Component ---
-export const SearchScreen = ({ navigation }: any) => {
+// --- Main Search Content Component ---
+const SearchContent = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
@@ -134,6 +150,8 @@ export const SearchScreen = ({ navigation }: any) => {
     { id: '2', title: 'iPhone 16 Pro Max', shop: 'City Electronics', price: 3200000, image: 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=iPhone', rating: 4.9, distance: '1.2 km', inStock: true, aiTag: false },
     { id: '3', title: 'MacBook Air M3', shop: 'TechWorld Kampala', price: 4500000, image: 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=MacBook', rating: 4.7, distance: '0.6 km', inStock: true, aiTag: true },
     { id: '4', title: 'Mechanic Service', shop: 'QuickFix Auto', price: 150000, image: 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=Mechanic', rating: 4.5, distance: '2.3 km', inStock: true, aiTag: false },
+    { id: '5', title: 'Sony WH-1000XM5', shop: 'AudioWorld', price: 850000, image: 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=Sony', rating: 4.9, distance: '1.8 km', inStock: true, aiTag: true },
+    { id: '6', title: 'Home Cleaning Service', shop: 'CleanHome Ltd', price: 120000, image: 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=Cleaning', rating: 4.3, distance: '3.1 km', inStock: false, aiTag: false },
   ];
 
   // Simulate AI search
@@ -143,14 +161,12 @@ export const SearchScreen = ({ navigation }: any) => {
     setIsLoading(true);
     setShowResults(true);
 
-    // Animate results in
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 300,
       useNativeDriver: true,
     }).start();
 
-    // Simulate API call
     setTimeout(() => {
       setSearchResults(mockResults);
       setIsLoading(false);
@@ -158,25 +174,21 @@ export const SearchScreen = ({ navigation }: any) => {
     }, 800);
   };
 
-  // Handle search input submit
   const handleSearch = () => {
     Keyboard.dismiss();
     performSearch(searchQuery);
   };
 
-  // Handle suggested prompt press
   const handlePromptPress = (prompt: string) => {
     setSearchQuery(prompt);
     performSearch(prompt);
   };
 
-  // Handle recent search press
   const handleRecentPress = (query: string) => {
     setSearchQuery(query);
     performSearch(query);
   };
 
-  // Clear search
   const clearSearch = () => {
     setSearchQuery('');
     setShowResults(false);
@@ -190,10 +202,8 @@ export const SearchScreen = ({ navigation }: any) => {
     }).start();
   };
 
-  // Render search content
   const renderSearchContent = () => {
     if (showResults && isSearching) {
-      // Search Results
       return (
         <Animated.View style={[styles.resultsContainer, { opacity: fadeAnim }]}>
           {/* AI Summary */}
@@ -219,20 +229,16 @@ export const SearchScreen = ({ navigation }: any) => {
             ))}
           </View>
 
-          {/* Results List */}
-          <FlatList
-            data={searchResults}
-            renderItem={({ item, index }) => <AIResultCard item={item} index={index} />}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={true}
-            contentContainerStyle={styles.resultsList}
-            showsVerticalScrollIndicator={false}
-          />
+          {/* Results Grid */}
+          <View style={[styles.resultsGrid, isDesktop && styles.resultsGridDesktop]}>
+            {searchResults.map((item, index) => (
+              <AIResultCard key={item.id} item={item} index={index} isDesktop={isDesktop} />
+            ))}
+          </View>
         </Animated.View>
       );
     }
 
-    // Home / Initial State
     return (
       <>
         {/* Trending Searches */}
@@ -274,19 +280,26 @@ export const SearchScreen = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Search</Text>
-      </View>
+      {/* Desktop Header */}
+      {isDesktop ? (
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopHeaderTitle}>Search</Text>
+          <Text style={styles.desktopHeaderSubtitle}>AI-powered search for products and services</Text>
+        </View>
+      ) : (
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Search</Text>
+        </View>
+      )}
 
       {/* Search Input */}
-      <View style={styles.searchContainer}>
+      <View style={[styles.searchContainer, isDesktop && styles.searchContainerDesktop]}>
         <View style={styles.searchInputWrapper}>
           <Ionicons name="search-outline" size={22} color="#8A8AAE" />
           <TextInput
@@ -325,13 +338,30 @@ export const SearchScreen = ({ navigation }: any) => {
       {/* Content */}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, isDesktop && styles.scrollContentDesktop]}
         keyboardShouldPersistTaps="handled"
       >
         {!isLoading && renderSearchContent()}
         <View style={styles.bottomSpacer} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
+  );
+};
+
+// --- Main SearchScreen Component (Wrapped with ResponsiveLayout) ---
+export const SearchScreen = ({ navigation }: any) => {
+  const { isDesktop } = useBreakpoint();
+
+  return (
+    <ResponsiveLayout 
+      currentRoute="Search" 
+      onNavigate={(route) => navigation?.navigate(route)}
+      floatingActions={null}
+      hideContextPanel={true}
+      fullWidth={true}
+    >
+      <SearchContent navigation={navigation} />
+    </ResponsiveLayout>
   );
 };
 
@@ -340,6 +370,30 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8F9FC',
   },
+  containerDesktop: {
+    backgroundColor: '#F8F9FC',
+  },
+  // ============================================================
+  // DESKTOP HEADER
+  // ============================================================
+  desktopHeader: {
+    paddingVertical: 20,
+    paddingHorizontal: 0,
+  },
+  desktopHeaderTitle: {
+    color: '#1F2F5F',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
+  },
+
+  // ============================================================
+  // MOBILE HEADER
+  // ============================================================
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -357,6 +411,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#1F2F5F',
   },
+
+  // ============================================================
+  // SEARCH INPUT
+  // ============================================================
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -364,6 +422,11 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     backgroundColor: '#FFFFFF',
     gap: 10,
+  },
+  searchContainerDesktop: {
+    paddingHorizontal: 0,
+    paddingBottom: 20,
+    backgroundColor: 'transparent',
   },
   searchInputWrapper: {
     flex: 1,
@@ -391,12 +454,23 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
+
+  // ============================================================
+  // SCROLL CONTENT
+  // ============================================================
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 40,
   },
-  // Loading
+  scrollContentDesktop: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+  },
+
+  // ============================================================
+  // LOADING
+  // ============================================================
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -408,7 +482,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 12,
   },
-  // Section
+
+  // ============================================================
+  // SECTION
+  // ============================================================
   section: {
     marginBottom: 20,
   },
@@ -429,7 +506,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  // Trending
+
+  // ============================================================
+  // TRENDING
+  // ============================================================
   trendingGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -453,7 +533,10 @@ const styles = StyleSheet.create({
     color: '#1F2F5F',
     fontSize: 13,
   },
-  // Suggested Prompts
+
+  // ============================================================
+  // SUGGESTED PROMPTS
+  // ============================================================
   suggestedGrid: {
     gap: 8,
   },
@@ -481,7 +564,10 @@ const styles = StyleSheet.create({
   suggestedPromptArrow: {
     marginLeft: 8,
   },
-  // Recent
+
+  // ============================================================
+  // RECENT
+  // ============================================================
   recentItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -518,7 +604,10 @@ const styles = StyleSheet.create({
   recentItemDelete: {
     padding: 4,
   },
-  // Results
+
+  // ============================================================
+  // RESULTS
+  // ============================================================
   resultsContainer: {
     flex: 1,
   },
@@ -564,10 +653,16 @@ const styles = StyleSheet.create({
   resultTabTextActive: {
     color: '#4A7DFF',
   },
-  resultsList: {
-    paddingBottom: 20,
+  resultsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  resultsGridDesktop: {
+    gap: 16,
   },
   resultCard: {
+    flex: 1,
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -575,12 +670,25 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E8ECF4',
+    minWidth: 300,
+  },
+  resultCardDesktop: {
+    flexDirection: 'column',
+    padding: 12,
+    marginBottom: 0,
+    minWidth: 0,
   },
   resultImage: {
     width: 70,
     height: 70,
     borderRadius: 8,
     marginRight: 10,
+  },
+  resultImageDesktop: {
+    width: '100%',
+    height: 140,
+    marginRight: 0,
+    marginBottom: 10,
   },
   resultInfo: {
     flex: 1,
@@ -626,6 +734,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 4,
     gap: 4,
+    flexWrap: 'wrap',
   },
   resultRating: {
     color: '#F1C40F',

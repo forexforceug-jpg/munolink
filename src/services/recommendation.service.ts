@@ -2,6 +2,8 @@
 
 import { supabase } from '../lib/supabase';
 import { Opportunity } from './feed.service';
+import { locationService, UserLocation } from './location.service';
+import { mapItemType } from '../utils/typeHelpers';
 
 export interface UserPreferences {
   categories: string[];
@@ -9,59 +11,149 @@ export interface UserPreferences {
   preferredTypes: ('product' | 'service')[];
   viewedItems: string[];
   savedItems: string[];
+  location: UserLocation | null;
   area: string | null;
 }
 
+// Type assertion to bypass type checking for now
+const supabaseAny = supabase as any;
+
 export const recommendationService = {
-  // Track user interaction
-  async trackInteraction(userId: string, itemId: string, action: 'view' | 'save' | 'share' | 'purchase'): Promise<void> {
+  // ============================================================
+  // TRACK USER INTERACTION - FIXED TO CHECK BOTH TABLES
+  // ============================================================
+  async trackInteraction(
+    userId: string,
+    itemId: string,
+    action: 'view' | 'save' | 'share' | 'purchase',
+    itemType?: string
+  ): Promise<void> {
     try {
-      // Use 'as any' to bypass TypeScript type checking
-      const { data: existing } = await supabase
-        .from('user_interactions' as any)
+      const mappedType = mapItemType(itemType);
+      console.log(`📊 Tracking ${action} for user ${userId} on item ${itemId}`);
+
+      // Check if user exists
+      const { data: user, error: userError } = await supabaseAny
+        .from('users')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (userError || !user) {
+        console.warn(`⚠️ User ${userId} not found, skipping tracking`);
+        return;
+      }
+
+      // ✅ Check if item exists in catalog OR service_catalog
+      let itemExists = false;
+      let finalItemType = mappedType;
+
+      // First check catalog (products)
+      const { data: catalogItem, error: catalogError } = await supabaseAny
+        .from('catalog')
+        .select('id')
+        .eq('id', itemId)
+        .maybeSingle();
+
+      if (catalogItem) {
+        itemExists = true;
+        finalItemType = 'product';
+      } else {
+        // If not in catalog, check service_catalog (services)
+        const { data: serviceItem, error: serviceError } = await supabaseAny
+          .from('service_catalog')
+          .select('id')
+          .eq('id', itemId)
+          .maybeSingle();
+
+        if (serviceItem) {
+          itemExists = true;
+          finalItemType = 'service';
+        }
+      }
+
+      if (!itemExists) {
+        console.warn(`⚠️ Item ${itemId} not found in catalog or service_catalog, skipping tracking`);
+        return;
+      }
+
+      // Check if interaction already exists
+      const { data: existing, error: findError } = await supabaseAny
+        .from('user_interactions')
         .select('*')
         .eq('user_id', userId)
         .eq('item_id', itemId)
         .eq('action', action)
         .maybeSingle();
 
+      if (findError && findError.code !== 'PGRST116') {
+        console.error('Error finding interaction:', findError);
+        return;
+      }
+
       if (existing) {
-        // Update the existing interaction with a new timestamp
-        await supabase
-          .from('user_interactions' as any)
-          .update({ 
-            updated_at: new Date().toISOString(),
-            count: (existing as any).count ? (existing as any).count + 1 : 1
+        // Update existing interaction
+        const { error: updateError } = await supabaseAny
+          .from('user_interactions')
+          .update({
+            time_spent: (existing.time_spent || 0) + 1,
+            metadata: {
+              ...existing.metadata,
+              count: (existing.metadata?.count || 0) + 1,
+              last_interaction: new Date().toISOString()
+            }
           })
-          .eq('id', (existing as any).id);
+          .eq('id', existing.id);
+
+        if (updateError) {
+          console.error('Error updating interaction:', updateError);
+        } else {
+          console.log(`✅ ${action} updated for ${itemId}`);
+        }
       } else {
         // Insert new interaction
-        await supabase
-          .from('user_interactions' as any)
-          .insert({
-            user_id: userId,
-            item_id: itemId,
-            action: action,
-            created_at: new Date().toISOString(),
+        const insertData = {
+          user_id: userId,
+          item_id: itemId,
+          action: action,
+          item_type: finalItemType,
+          time_spent: 0,
+          metadata: {
             count: 1,
-          });
+            first_interaction: new Date().toISOString(),
+            last_interaction: new Date().toISOString(),
+            original_type: itemType || 'unknown'
+          },
+          created_at: new Date().toISOString()
+        };
+
+        const { error: insertError } = await supabaseAny
+          .from('user_interactions')
+          .insert(insertData);
+
+        if (insertError) {
+          console.error('Error inserting interaction:', insertError);
+        } else {
+          console.log(`✅ ${action} tracked for ${itemId}`);
+        }
       }
     } catch (error) {
       console.error('Error tracking interaction:', error);
     }
   },
 
-  // Get user preferences from interactions
+  // ============================================================
+  // GET USER PREFERENCES
+  // ============================================================
   async getUserPreferences(userId: string): Promise<UserPreferences | null> {
     try {
-      // Get user's interactions
-      const { data: interactions, error: interactionsError } = await supabase
-        .from('user_interactions' as any)
+      const { data: interactions, error } = await supabaseAny
+        .from('user_interactions')
         .select('*')
         .eq('user_id', userId);
 
-      if (interactionsError) {
-        console.error('Error fetching interactions:', interactionsError);
+      if (error) {
+        console.error('Error fetching interactions:', error);
         return null;
       }
 
@@ -69,47 +161,57 @@ export const recommendationService = {
         return null;
       }
 
-      // Type assertion for interactions
-      const typedInteractions = interactions as any[];
-
-      // Get user's saved items (items with 'save' action)
-      const savedItems = typedInteractions
+      const savedItems = interactions
         .filter((i: any) => i.action === 'save')
         .map((i: any) => i.item_id);
 
-      // Get user's viewed items
-      const viewedItems = typedInteractions
+      const viewedItems = interactions
         .filter((i: any) => i.action === 'view')
         .map((i: any) => i.item_id);
 
-      // Get user's location from profile
-      const { data: user, error: userError } = await supabase
+      // Get user location
+      const { data: user } = await supabaseAny
         .from('users')
-        .select('full_name, phone_number')
+        .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
-      if (userError) {
-        console.error('Error fetching user:', userError);
+      let location: UserLocation | null = null;
+      if (user) {
+        location = {
+          latitude: 0,
+          longitude: 0,
+          city: user.location_city || null,
+          region: user.location_region || null,
+          country: user.location_country || null,
+          formattedAddress: null,
+        };
       }
 
-      // Try to determine preferred categories from viewed items
+      // Get categories from viewed items - check both catalog and service_catalog
       let categories: string[] = [];
       if (viewedItems.length > 0) {
-        // Get categories of viewed items from catalog
-        const { data: items } = await supabase
+        // Check catalog first
+        const { data: catalogItems } = await supabaseAny
           .from('catalog')
           .select('category')
           .in('id', viewedItems.slice(0, 20));
 
-        if (items) {
+        // Also check service_catalog
+        const { data: serviceItems } = await supabaseAny
+          .from('service_catalog')
+          .select('category')
+          .in('id', viewedItems.slice(0, 20));
+
+        const allItems = [...(catalogItems || []), ...(serviceItems || [])];
+        
+        if (allItems.length > 0) {
           const categoryCounts: Record<string, number> = {};
-          items.forEach((item: any) => {
+          allItems.forEach((item: any) => {
             if (item.category) {
               categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
             }
           });
-          // Get top 3 categories
           categories = Object.entries(categoryCounts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 3)
@@ -119,23 +221,23 @@ export const recommendationService = {
 
       // Determine preferred types
       const typeCounts: Record<string, number> = {};
-      typedInteractions.forEach((i: any) => {
-        // Default to product if we can't determine
-        const type = 'product' as 'product' | 'service';
-        typeCounts[type] = (typeCounts[type] || 0) + 1;
+      interactions.forEach((i: any) => {
+        const type = i.item_type || 'product';
+        const mappedType = type === 'product' ? 'product' : 'service';
+        typeCounts[mappedType] = (typeCounts[mappedType] || 0) + 1;
       });
-
       const preferredTypes = Object.entries(typeCounts)
         .sort((a, b) => b[1] - a[1])
         .map(([type]) => type as 'product' | 'service');
 
       return {
-        categories: categories,
+        categories,
         priceRange: { min: 0, max: 1000000 },
         preferredTypes: preferredTypes.length > 0 ? preferredTypes : ['product', 'service'],
-        viewedItems: viewedItems,
-        savedItems: savedItems,
-        area: null,
+        viewedItems,
+        savedItems,
+        location,
+        area: user?.location_city || null,
       };
     } catch (error) {
       console.error('Error getting user preferences:', error);
@@ -143,154 +245,288 @@ export const recommendationService = {
     }
   },
 
-  // Get personalized recommendations
+  // ============================================================
+  // GET PERSONALIZED RECOMMENDATIONS
+  // ============================================================
   async getPersonalizedRecommendations(
     opportunities: Opportunity[],
-    userId: string
+    userId: string,
+    userLocation?: UserLocation | null
   ): Promise<Opportunity[]> {
     const preferences = await this.getUserPreferences(userId);
-    
+    const location = userLocation || locationService.getCachedLocation();
+
     if (!preferences || preferences.viewedItems.length === 0) {
-      // New user - return shuffled with discovery focus
-      return this.getNewUserRecommendations(opportunities);
+      return this.getNewUserRecommendations(opportunities, location);
     }
 
-    // Score each opportunity based on user preferences
-    const scored = opportunities.map(opp => {
-      let score = 0;
-      
-      // 1. Category match (30% weight)
-      if (preferences.categories.includes(opp.category || '')) {
-        score += 30;
-      }
-      
-      // 2. Price match (20% weight)
-      if (opp.price >= preferences.priceRange.min && opp.price <= preferences.priceRange.max) {
-        score += 20;
-      }
-      
-      // 3. Type match (15% weight)
-      // Fix: Only check if type is 'product' or 'service'
-      if (opp.type === 'product' || opp.type === 'service') {
-        if (preferences.preferredTypes.includes(opp.type)) {
-          score += 15;
-        }
-      }
-      
-      // 4. New items (15% weight)
-      const daysOld = opp.createdAt ? 
-        (Date.now() - new Date(opp.createdAt).getTime()) / (1000 * 60 * 60 * 24) : 30;
-      if (daysOld < 7) {
-        score += 15;
-      }
-      
-      // 5. Not viewed before (10% weight)
-      if (!preferences.viewedItems.includes(opp.id)) {
-        score += 10;
-      }
-      
-      // 6. Not saved before (5% weight)
-      if (!preferences.savedItems.includes(opp.id)) {
-        score += 5;
-      }
-      
-      // 7. Rating bonus (5% weight)
-      if (opp.rating && opp.rating > 4.0) {
-        score += 5;
-      }
-      
-      // 8. Location bonus (additional if same area)
-      if (preferences.area && opp.area && opp.area.includes(preferences.area)) {
-        score += 10;
-      }
-      
+    // Separate products and services
+    const products = opportunities.filter(opp => opp.type === 'product');
+    const services = opportunities.filter(opp => opp.type === 'service' || opp.type === 'event');
+
+    // Score products
+    const scoredProducts = products.map((opp) => {
+      let score = this.calculateScore(opp, preferences, location);
       return { ...opp, score };
     });
 
-    // Sort by score (highest first)
-    scored.sort((a, b) => (b.score || 0) - (a.score || 0));
-    
-    // Return top scored with some randomness (mix in some new items)
-    const topCount = Math.min(scored.length, 50);
-    const topScored = scored.slice(0, topCount);
-    
-    // Mix in some random items for discovery (30% exploration)
-    const remaining = scored.slice(topCount);
-    const randomCount = Math.min(remaining.length, Math.floor(topCount * 0.3));
-    const randomItems = shuffleArray(remaining).slice(0, randomCount);
-    
-    const result = [...topScored, ...randomItems];
-    
-    // Shuffle final result and remove duplicates
-    const unique = Array.from(new Map(result.map(item => [item.id, item])).values());
-    return shuffleArray(unique);
-  },
-
-  // New user recommendations
-  getNewUserRecommendations(opportunities: Opportunity[]): Opportunity[] {
-    // Shuffle all opportunities
-    const shuffled = shuffleArray([...opportunities]);
-    
-    // 30% local, 50% new, 20% featured (highly rated)
-    const local = shuffled.filter(o => 
-      o.area && (o.area.includes('Jinja') || o.area.includes('Kampala') || o.area.includes('Entebbe'))
-    );
-    const newItems = shuffled.filter(o => {
-      const daysOld = o.createdAt ? 
-        (Date.now() - new Date(o.createdAt).getTime()) / (1000 * 60 * 60 * 24) : 30;
-      return daysOld < 7;
+    // Score services
+    const scoredServices = services.map((opp) => {
+      let score = this.calculateScore(opp, preferences, location);
+      return { ...opp, score };
     });
-    const featured = shuffled.filter(o => o.rating && o.rating > 4.5);
 
-    // Take 30% local, 50% new, 20% featured
-    const totalCount = Math.min(shuffled.length, 50);
-    const localCount = Math.floor(totalCount * 0.3);
-    const newCount = Math.floor(totalCount * 0.5);
-    const featuredCount = Math.floor(totalCount * 0.2);
+    // Sort each group by score
+    scoredProducts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+    scoredServices.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
 
-    const result = [
-      ...local.slice(0, localCount),
-      ...newItems.slice(0, newCount),
-      ...featured.slice(0, featuredCount),
-    ];
-
-    // Remove duplicates and shuffle
-    const unique = Array.from(new Map(result.map(item => [item.id, item])).values());
-    return shuffleArray(unique);
-  },
-
-  // Get trending items
-  async getTrendingItems(limit: number = 10): Promise<string[]> {
-    try {
-      // Get items with most interactions in the last 7 days
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-
-      const { data, error } = await supabase
-        .from('user_interactions' as any)
-        .select('item_id, count')
-        .gte('created_at', weekAgo.toISOString())
-        .order('count', { ascending: false })
-        .limit(limit);
-
-      if (error) {
-        console.error('Error fetching trending:', error);
-        return [];
+    // ✅ MIX PRODUCTS AND SERVICES
+    const mixedResults: any[] = [];
+    const maxLength = Math.max(scoredProducts.length, scoredServices.length);
+    
+    // Interleave products and services
+    for (let i = 0; i < maxLength; i++) {
+      if (i < scoredProducts.length) {
+        mixedResults.push(scoredProducts[i]);
       }
-
-      const typedData = data as any[];
-      return typedData?.map((item: any) => item.item_id) || [];
-    } catch (error) {
-      console.error('Error getting trending:', error);
-      return [];
+      if (i < scoredServices.length) {
+        mixedResults.push(scoredServices[i]);
+      }
     }
+
+    // ✅ Return ALL items, not just top ones
+    const unique = Array.from(new Map(mixedResults.map((item: any) => [item.id, item])).values());
+
+    // Shuffle slightly to add variety while keeping high scores on top
+    const shuffled = this.shuffleArray(unique);
+    const finalResult = shuffled.sort((a: any, b: any) => {
+      if (Math.abs((a.score || 0) - (b.score || 0)) < 15) {
+        return Math.random() - 0.5;
+      }
+      return (b.score || 0) - (a.score || 0);
+    });
+
+    console.log(`📊 Returning ${finalResult.length} personalized opportunities (${finalResult.filter((o: any) => o.type === 'product').length} products, ${finalResult.filter((o: any) => o.type === 'service' || o.type === 'event').length} services)`);
+
+    return finalResult;
   },
 
-  // Get user's saved items
+  // ============================================================
+  // CALCULATE SCORE (Extracted for reuse)
+  // ============================================================
+  calculateScore(opp: Opportunity, preferences: UserPreferences, location: UserLocation | null): number {
+    let score = 0;
+
+    // 1. Category match (30% weight)
+    if (preferences.categories.length > 0) {
+      if (preferences.categories.includes(opp.category || '')) {
+        score += 30;
+      } else {
+        score += 5;
+      }
+    } else {
+      score += 15;
+    }
+
+    // 2. Price match (20% weight)
+    if (opp.price >= preferences.priceRange.min && opp.price <= preferences.priceRange.max) {
+      score += 20;
+    } else {
+      const priceRatio = opp.price / preferences.priceRange.max;
+      if (priceRatio <= 1.5) {
+        score += 10;
+      } else if (opp.price < preferences.priceRange.min) {
+        score += 8;
+      }
+    }
+
+    // 3. Type match (15% weight)
+    const mappedType = opp.type === 'product' ? 'product' : 'service';
+    if (preferences.preferredTypes.includes(mappedType)) {
+      score += 15;
+    } else {
+      score += 5;
+    }
+
+    // 4. New items (15% weight)
+    const daysOld = opp.createdAt
+      ? (Date.now() - new Date(opp.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+      : 30;
+    if (daysOld < 7) {
+      score += 15;
+    } else if (daysOld < 14) {
+      score += 10;
+    } else {
+      score += 5;
+    }
+
+    // 5. Not viewed before (10% weight)
+    if (!preferences.viewedItems.includes(opp.id)) {
+      score += 10;
+    } else {
+      const viewCount = preferences.viewedItems.filter((id: string) => id === opp.id).length;
+      if (viewCount < 3) {
+        score += 3;
+      }
+    }
+
+    // 6. Not saved before (5% weight)
+    if (!preferences.savedItems.includes(opp.id)) {
+      score += 5;
+    }
+
+    // 7. Rating bonus (5% weight)
+    if (opp.rating && opp.rating > 4.0) {
+      score += 5;
+    } else if (opp.rating && opp.rating > 3.0) {
+      score += 2;
+    }
+
+    // 8. Location bonus (10% weight)
+    if (location && location.city) {
+      if (opp.area && opp.area.toLowerCase().includes(location.city.toLowerCase())) {
+        score += 10;
+      } else {
+        score += 3;
+      }
+    } else if (preferences.area && opp.area) {
+      if (opp.area.toLowerCase().includes(preferences.area.toLowerCase())) {
+        score += 10;
+      }
+    }
+
+    // Guarantee minimum score
+    const minScore = 5 + (opp.rating ? opp.rating * 2 : 0);
+    score = Math.max(score, minScore);
+
+    return score;
+  },
+
+  // ============================================================
+  // GET NEW USER RECOMMENDATIONS
+  // ============================================================
+  getNewUserRecommendations(
+    opportunities: Opportunity[],
+    userLocation?: UserLocation | null
+  ): Opportunity[] {
+    const shuffled = this.shuffleArray([...opportunities]);
+    const location = userLocation || locationService.getCachedLocation();
+
+    // Separate products and services
+    const products = shuffled.filter(opp => opp.type === 'product');
+    const services = shuffled.filter(opp => opp.type === 'service' || opp.type === 'event');
+
+    // Score products
+    const scoredProducts = products.map((opp) => {
+      let score = this.calculateNewUserScore(opp, location);
+      return { ...opp, score };
+    });
+
+    // Score services
+    const scoredServices = services.map((opp) => {
+      let score = this.calculateNewUserScore(opp, location);
+      return { ...opp, score };
+    });
+
+    // Sort each group by score
+    scoredProducts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+    scoredServices.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+
+    // ✅ MIX PRODUCTS AND SERVICES
+    const mixedResults: any[] = [];
+    const maxLength = Math.max(scoredProducts.length, scoredServices.length);
+    
+    // Interleave products and services
+    for (let i = 0; i < maxLength; i++) {
+      if (i < scoredProducts.length) {
+        mixedResults.push(scoredProducts[i]);
+      }
+      if (i < scoredServices.length) {
+        mixedResults.push(scoredServices[i]);
+      }
+    }
+
+    // ✅ Return ALL items
+    const unique = Array.from(new Map(mixedResults.map((item: any) => [item.id, item])).values());
+
+    // Shuffle slightly to add variety
+    const shuffledResult = this.shuffleArray(unique);
+    const finalResult = shuffledResult.sort((a: any, b: any) => {
+      if (Math.abs((a.score || 0) - (b.score || 0)) < 15) {
+        return Math.random() - 0.5;
+      }
+      return (b.score || 0) - (a.score || 0);
+    });
+
+    console.log(`📊 Returning ${finalResult.length} new user recommendations (${finalResult.filter((o: any) => o.type === 'product').length} products, ${finalResult.filter((o: any) => o.type === 'service' || o.type === 'event').length} services)`);
+
+    return finalResult;
+  },
+
+  // ============================================================
+  // CALCULATE NEW USER SCORE (Extracted for reuse)
+  // ============================================================
+  calculateNewUserScore(opp: Opportunity, location: UserLocation | null): number {
+    let score = 0;
+
+    // 1. Location bonus (30% weight)
+    if (location?.city && opp.area) {
+      if (opp.area.toLowerCase().includes(location.city.toLowerCase())) {
+        score += 30;
+      } else {
+        score += 10;
+      }
+    } else {
+      score += 15;
+    }
+
+    // 2. New items bonus (25% weight)
+    const daysOld = opp.createdAt
+      ? (Date.now() - new Date(opp.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+      : 30;
+    if (daysOld < 7) {
+      score += 25;
+    } else if (daysOld < 14) {
+      score += 15;
+    } else {
+      score += 5;
+    }
+
+    // 3. Rating bonus (20% weight)
+    if (opp.rating && opp.rating > 4.5) {
+      score += 20;
+    } else if (opp.rating && opp.rating > 4.0) {
+      score += 15;
+    } else if (opp.rating && opp.rating > 3.0) {
+      score += 10;
+    } else {
+      score += 5;
+    }
+
+    // 4. In-stock bonus (15% weight)
+    if (opp.inStock !== false) {
+      score += 15;
+    }
+
+    // 5. Image bonus (10% weight)
+    if (opp.imageUrl) {
+      score += 10;
+    }
+
+    // Guarantee minimum score
+    const minScore = 10;
+    score = Math.max(score, minScore);
+
+    return score;
+  },
+
+  // ============================================================
+  // GET USER'S SAVED ITEMS
+  // ============================================================
   async getUserSavedItems(userId: string): Promise<string[]> {
     try {
-      const { data, error } = await supabase
-        .from('user_interactions' as any)
+      const { data, error } = await supabaseAny
+        .from('user_interactions')
         .select('item_id')
         .eq('user_id', userId)
         .eq('action', 'save');
@@ -300,24 +536,22 @@ export const recommendationService = {
         return [];
       }
 
-      const typedData = data as any[];
-      return typedData?.map((item: any) => item.item_id) || [];
+      return data?.map((item: any) => item.item_id) || [];
     } catch (error) {
       console.error('Error getting saved items:', error);
       return [];
     }
   },
+
+  // ============================================================
+  // UTILITY: SHUFFLE ARRAY
+  // ============================================================
+  shuffleArray<T>(array: T[]): T[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  },
 };
-
-// ============================================================
-// UTILITY FUNCTIONS
-// ============================================================
-
-function shuffleArray<T>(array: T[]): T[] {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-}

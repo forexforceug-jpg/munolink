@@ -37,6 +37,7 @@ import { SimpleDetailsModal } from './components/SimpleDetailsModal';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { recommendationService } from '../../services/recommendation.service';
+import { mapItemType } from '../../utils/typeHelpers';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -92,6 +93,10 @@ export const FeedScreen = ({ navigation }: any) => {
     });
   }, [opportunities]);
 
+  const currentOpportunity = useMemo(() => {
+    return uniqueOpportunities[currentIndex] || null;
+  }, [uniqueOpportunities, currentIndex]);
+
   const featuredOpportunities = useMemo(() => {
     return uniqueOpportunities.slice(0, 14);
   }, [uniqueOpportunities]);
@@ -110,7 +115,12 @@ export const FeedScreen = ({ navigation }: any) => {
             
             if (result.length > 0) {
               for (const item of result.slice(0, 3)) {
-                await recommendationService.trackInteraction(user.id, item.id, 'view');
+                await recommendationService.trackInteraction(
+                  user.id, 
+                  item.id, 
+                  'view',
+                  mapItemType(item.type)
+                );
               }
             }
           } else {
@@ -136,9 +146,15 @@ export const FeedScreen = ({ navigation }: any) => {
   const trackOpportunityView = useCallback(async (opportunity: RawOpportunity) => {
     if (user?.id) {
       try {
-        await recommendationService.trackInteraction(user.id, opportunity.id, 'view');
+        await recommendationService.trackInteraction(
+          user.id, 
+          opportunity.id, 
+          'view',
+          mapItemType(opportunity.type)
+        );
       } catch (error) {
         // Silently fail
+        console.log('⚠️ Tracking view failed:', error);
       }
     }
   }, [user?.id]);
@@ -223,7 +239,12 @@ export const FeedScreen = ({ navigation }: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       if (user?.id) {
-        await recommendationService.trackInteraction(user.id, opportunity.id, 'share');
+        await recommendationService.trackInteraction(
+          user.id, 
+          opportunity.id, 
+          'share',
+          mapItemType(opportunity.type)
+        );
       }
       const message = `🛍️ Check out ${opportunity.title}\n\n🏪 ${opportunity.shopName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${opportunity.area || 'Available nearby'}\n\nDownload Munolink to discover more!`;
       await Share.share({
@@ -308,7 +329,12 @@ export const FeedScreen = ({ navigation }: any) => {
         return;
       }
       if (user?.id && isLoved) {
-        recommendationService.trackInteraction(user.id, opportunity.id, 'save');
+        recommendationService.trackInteraction(
+          user.id, 
+          opportunity.id, 
+          'save',
+          mapItemType(opportunity.type)
+        );
       }
       console.log(isLoved ? '❤️ Added to wishlist:' : '❤️ Removed from wishlist:', opportunity.title);
     },
@@ -329,7 +355,12 @@ export const FeedScreen = ({ navigation }: any) => {
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (user?.id) {
-      recommendationService.trackInteraction(user.id, opportunity.id, 'save');
+      recommendationService.trackInteraction(
+        user.id, 
+        opportunity.id, 
+        'save',
+        mapItemType(opportunity.type)
+      );
     }
     console.log('🔖 Saved:', opportunity.title);
   }, [isAuthenticated, navigation, user?.id]);
@@ -341,6 +372,79 @@ export const FeedScreen = ({ navigation }: any) => {
       shopName: opportunity.shopName,
     });
   }, [navigation]);
+
+  // ============================================================
+  // 🛒 ADD TO CART / BOOK BUTTON HANDLER
+  // ============================================================
+  const handleAddToCart = useCallback(() => {
+    if (!currentOpportunity) return;
+    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    if (!isAuthenticated) {
+      Alert.alert(
+        'Join Munolink',
+        'Create a free account to make purchases.',
+        [
+          { text: 'Continue Browsing', style: 'cancel' },
+          { text: 'Join Now', onPress: () => navigation.navigate('Join') },
+        ]
+      );
+      return;
+    }
+
+    const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
+    
+    if (isService) {
+      if (user?.id) {
+        recommendationService.trackInteraction(
+          user.id,
+          currentOpportunity.id,
+          'purchase',
+          mapItemType(currentOpportunity.type)
+        );
+      }
+      Alert.alert(
+        '📅 Booking Request',
+        `Would you like to book "${currentOpportunity.title}"?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Book Now',
+            onPress: () => {
+              console.log('📅 Booking:', currentOpportunity.title);
+              navigation.navigate('Booking', {
+                opportunity: currentOpportunity,
+              });
+            }
+          }
+        ]
+      );
+    } else {
+      if (user?.id) {
+        recommendationService.trackInteraction(
+          user.id,
+          currentOpportunity.id,
+          'purchase',
+          mapItemType(currentOpportunity.type)
+        );
+      }
+      Alert.alert(
+        '🛒 Added to Cart',
+        `${currentOpportunity.title} has been added to your cart!`,
+        [
+          { text: 'Continue Shopping', style: 'cancel' },
+          { 
+            text: 'View Cart',
+            onPress: () => {
+              console.log('🛒 View Cart');
+              navigation.navigate('Cart');
+            }
+          }
+        ]
+      );
+    }
+  }, [currentOpportunity, isAuthenticated, user?.id, navigation]);
 
   // --- Navigate Up/Down ---
   const scrollToIndex = (index: number) => {
@@ -473,6 +577,37 @@ export const FeedScreen = ({ navigation }: any) => {
     );
   }, [uniqueOpportunities, currentIndex, navigation, handleReviewsPress, handleSharePress, handleSavePress, handleAIPress, handleDirectionsPress]);
 
+  // ============================================================
+  // 🛒 RENDER ACTION BUTTON - Centered, Raised
+  // ============================================================
+  const renderActionButton = () => {
+  if (!currentOpportunity) return null;
+
+  const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
+  const buttonLabel = isService ? 'Book' : 'Add to Cart';
+  const iconName = isService ? 'calendar-outline' : 'cart-outline';
+
+  return (
+    <View style={styles.buttonWrapper}>
+      <TouchableOpacity
+        style={styles.actionButton}
+        onPress={handleAddToCart}
+        activeOpacity={0.85}
+      >
+        <LinearGradient
+          colors={isService ? ['#6C5CE7', '#A855F7'] : ['#4A7DFF', '#6C5CE7']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.actionButtonGradient}
+        >
+          <Ionicons name={iconName as any} size={14} color="#FFFFFF" />
+          <Text style={styles.actionButtonText}>{buttonLabel}</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
+  };
+
   // --- Loading States ---
   if (isLoading || queryLoading || isApplyingRecommendations) {
     return (
@@ -511,116 +646,36 @@ export const FeedScreen = ({ navigation }: any) => {
     );
   }
 
-  // --- Desktop ---
-  if (isDesktop) {
-    return (
-      <ResponsiveLayout
-        currentRoute="Feed"
-        onNavigate={(route) => navigation.navigate(route)}
-        floatingActions={renderFloatingActions()}
-        desktopNavArrows={renderDesktopNavArrows()}
-        selectedOpportunity={uniqueOpportunities[currentIndex] || null}
-        onReviewsPress={handleReviewsPress}
-        onShowMorePress={handleShowMorePress}
-        onSharePress={handleSharePress}
-        onAIPress={handleAIPress}
-        featuredOpportunities={featuredOpportunities}
-        contextPanelView={contextPanelView}
-        onContextPanelViewChange={setContextPanelView}
-        selectedProductId={selectedProductId}
-        selectedProductTitle={selectedProductTitle}
-        selectedOpportunityForModal={selectedOpportunity}
-        aiViewActive={aiViewActive}
-        onAIClose={handleCloseAI}
-        aiContextHint={aiContextHint}
-        onCloseReviews={() => {
-          setContextPanelView(null);
-          setSelectedProductId('');
-          setSelectedProductTitle('');
-        }}
-        onCloseDetails={() => {
-          setContextPanelView(null);
-          setSelectedOpportunity(null);
-        }}
-      >
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <BottomSheetModalProvider>
-            <SafeAreaView style={[styles.container, { height }]}>
-              <StatusBar barStyle="light-content" />
-
-              <FlatList
-                ref={flatListRef}
-                data={uniqueOpportunities}
-                renderItem={renderItem}
-                keyExtractor={(item, index) => `desktop-${item.id}-${index}`}
-                showsVerticalScrollIndicator={false}
-                snapToInterval={height}
-                snapToAlignment="start"
-                decelerationRate="fast"
-                viewabilityConfig={viewabilityConfig}
-                onViewableItemsChanged={handleViewableItemsChanged}
-                getItemLayout={(data, index) => ({
-                  length: height,
-                  offset: height * index,
-                  index,
-                })}
-                initialScrollIndex={currentIndex}
-                removeClippedSubviews={true}
-                maxToRenderPerBatch={3}
-                windowSize={5}
-                onScrollToIndexFailed={() => {}}
-                scrollEventThrottle={16}
-                style={{ flex: 1, backgroundColor: '#0D0D1A' }}
-                pagingEnabled={false}
-                disableIntervalMomentum={false}
-              />
-
-              <ReviewsBottomSheet
-                visible={showReviewsModal}
-                productId={selectedProductId}
-                productTitle={selectedProductTitle}
-                onClose={() => {
-                  setShowReviewsModal(false);
-                  setSelectedProductId('');
-                  setSelectedProductTitle('');
-                }}
-              />
-
-              <SimpleDetailsModal
-                visible={showDetailsModal}
-                opportunity={selectedOpportunity}
-                onClose={() => {
-                  setShowDetailsModal(false);
-                  setSelectedOpportunity(null);
-                }}
-              />
-
-              {showGuestPrompt && (
-                <View style={styles.guestPromptOverlay}>
-                  <GuestPromptCard
-                    onJoinPress={() => {
-                      setShowGuestPrompt(false);
-                      navigation.navigate('Join');
-                    }}
-                    onContinuePress={() => {
-                      setShowGuestPrompt(false);
-                    }}
-                  />
-                </View>
-              )}
-            </SafeAreaView>
-          </BottomSheetModalProvider>
-        </GestureHandlerRootView>
-      </ResponsiveLayout>
-    );
-  }
-
-  // --- Mobile ---
+  // --- Main Render ---
   return (
     <ResponsiveLayout
       currentRoute="Feed"
       onNavigate={(route) => navigation.navigate(route)}
       floatingActions={renderFloatingActions()}
+      desktopNavArrows={renderDesktopNavArrows()}
+      selectedOpportunity={uniqueOpportunities[currentIndex] || null}
+      onReviewsPress={handleReviewsPress}
+      onShowMorePress={handleShowMorePress}
+      onSharePress={handleSharePress}
+      onAIPress={handleAIPress}
+      featuredOpportunities={featuredOpportunities}
+      contextPanelView={contextPanelView}
+      onContextPanelViewChange={setContextPanelView}
+      selectedProductId={selectedProductId}
+      selectedProductTitle={selectedProductTitle}
+      selectedOpportunityForModal={selectedOpportunity}
+      aiViewActive={aiViewActive}
+      onAIClose={handleCloseAI}
+      aiContextHint={aiContextHint}
+      onCloseReviews={() => {
+        setContextPanelView(null);
+        setSelectedProductId('');
+        setSelectedProductTitle('');
+      }}
+      onCloseDetails={() => {
+        setContextPanelView(null);
+        setSelectedOpportunity(null);
+      }}
     >
       <GestureHandlerRootView style={{ flex: 1 }}>
         <BottomSheetModalProvider>
@@ -666,10 +721,10 @@ export const FeedScreen = ({ navigation }: any) => {
               ref={flatListRef}
               data={uniqueOpportunities}
               renderItem={renderItem}
-              keyExtractor={(item, index) => `mobile-${item.id}-${index}`}
-              pagingEnabled={true}
+              keyExtractor={(item, index) => `item-${item.id}-${index}`}
+              pagingEnabled={!isDesktop}
               showsVerticalScrollIndicator={false}
-              snapToInterval={height}
+              snapToInterval={isDesktop ? undefined : height}
               snapToAlignment="start"
               decelerationRate="fast"
               viewabilityConfig={viewabilityConfig}
@@ -681,11 +736,15 @@ export const FeedScreen = ({ navigation }: any) => {
               })}
               initialScrollIndex={currentIndex}
               removeClippedSubviews={true}
-              maxToRenderPerBatch={1}
-              windowSize={2}
+              maxToRenderPerBatch={isDesktop ? 3 : 1}
+              windowSize={isDesktop ? 5 : 2}
               onScrollToIndexFailed={() => {}}
               scrollEventThrottle={16}
+              style={{ flex: 1, backgroundColor: '#0D0D1A' }}
             />
+
+            {/* 🛒 ACTION BUTTON - Persistent across all scenes */}
+            {renderActionButton()}
 
             <ReviewsBottomSheet
               visible={showReviewsModal}
@@ -749,7 +808,7 @@ export const FeedScreen = ({ navigation }: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#05070f',
   },
   centered: {
     flex: 1,
@@ -851,5 +910,41 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     marginTop: 8,
     fontSize: 14,
+  },
+  // 🛒 Action Button Styles
+ buttonWrapper: {
+    position: 'absolute',
+    bottom: 220, // Raised higher
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+    paddingHorizontal: 24,
+  },
+  actionButton: {
+    borderRadius: 20, // More rounded
+    overflow: 'hidden',
+    width: 'auto',
+    maxWidth: 160,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  actionButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8, // Smaller padding
+    paddingHorizontal: 16, // Smaller padding
+    gap: 6,
+  },
+ actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12, // Smaller font
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
 });

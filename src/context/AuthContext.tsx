@@ -1,3 +1,5 @@
+// src/context/AuthContext.tsx
+
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
@@ -53,7 +55,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        // Check AsyncStorage for custom auth
         const token = await AsyncStorage.getItem('authToken');
         const userDataStr = await AsyncStorage.getItem('userData');
         
@@ -105,7 +106,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       console.log('🔑 Attempting to sign in with Google ID token');
       
-      // Sign in with Google using Supabase
       const { data, error } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
@@ -119,7 +119,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (data.user) {
         console.log('✅ Google user authenticated:', data.user.id);
         
-        // Get user data from Google
         const googleUser = data.user;
         const userData = {
           id: googleUser.id,
@@ -130,11 +129,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           isVerified: true,
         };
 
-        // Store in AsyncStorage
         await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
         await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
-        // Check if user exists in our users table, if not create them
+        // Check if user exists in our users table
         const { data: existingUser, error: userError } = await supabase
           .from('users')
           .select('*')
@@ -157,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: 'customer',
               wallet_balance: 0,
               lifetime_savings: 0,
+              kyc_verified: false,
             });
 
           if (insertError) {
@@ -181,7 +180,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Sign in with Google - triggers the OAuth flow
   const signInWithGoogle = async () => {
     try {
       console.log('🚀 Starting Google sign-in...');
@@ -192,19 +190,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Simple sign in with phone - stores in AsyncStorage
+  // ✅ FIXED: Sign in with phone - creates user in database
   const signInWithPhone = async (phone: string): Promise<void> => {
     console.log('📝 Signing in with phone (custom auth):', phone);
     try {
+      // Clean phone number
+      const cleanPhone = phone.replace(/\s/g, '');
+      const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
+      
       const userId = generateUUID();
       const userData = {
         id: userId,
-        phone: phone,
+        phone: fullPhone,
         created_at: new Date().toISOString(),
         name: 'Munolink Member',
         isVerified: true,
+        full_name: 'Munolink Member',
+        role: 'customer',
+        wallet_balance: 0,
+        lifetime_savings: 0,
       };
 
+      // Check if user already exists with this phone number
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('phone_number', fullPhone)
+        .maybeSingle();
+
+      if (existingUser) {
+        console.log('✅ User already exists with ID:', existingUser.id);
+        userData.id = existingUser.id;
+        
+        await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+        await AsyncStorage.setItem('userData', JSON.stringify(userData));
+
+        setUser(userData);
+        setIsAuthenticated(true);
+        setIsGuest(false);
+        
+        console.log('✅ Existing user signed in successfully with ID:', userData.id);
+        return;
+      }
+
+      // Create new user in the database
+      console.log('📝 Creating new user in database...');
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          phone_number: fullPhone,
+          full_name: 'Munolink Member',
+          role: 'customer',
+          wallet_balance: 0,
+          lifetime_savings: 0,
+          kyc_verified: false,
+          created_at: new Date().toISOString(),
+        });
+
+      if (insertError) {
+        console.error('❌ Error creating user in database:', insertError);
+        throw insertError;
+      } else {
+        console.log('✅ User created in database successfully');
+      }
+
+      // Store in AsyncStorage
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
@@ -212,19 +263,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAuthenticated(true);
       setIsGuest(false);
       
-      console.log('✅ User signed in successfully with ID:', userId);
+      console.log('✅ User signed in successfully with ID:', userData.id);
     } catch (error) {
       console.error('❌ Sign in error:', error);
       throw error;
     }
   };
 
-  // Legacy sign in method
   const signIn = async (userData: any): Promise<void> => {
     console.log('📝 Signing in user:', userData);
     try {
       if (!userData.id) {
         userData.id = generateUUID();
+      }
+      
+      const phoneNumber = userData.phone || userData.phone_number || '';
+      
+      // Check if user exists
+      const { data: existingUser, error: checkError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('phone_number', phoneNumber)
+        .maybeSingle();
+
+      if (!existingUser && phoneNumber) {
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: userData.id,
+            phone_number: phoneNumber,
+            full_name: userData.full_name || userData.name || 'Munolink Member',
+            role: 'customer',
+            wallet_balance: 0,
+            lifetime_savings: 0,
+            kyc_verified: false,
+            created_at: new Date().toISOString(),
+          });
+
+        if (insertError) {
+          console.error('Error creating user in database:', insertError);
+        }
+      } else if (existingUser) {
+        userData.id = existingUser.id;
       }
       
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
@@ -244,7 +324,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOut = async (): Promise<void> => {
     setIsLoading(true);
     try {
-      // Sign out from Supabase as well
       await supabase.auth.signOut();
       
       await AsyncStorage.removeItem('authToken');

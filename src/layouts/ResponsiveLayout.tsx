@@ -14,7 +14,6 @@ interface Props {
   hideContextPanel?: boolean;
   fullWidth?: boolean;
   desktopNavArrows?: ReactNode;
-  // Context Panel props
   selectedOpportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
@@ -23,17 +22,14 @@ interface Props {
   featuredOpportunities?: Opportunity[];
   contextPanelView?: 'details' | 'reviews' | 'directions' | null;
   onContextPanelViewChange?: (view: 'details' | 'reviews' | 'directions' | null) => void;
-  // Modal props for Context Panel
   selectedProductId?: string;
   selectedProductTitle?: string;
   selectedOpportunityForModal?: Opportunity | null;
   onCloseReviews?: () => void;
   onCloseDetails?: () => void;
-  // AI props
   aiViewActive?: boolean;
   onAIClose?: () => void;
   aiContextHint?: string;
-  // Directions props
   directionsViewActive?: boolean;
   onDirectionsClose?: () => void;
 }
