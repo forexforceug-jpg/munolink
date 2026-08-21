@@ -25,7 +25,7 @@ export const recommendationService = {
   async trackInteraction(
     userId: string,
     itemId: string,
-    action: 'view' | 'save' | 'share' | 'purchase',
+    action: 'view' | 'save' | 'share' | 'purchase' | 'booking',
     itemType?: string
   ): Promise<void> {
     try {

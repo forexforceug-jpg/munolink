@@ -1,6 +1,6 @@
 // src/features/account/AccountScreen.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,24 +11,20 @@ import {
   Image,
   Dimensions,
   StatusBar,
-  Switch,
-  Alert,
   ActivityIndicator,
+  Alert,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../../navigation/RootNavigator';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { supabase } from '../../lib/supabase';
+import * as ImagePicker from 'expo-image-picker';
 
 const { width, height } = Dimensions.get('window');
-
-type AccountScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 // --- Types ---
 interface UserProfile {
@@ -52,45 +48,39 @@ interface Shop {
   logo_url: string | null;
 }
 
-// --- Quick Access Shortcuts ---
-const shortcuts = [
-  { id: 'orders', icon: '📦', label: 'My Orders' },
-  { id: 'bookings', icon: '📅', label: 'My Bookings' },
-  { id: 'wishlist', icon: '❤️', label: 'Wishlist' },
-  { id: 'saved', icon: '📍', label: 'Saved Places' },
-];
-
 // --- Menu Items ---
 const menuItems = [
-  { id: 'profile', icon: 'person-outline', label: 'Profile Information', subtitle: 'Edit personal details and preferences' },
-  { id: 'payments', icon: 'card-outline', label: 'Payment Methods', subtitle: 'Manage mobile money, cards & bank accounts' },
-  { id: 'addresses', icon: 'location-outline', label: 'Addresses', subtitle: 'Manage delivery and service locations' },
-  { id: 'orders', icon: 'cube-outline', label: 'My Orders', subtitle: 'View order history and track purchases' },
-  { id: 'bookings', icon: 'calendar-outline', label: 'My Bookings', subtitle: 'Manage service appointments and reservations' },
-  { id: 'wishlist', icon: 'heart-outline', label: 'Wishlist & Collections', subtitle: 'Access saved products and services' },
-  { id: 'start_business', icon: 'rocket-outline', label: 'Start a Business', subtitle: 'Sell products or offer services on Munolink' },
-  { id: 'sell', icon: 'storefront-outline', label: 'Sell on Munolink', subtitle: 'Manage your shop or service business' },
-  { id: 'help', icon: 'help-circle-outline', label: 'Help & Support', subtitle: 'FAQs, customer support & assistance' },
+  { 
+    id: 'profile', 
+    icon: 'person-outline', 
+    label: 'Profile Settings', 
+    subtitle: 'Edit your personal information and avatar',
+    route: 'Profile'
+  },
+  { 
+    id: 'start_business', 
+    icon: 'rocket-outline', 
+    label: 'Start a Business', 
+    subtitle: 'Sell products or offer services on Munolink',
+    route: 'BusinessRegistration'
+  },
+  { 
+    id: 'sell', 
+    icon: 'storefront-outline', 
+    label: 'Sell on Munolink', 
+    subtitle: 'Manage your shop or service business',
+    route: 'BusinessDashboard'
+  },
+  { 
+    id: 'help', 
+    icon: 'help-circle-outline', 
+    label: 'Help & Support', 
+    subtitle: 'FAQs, customer support & assistance',
+    route: 'HelpSupport'
+  },
 ];
 
 // --- Sub-components ---
-
-// Shortcut Item
-const ShortcutItem = ({ item, count }: any) => (
-  <TouchableOpacity style={styles.shortcutItem}>
-    <View style={styles.shortcutIcon}>
-      <Text style={styles.shortcutIconText}>{item.icon}</Text>
-      {count > 0 && (
-        <View style={styles.shortcutBadge}>
-          <Text style={styles.shortcutBadgeText}>{count}</Text>
-        </View>
-      )}
-    </View>
-    <Text style={styles.shortcutLabel}>{item.label}</Text>
-  </TouchableOpacity>
-);
-
-// Menu Item
 const MenuItem = ({ item, onPress }: any) => (
   <TouchableOpacity style={styles.menuItem} onPress={() => onPress(item.id)}>
     <View style={styles.menuIconContainer}>
@@ -121,31 +111,35 @@ const GuestProfile = ({ navigation }: any) => (
   </View>
 );
 
-// --- Desktop Account Content ---
-const DesktopAccountContent = ({ navigation }: any) => {
-  const { user, isAuthenticated } = useAuth();
+// ============================================================
+// MAIN ACCOUNT CONTENT
+// ============================================================
+const AccountContent = ({ navigation }: any) => {
+  const { user, isAuthenticated, logout } = useAuth();
+  const { isDesktop } = useBreakpoint();
+  
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userShops, setUserShops] = useState<Shop[]>([]);
   const [showBalance, setShowBalance] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const [stats, setStats] = useState({
     totalOrders: 0,
     totalReviews: 0,
     joinedYear: new Date().getFullYear(),
   });
 
-  useEffect(() => {
-    if (isAuthenticated && user?.id) {
-      fetchUserData();
-    } else {
+  // --- Fetch User Data ---
+  const fetchUserData = useCallback(async () => {
+    if (!user?.id) {
       setLoading(false);
+      return;
     }
-  }, [isAuthenticated, user?.id]);
 
-  const fetchUserData = async () => {
     try {
       setLoading(true);
-      const userId = user?.id;
+      const userId = user.id;
 
       const { data: profile, error: profileError } = await supabase
         .from('users')
@@ -154,7 +148,32 @@ const DesktopAccountContent = ({ navigation }: any) => {
         .maybeSingle();
 
       if (profileError) throw profileError;
-      setUserProfile(profile);
+      
+      if (profile) {
+        setUserProfile({
+          id: profile.id,
+          full_name: profile.full_name,
+          phone_number: profile.phone_number,
+          avatar_url: profile.avatar_url || null,
+          role: profile.role,
+          wallet_balance: profile.wallet_balance,
+          lifetime_savings: profile.lifetime_savings,
+          kyc_verified: profile.kyc_verified,
+          created_at: profile.created_at,
+        });
+      } else {
+        setUserProfile({
+          id: userId,
+          full_name: user.full_name || 'User',
+          phone_number: user.phone || '',
+          avatar_url: null,
+          role: 'customer',
+          wallet_balance: 0,
+          lifetime_savings: 0,
+          kyc_verified: false,
+          created_at: new Date().toISOString(),
+        });
+      }
 
       const { data: shops, error: shopsError } = await supabase
         .from('shops')
@@ -172,344 +191,448 @@ const DesktopAccountContent = ({ navigation }: any) => {
       console.error('Error fetching user data:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchUserData();
+  }, [fetchUserData]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchUserData();
+  };
+
+  // --- Upload Avatar ---
+  const pickImage = async () => {
+    try {
+      if (Platform.OS === 'web') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.jpg,.jpeg,.png';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+
+        const fileSelected = new Promise((resolve, reject) => {
+          input.onchange = (e: any) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              const objectUrl = URL.createObjectURL(file);
+              resolve({
+                uri: objectUrl,
+                name: file.name || 'image.jpg',
+                mimeType: file.type || 'image/jpeg',
+                size: file.size || 0,
+                blob: file,
+              });
+            } else {
+              reject(new Error('No file selected'));
+            }
+            if (input.parentNode) input.parentNode.removeChild(input);
+          };
+          input.oncancel = () => {
+            reject(new Error('Cancelled'));
+            if (input.parentNode) input.parentNode.removeChild(input);
+          };
+        });
+
+        input.click();
+        const fileData = await fileSelected as any;
+        await uploadAvatar(fileData);
+        return;
+      }
+
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        aspect: [1, 1],
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        const file = {
+          uri: asset.uri,
+          name: asset.fileName || `avatar_${Date.now()}.jpg`,
+          mimeType: asset.mimeType || 'image/jpeg',
+          size: asset.fileSize || 0,
+        };
+        await uploadAvatar(file);
+      }
+    } catch (error: any) {
+      if (error.message !== 'Cancelled') {
+        console.error('Image pick error:', error);
+        Alert.alert('Error', 'Failed to select image. Please try again.');
+      }
     }
   };
 
-  const handleMenuItemPress = (id: string) => {
-    console.log('🔗 Menu item pressed:', id);
-    if (id === 'start_business') {
-      navigation.navigate('BusinessRegistration');
+  // --- Upload Avatar to Storage ---
+  const uploadAvatar = async (file: any) => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please sign in first');
       return;
     }
-    Alert.alert('Navigation', `Navigating to ${id}`);
+
+    setUploading(true);
+    try {
+      console.log('📤 Uploading avatar...');
+
+      let base64Data = '';
+      
+      if (Platform.OS === 'web' && file.blob) {
+        const reader = new FileReader();
+        base64Data = await new Promise((resolve, reject) => {
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1] || result);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file.blob);
+        });
+      } else if (file.uri) {
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        const reader = new FileReader();
+        base64Data = await new Promise((resolve, reject) => {
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1] || result);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      const mimeType = file.mimeType || 'image/jpeg';
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
+      const bucket = 'avatars';
+      const path = `${user.id}/avatar_${Date.now()}.jpg`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(path, dataUrl, {
+          contentType: mimeType,
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw uploadError;
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(path);
+
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ avatar_url: publicUrl })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('Update error:', updateError);
+        throw updateError;
+      }
+
+      setUserProfile(prev => prev ? { ...prev, avatar_url: publicUrl } : null);
+
+      Alert.alert('Success', 'Avatar updated successfully!');
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      Alert.alert('Error', error.message || 'Failed to upload avatar');
+    } finally {
+      setUploading(false);
+    }
   };
 
+  // --- Handle Menu Item Press ---
+  const handleMenuItemPress = (id: string) => {
+    console.log('🔗 Menu item pressed:', id);
+    
+    switch (id) {
+      case 'profile':
+        navigation.navigate('Profile');
+        break;
+      case 'start_business':
+        navigation.navigate('BusinessRegistration');
+        break;
+      case 'sell':
+        navigation.navigate('BusinessDashboard');
+        break;
+      case 'help':
+        navigation.navigate('HelpSupport');
+        break;
+      default:
+        Alert.alert('Coming Soon', 'This feature will be available soon.');
+    }
+  };
+
+  // --- Handle Logout ---
   const handleLogout = () => {
     Alert.alert(
       'Log Out',
       'Are you sure you want to log out?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Log Out', style: 'destructive' },
+        { 
+          text: 'Log Out', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await logout();
+              navigation.replace('Join');
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to log out. Please try again.');
+            }
+          }
+        },
       ]
     );
   };
 
+  // --- Render Avatar Upload Option ---
+  const renderAvatarUpload = () => {
+    const avatarUrl = userProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.full_name || 'User')}&background=4A7DFF&color=fff&size=200`;
+    const isVerified = userProfile?.kyc_verified || false;
+
+    return (
+      <View style={styles.profileSection}>
+        <View style={styles.profileLeft}>
+          <TouchableOpacity 
+            style={styles.profileImageContainer} 
+            onPress={pickImage}
+            disabled={uploading}
+            activeOpacity={0.8}
+          >
+            <Image source={{ uri: avatarUrl }} style={styles.profileImage} />
+            <View style={styles.cameraButton}>
+              {uploading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Ionicons name="camera" size={14} color="#FFFFFF" />
+              )}
+            </View>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.profileInfo}>
+          <View style={styles.profileNameRow}>
+            <Text style={styles.profileName}>{userProfile?.full_name || 'User'}</Text>
+            {isVerified && (
+              <View style={styles.verifiedBadge}>
+                <Text style={styles.verifiedBadgeText}>✓</Text>
+              </View>
+            )}
+          </View>
+          <View style={styles.profileDetail}>
+            <Ionicons name="call-outline" size={14} color="#8A8AAE" />
+            <Text style={styles.profileDetailText}>{userProfile?.phone_number || 'No phone'}</Text>
+          </View>
+          <View style={styles.profileDetail}>
+            <Ionicons name="briefcase-outline" size={14} color="#8A8AAE" />
+            <Text style={styles.profileDetailText}>
+              {userShops.length > 0 ? `${userShops.length} Business${userShops.length > 1 ? 'es' : ''}` : 'No business yet'}
+            </Text>
+          </View>
+          <Text style={styles.profileJoined}>Joined {stats.joinedYear}</Text>
+        </View>
+      </View>
+    );
+  };
+
+  // --- Render Wallet Card ---
+  const renderWalletCard = () => {
+    const walletBalance = userProfile?.wallet_balance || 0;
+    const lifetimeSavings = userProfile?.lifetime_savings || 0;
+
+    return (
+      <TouchableOpacity style={styles.walletCard}>
+        <LinearGradient
+          colors={['#4A7DFF', '#6B94FF']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.walletGradient}
+        >
+          <View style={styles.walletHeader}>
+            <Text style={styles.walletTitle}>Munolink Wallet</Text>
+            <Text style={styles.walletView}>View Wallet ›</Text>
+          </View>
+          <View style={styles.walletBalanceRow}>
+            <View style={styles.walletBalanceContainer}>
+              <Text style={styles.walletBalanceLabel}>Available Balance</Text>
+              <View style={styles.walletBalanceRow}>
+                <Text style={styles.walletBalance}>
+                  {showBalance ? `UGX ${walletBalance.toLocaleString()}` : '••••••'}
+                </Text>
+                <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
+                  <Ionicons 
+                    name={showBalance ? 'eye-outline' : 'eye-off-outline'} 
+                    size={20} 
+                    color="rgba(255,255,255,0.7)" 
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.addMoneyButton}>
+              <Text style={styles.addMoneyText}>+ Add Money</Text>
+            </TouchableOpacity>
+          </View>
+          {lifetimeSavings > 0 && (
+            <View style={styles.lifetimeSavingsContainer}>
+              <Text style={styles.lifetimeSavingsLabel}>💰 Lifetime Savings</Text>
+              <Text style={styles.lifetimeSavingsValue}>UGX {lifetimeSavings.toLocaleString()}</Text>
+            </View>
+          )}
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  };
+
+  // --- Render Menu Items ---
+  const renderMenuItems = () => (
+    <View style={styles.menuContainer}>
+      {menuItems.map((item) => (
+        <MenuItem key={item.id} item={item} onPress={handleMenuItemPress} />
+      ))}
+    </View>
+  );
+
+  // --- Render Business Card ---
+  const renderBusinessCard = () => {
+    if (userShops.length === 0) {
+      return null; // Don't show anything if no business
+    }
+
+    return (
+      <View style={styles.businessCard}>
+        <LinearGradient
+          colors={['#1A2A4F', '#2A3F6F']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.businessGradient}
+        >
+          <View style={styles.businessHeader}>
+            <Text style={styles.businessTitle}>🏪 My Business</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('BusinessDashboard')}>
+              <Text style={styles.businessManage}>Manage ›</Text>
+            </TouchableOpacity>
+          </View>
+          {userShops.map((shop) => (
+            <View key={shop.id} style={styles.businessItem}>
+              <View style={styles.businessItemLeft}>
+                <Text style={styles.businessItemName}>{shop.name}</Text>
+                {shop.is_verified && (
+                  <View style={styles.verifiedBadge}>
+                    <Text style={styles.verifiedBadgeText}>✓</Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.businessItemRight}>
+                {shop.rating && (
+                  <Text style={styles.businessItemRating}>⭐ {shop.rating.toFixed(1)}</Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </LinearGradient>
+      </View>
+    );
+  };
+
+  // --- Loading State ---
   if (loading) {
     return (
-      <View style={styles.desktopCentered}>
+      <View style={[styles.loadingContainer, isDesktop && styles.desktopContainer]}>
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading your account...</Text>
       </View>
     );
   }
 
+  // --- Guest View ---
   if (!isAuthenticated) {
     return (
-      <View style={styles.desktopContainer}>
-        <View style={styles.desktopGuestWrapper}>
+      <View style={[styles.container, isDesktop && styles.desktopContainer]}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F8F9FC" />
+        <ScrollView 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.scrollContent, isDesktop && styles.desktopScrollContent]}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
           <GuestProfile navigation={navigation} />
-          <View style={styles.desktopMenuGrid}>
-            <View style={styles.menuContainer}>
-              <View style={styles.menuItem}>
-                <View style={styles.menuIconContainer}>
-                  <Ionicons name="language-outline" size={22} color="#4A7DFF" />
-                </View>
-                <View style={styles.menuContent}>
-                  <Text style={styles.menuLabel}>Language</Text>
-                  <Text style={styles.menuSubtitle}>English</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+          
+          {/* Guest Menu Items */}
+          <View style={styles.menuContainer}>
+            <View style={styles.menuItem}>
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="language-outline" size={22} color="#4A7DFF" />
               </View>
-              <View style={styles.menuItem}>
-                <View style={styles.menuIconContainer}>
-                  <Ionicons name="location-outline" size={22} color="#4A7DFF" />
-                </View>
-                <View style={styles.menuContent}>
-                  <Text style={styles.menuLabel}>Location</Text>
-                  <Text style={styles.menuSubtitle}>Jinja, Uganda</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              <View style={styles.menuContent}>
+                <Text style={styles.menuLabel}>Language</Text>
+                <Text style={styles.menuSubtitle}>English</Text>
               </View>
-              <View style={styles.menuItem}>
-                <View style={styles.menuIconContainer}>
-                  <Ionicons name="moon-outline" size={22} color="#4A7DFF" />
-                </View>
-                <View style={styles.menuContent}>
-                  <Text style={styles.menuLabel}>Appearance</Text>
-                  <Text style={styles.menuSubtitle}>System Default</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+            </View>
+            <View style={styles.menuItem}>
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="help-circle-outline" size={22} color="#4A7DFF" />
               </View>
-              <View style={styles.menuItem}>
-                <View style={styles.menuIconContainer}>
-                  <Ionicons name="notifications-outline" size={22} color="#4A7DFF" />
-                </View>
-                <View style={styles.menuContent}>
-                  <Text style={styles.menuLabel}>Notifications</Text>
-                  <Text style={styles.menuSubtitle}>On</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+              <View style={styles.menuContent}>
+                <Text style={styles.menuLabel}>Help & Support</Text>
+                <Text style={styles.menuSubtitle}>FAQs and customer support</Text>
               </View>
+              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
+            </View>
+            <View style={styles.menuItem}>
+              <View style={styles.menuIconContainer}>
+                <Ionicons name="information-circle-outline" size={22} color="#4A7DFF" />
+              </View>
+              <View style={styles.menuContent}>
+                <Text style={styles.menuLabel}>About Munolink</Text>
+                <Text style={styles.menuSubtitle}>Version 1.0.0</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
             </View>
           </View>
-        </View>
+
+          <TouchableOpacity style={styles.signInPrompt} onPress={() => navigation.navigate('Join')}>
+            <Text style={styles.signInPromptText}>Sign in to access more features</Text>
+          </TouchableOpacity>
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
       </View>
     );
   }
 
-  const displayName = userProfile?.full_name || user?.name || 'User';
-  const displayPhone = userProfile?.phone_number || user?.phone || '';
-  const avatarUrl = userProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4A7DFF&color=fff&size=100`;
-  const isVerified = userProfile?.kyc_verified || false;
-  const walletBalance = userProfile?.wallet_balance || 0;
-  const lifetimeSavings = userProfile?.lifetime_savings || 0;
-  const shopCount = userShops.length;
-  const hasBusiness = shopCount > 0;
-
+  // ============================================================
+  // MAIN RENDER (Desktop & Mobile)
+  // ============================================================
   return (
-    <View style={styles.desktopContainer}>
+    <View style={[styles.container, isDesktop && styles.desktopContainer]}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8F9FC" />
-      
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.desktopScrollContent}
-      >
-        {/* Desktop Grid Layout */}
-        <View style={styles.desktopGrid}>
-          {/* Left Column - Profile & Wallet */}
-          <View style={styles.desktopLeftColumn}>
-            {/* Profile Section */}
-            <View style={styles.desktopProfileSection}>
-              <View style={styles.profileSection}>
-                <View style={styles.profileLeft}>
-                  <View style={styles.profileImageContainer}>
-                    <Image source={{ uri: avatarUrl }} style={styles.profileImage} />
-                    <TouchableOpacity style={styles.cameraButton}>
-                      <Ionicons name="camera" size={14} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={styles.profileInfo}>
-                  <View style={styles.profileNameRow}>
-                    <Text style={styles.profileName}>{displayName}</Text>
-                    {isVerified && (
-                      <View style={styles.verifiedBadge}>
-                        <Text style={styles.verifiedBadgeText}>✓</Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.profileDetail}>
-                    <Ionicons name="call-outline" size={14} color="#8A8AAE" />
-                    <Text style={styles.profileDetailText}>{displayPhone}</Text>
-                  </View>
-                  <View style={styles.profileDetail}>
-                    <Ionicons name="briefcase-outline" size={14} color="#8A8AAE" />
-                    <Text style={styles.profileDetailText}>
-                      {hasBusiness ? `${shopCount} Business${shopCount > 1 ? 'es' : ''}` : 'No business yet'}
-                    </Text>
-                  </View>
-                  <Text style={styles.profileJoined}>Joined {stats.joinedYear}</Text>
-                </View>
-              </View>
-            </View>
 
-            {/* Wallet Card */}
-            <TouchableOpacity style={styles.desktopWalletCard}>
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.walletGradient}
-              >
-                <View style={styles.walletHeader}>
-                  <Text style={styles.walletTitle}>Munolink Wallet</Text>
-                  <Text style={styles.walletView}>View Wallet ›</Text>
-                </View>
-                <View style={styles.walletBalanceRow}>
-                  <View style={styles.walletBalanceContainer}>
-                    <Text style={styles.walletBalanceLabel}>Available Balance</Text>
-                    <View style={styles.walletBalanceRow}>
-                      <Text style={styles.walletBalance}>
-                        {showBalance ? `UGX ${walletBalance.toLocaleString()}` : '••••••'}
-                      </Text>
-                      <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
-                        <Ionicons 
-                          name={showBalance ? 'eye-outline' : 'eye-off-outline'} 
-                          size={20} 
-                          color="rgba(255,255,255,0.7)" 
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <TouchableOpacity style={styles.addMoneyButton}>
-                    <Text style={styles.addMoneyText}>+ Add Money</Text>
-                  </TouchableOpacity>
-                </View>
-                {lifetimeSavings > 0 && (
-                  <View style={styles.lifetimeSavingsContainer}>
-                    <Text style={styles.lifetimeSavingsLabel}>💰 Lifetime Savings</Text>
-                    <Text style={styles.lifetimeSavingsValue}>UGX {lifetimeSavings.toLocaleString()}</Text>
-                  </View>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-
-            {/* Quick Access Shortcuts - Desktop */}
-            <View style={styles.desktopShortcutsContainer}>
-              {shortcuts.map((item) => (
-                <ShortcutItem key={item.id} item={item} count={0} />
-              ))}
-            </View>
-          </View>
-
-          {/* Right Column - Menu Items */}
-          <View style={styles.desktopRightColumn}>
-            <View style={styles.menuContainer}>
-              {menuItems.map((item) => (
-                <MenuItem key={item.id} item={item} onPress={handleMenuItemPress} />
-              ))}
-            </View>
-
-            {/* Business Card */}
-            {hasBusiness && (
-              <View style={styles.businessCard}>
-                <LinearGradient
-                  colors={['#1A2A4F', '#2A3F6F']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.businessGradient}
-                >
-                  <View style={styles.businessHeader}>
-                    <Text style={styles.businessTitle}>🏪 My Business</Text>
-                    <TouchableOpacity onPress={() => navigation.navigate('BusinessDashboard')}>
-                      <Text style={styles.businessManage}>Manage ›</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {userShops.map((shop) => (
-                    <View key={shop.id} style={styles.businessItem}>
-                      <View style={styles.businessItemLeft}>
-                        <Text style={styles.businessItemName}>{shop.name}</Text>
-                        {shop.is_verified && (
-                          <View style={styles.verifiedBadge}>
-                            <Text style={styles.verifiedBadgeText}>✓</Text>
-                          </View>
-                        )}
-                      </View>
-                      <View style={styles.businessItemRight}>
-                        {shop.rating && (
-                          <Text style={styles.businessItemRating}>⭐ {shop.rating.toFixed(1)}</Text>
-                        )}
-                      </View>
-                    </View>
-                  ))}
-                </LinearGradient>
-              </View>
-            )}
-
-            {/* Log Out Button */}
-            <TouchableOpacity style={styles.desktopLogoutButton} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
-              <Text style={styles.logoutText}>Log Out</Text>
-            </TouchableOpacity>
-          </View>
+      {/* Desktop Header */}
+      {isDesktop && (
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopHeaderTitle}>Account</Text>
+          <Text style={styles.desktopHeaderSubtitle}>Manage your profile and settings</Text>
         </View>
-      </ScrollView>
-    </View>
-  );
-};
+      )}
 
-// --- Mobile Account Content ---
-const MobileAccountContent = ({ navigation }: any) => {
-  const { user, isAuthenticated } = useAuth();
-  const [loading, setLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [userShops, setUserShops] = useState<Shop[]>([]);
-  const [showBalance, setShowBalance] = useState(true);
-  const [stats, setStats] = useState({
-    totalOrders: 0,
-    totalReviews: 0,
-    joinedYear: new Date().getFullYear(),
-  });
-
-  useEffect(() => {
-    if (isAuthenticated && user?.id) {
-      fetchUserData();
-    } else {
-      setLoading(false);
-    }
-  }, [isAuthenticated, user?.id]);
-
-  const fetchUserData = async () => {
-    try {
-      setLoading(true);
-      const userId = user?.id;
-
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-      setUserProfile(profile);
-
-      const { data: shops, error: shopsError } = await supabase
-        .from('shops')
-        .select('id, name, is_verified, rating, review_count, logo_url')
-        .eq('owner_id', userId);
-
-      if (shopsError) throw shopsError;
-      setUserShops(shops || []);
-
-      if (profile?.created_at) {
-        const joinedDate = new Date(profile.created_at);
-        setStats(prev => ({ ...prev, joinedYear: joinedDate.getFullYear() }));
-      }
-    } catch (error) {
-      console.error('Error fetching user data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleMenuItemPress = (id: string) => {
-    console.log('🔗 Menu item pressed:', id);
-    if (id === 'start_business') {
-      navigation.navigate('BusinessRegistration');
-      return;
-    }
-    Alert.alert('Navigation', `Navigating to ${id}`);
-  };
-
-  const handleLogout = () => {
-    Alert.alert(
-      'Log Out',
-      'Are you sure you want to log out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Log Out', style: 'destructive' },
-      ]
-    );
-  };
-
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#4A7DFF" />
-          <Text style={styles.loadingText}>Loading your account...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
+      {/* Mobile Header */}
+      {!isDesktop && (
         <View style={styles.topBar}>
           <Text style={styles.logo}>Munolink</Text>
           <TouchableOpacity style={styles.locationContainer}>
@@ -526,299 +649,55 @@ const MobileAccountContent = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
         </View>
-
-        <ScrollView 
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-        >
-          <GuestProfile navigation={navigation} />
-
-          <View style={styles.menuContainer}>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="language-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>Language</Text>
-                <Text style={styles.menuSubtitle}>English</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="location-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>Location</Text>
-                <Text style={styles.menuSubtitle}>Jinja, Uganda</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="moon-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>Appearance</Text>
-                <Text style={styles.menuSubtitle}>System Default</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="notifications-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>Notifications</Text>
-                <Text style={styles.menuSubtitle}>On</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-          </View>
-
-          <View style={styles.menuContainer}>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="help-circle-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>Help & Support</Text>
-                <Text style={styles.menuSubtitle}>FAQs and customer support</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="document-text-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>Privacy Policy</Text>
-                <Text style={styles.menuSubtitle}>How we protect your data</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-            <View style={styles.menuItem}>
-              <View style={styles.menuIconContainer}>
-                <Ionicons name="information-circle-outline" size={22} color="#4A7DFF" />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuLabel}>About Munolink</Text>
-                <Text style={styles.menuSubtitle}>Version 1.0.0</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
-            </View>
-          </View>
-
-          <View style={styles.lockedFeatures}>
-            <Text style={styles.lockedTitle}>🔒 Unlock features:</Text>
-            <View style={styles.lockedRow}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8A8AAE" />
-              <Text style={styles.lockedText}>Wallet</Text>
-            </View>
-            <View style={styles.lockedRow}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8A8AAE" />
-              <Text style={styles.lockedText}>Orders</Text>
-            </View>
-            <View style={styles.lockedRow}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8A8AAE" />
-              <Text style={styles.lockedText}>Bookings</Text>
-            </View>
-            <View style={styles.lockedRow}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8A8AAE" />
-              <Text style={styles.lockedText}>Inbox</Text>
-            </View>
-            <View style={styles.lockedRow}>
-              <Ionicons name="lock-closed-outline" size={16} color="#8A8AAE" />
-              <Text style={styles.lockedText}>Business Tools</Text>
-            </View>
-          </View>
-
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  const displayName = userProfile?.full_name || user?.name || 'User';
-  const displayPhone = userProfile?.phone_number || user?.phone || '';
-  const avatarUrl = userProfile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=4A7DFF&color=fff&size=100`;
-  const isVerified = userProfile?.kyc_verified || false;
-  const walletBalance = userProfile?.wallet_balance || 0;
-  const lifetimeSavings = userProfile?.lifetime_savings || 0;
-  const shopCount = userShops.length;
-  const hasBusiness = shopCount > 0;
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
-      <View style={styles.topBar}>
-        <Text style={styles.logo}>Munolink</Text>
-        <TouchableOpacity style={styles.locationContainer}>
-          <Ionicons name="location-outline" size={16} color="#4A7DFF" />
-          <Text style={styles.locationText}>Jinja, Uganda</Text>
-          <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
-        </TouchableOpacity>
-        <View style={styles.topRight}>
-          <TouchableOpacity style={styles.topIcon}>
-            <Ionicons name="notifications-outline" size={22} color="#1F2F5F" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.topIcon}>
-            <Ionicons name="settings-outline" size={22} color="#1F2F5F" />
-          </TouchableOpacity>
-        </View>
-      </View>
+      )}
 
       <ScrollView 
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, isDesktop && styles.desktopScrollContent]}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
-        <View style={styles.profileSection}>
-          <View style={styles.profileLeft}>
-            <View style={styles.profileImageContainer}>
-              <Image source={{ uri: avatarUrl }} style={styles.profileImage} />
-              <TouchableOpacity style={styles.cameraButton}>
-                <Ionicons name="camera" size={14} color="#FFFFFF" />
+        {isDesktop ? (
+          <View style={styles.desktopGrid}>
+            <View style={styles.desktopLeftColumn}>
+              {renderAvatarUpload()}
+              {renderWalletCard()}
+            </View>
+
+            <View style={styles.desktopRightColumn}>
+              {renderMenuItems()}
+              {renderBusinessCard()}
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
+                <Text style={styles.logoutText}>Log Out</Text>
               </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.profileInfo}>
-            <View style={styles.profileNameRow}>
-              <Text style={styles.profileName}>{displayName}</Text>
-              {isVerified && (
-                <View style={styles.verifiedBadge}>
-                  <Text style={styles.verifiedBadgeText}>✓</Text>
-                </View>
-              )}
-            </View>
-            <View style={styles.profileDetail}>
-              <Ionicons name="call-outline" size={14} color="#8A8AAE" />
-              <Text style={styles.profileDetailText}>{displayPhone}</Text>
-            </View>
-            <View style={styles.profileDetail}>
-              <Ionicons name="briefcase-outline" size={14} color="#8A8AAE" />
-              <Text style={styles.profileDetailText}>
-                {hasBusiness ? `${shopCount} Business${shopCount > 1 ? 'es' : ''}` : 'No business yet'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <TouchableOpacity style={styles.walletCard}>
-          <LinearGradient
-            colors={['#4A7DFF', '#6B94FF']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.walletGradient}
-          >
-            <View style={styles.walletHeader}>
-              <Text style={styles.walletTitle}>Munolink Wallet</Text>
-              <Text style={styles.walletView}>View Wallet ›</Text>
-            </View>
-            <View style={styles.walletBalanceRow}>
-              <View style={styles.walletBalanceContainer}>
-                <Text style={styles.walletBalanceLabel}>Available Balance</Text>
-                <View style={styles.walletBalanceRow}>
-                  <Text style={styles.walletBalance}>
-                    {showBalance ? `UGX ${walletBalance.toLocaleString()}` : '••••••'}
-                  </Text>
-                  <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
-                    <Ionicons 
-                      name={showBalance ? 'eye-outline' : 'eye-off-outline'} 
-                      size={20} 
-                      color="rgba(255,255,255,0.7)" 
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <TouchableOpacity style={styles.addMoneyButton}>
-                <Text style={styles.addMoneyText}>+ Add Money</Text>
-              </TouchableOpacity>
-            </View>
-            {lifetimeSavings > 0 && (
-              <View style={styles.lifetimeSavingsContainer}>
-                <Text style={styles.lifetimeSavingsLabel}>💰 Lifetime Savings</Text>
-                <Text style={styles.lifetimeSavingsValue}>UGX {lifetimeSavings.toLocaleString()}</Text>
-              </View>
-            )}
-          </LinearGradient>
-        </TouchableOpacity>
-
-        <View style={styles.shortcutsContainer}>
-          {shortcuts.map((item) => (
-            <ShortcutItem key={item.id} item={item} count={0} />
-          ))}
-        </View>
-
-        <View style={styles.menuContainer}>
-          {menuItems.map((item) => (
-            <MenuItem key={item.id} item={item} onPress={handleMenuItemPress} />
-          ))}
-        </View>
-
-        {hasBusiness && (
-          <View style={styles.businessCard}>
-            <LinearGradient
-              colors={['#1A2A4F', '#2A3F6F']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.businessGradient}
-            >
-              <View style={styles.businessHeader}>
-                <Text style={styles.businessTitle}>🏪 My Business</Text>
-                <TouchableOpacity onPress={() => navigation.navigate('BusinessDashboard')}>
-                  <Text style={styles.businessManage}>Manage ›</Text>
-                </TouchableOpacity>
-              </View>
-              {userShops.map((shop) => (
-                <View key={shop.id} style={styles.businessItem}>
-                  <View style={styles.businessItemLeft}>
-                    <Text style={styles.businessItemName}>{shop.name}</Text>
-                    {shop.is_verified && (
-                      <View style={styles.verifiedBadge}>
-                        <Text style={styles.verifiedBadgeText}>✓</Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.businessItemRight}>
-                    {shop.rating && (
-                      <Text style={styles.businessItemRating}>⭐ {shop.rating.toFixed(1)}</Text>
-                    )}
-                  </View>
-                </View>
-              ))}
-            </LinearGradient>
-          </View>
+        ) : (
+          <>
+            {renderAvatarUpload()}
+            {renderWalletCard()}
+            {renderMenuItems()}
+            {renderBusinessCard()}
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+              <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
+              <Text style={styles.logoutText}>Log Out</Text>
+            </TouchableOpacity>
+          </>
         )}
-
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color="#E74C3C" />
-          <Text style={styles.logoutText}>Log Out</Text>
-        </TouchableOpacity>
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
-// --- Main AccountScreen Component ---
+// ============================================================
+// MAIN EXPORT
+// ============================================================
 export const AccountScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
-
-  if (isDesktop) {
-    return (
-      <ResponsiveLayout 
-        currentRoute="Account" 
-        onNavigate={(route) => navigation?.navigate(route)}
-        floatingActions={null}
-        hideContextPanel={true}
-        fullWidth={true}
-      >
-        <DesktopAccountContent navigation={navigation} />
-      </ResponsiveLayout>
-    );
-  }
 
   return (
     <ResponsiveLayout 
@@ -828,17 +707,24 @@ export const AccountScreen = ({ navigation }: any) => {
       hideContextPanel={true}
       fullWidth={true}
     >
-      <MobileAccountContent navigation={navigation} />
+      <AccountContent navigation={navigation} />
     </ResponsiveLayout>
   );
 };
 
+// ============================================================
+// STYLES (Keep all existing styles)
+// ============================================================
+// ... styles remain the same ...
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8F9FC',
   },
-  centered: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -849,9 +735,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 12,
   },
-  // ============================================================
-  // MOBILE STYLES
-  // ============================================================
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -895,7 +778,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 40,
   },
-  // Guest Profile
   guestProfile: {
     alignItems: 'center',
     paddingVertical: 24,
@@ -943,7 +825,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  // Profile Section
+  signInPrompt: {
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  signInPromptText: {
+    color: '#4A7DFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
   profileSection: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
@@ -1020,7 +910,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
-  // Wallet Card
   walletCard: {
     borderRadius: 16,
     overflow: 'hidden',
@@ -1096,51 +985,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // Shortcuts
-  shortcutsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingVertical: 14,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  shortcutItem: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  shortcutIcon: {
-    position: 'relative',
-  },
-  shortcutIconText: {
-    fontSize: 24,
-  },
-  shortcutBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -6,
-    backgroundColor: '#E74C3C',
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    minWidth: 16,
-    alignItems: 'center',
-  },
-  shortcutBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: 'bold',
-  },
-  shortcutLabel: {
-    color: '#8A8AAE',
-    fontSize: 10,
-  },
-  // Menu Items
   menuContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -1182,35 +1026,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 1,
   },
-  // Locked Features
-  lockedFeatures: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  lockedTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  lockedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 4,
-  },
-  lockedText: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  // Business Card
   businessCard: {
     borderRadius: 16,
     overflow: 'hidden',
@@ -1265,7 +1080,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
     fontSize: 13,
   },
-  // Log Out
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1289,22 +1103,26 @@ const styles = StyleSheet.create({
   bottomSpacer: {
     height: 20,
   },
-
-  // ============================================================
-  // DESKTOP STYLES
-  // ============================================================
   desktopContainer: {
     flex: 1,
     backgroundColor: '#F8F9FC',
     padding: 24,
   },
-  desktopCentered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+  desktopHeader: {
+    marginBottom: 24,
+  },
+  desktopHeaderTitle: {
+    color: '#1F2F5F',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
   },
   desktopScrollContent: {
+    paddingHorizontal: 0,
     paddingBottom: 40,
   },
   desktopGrid: {
@@ -1322,55 +1140,5 @@ const styles = StyleSheet.create({
   desktopRightColumn: {
     flex: 2,
     minWidth: 400,
-  },
-  desktopProfileSection: {
-    marginBottom: 16,
-  },
-  desktopWalletCard: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 16,
-    shadowColor: '#4A7DFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  desktopShortcutsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingVertical: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  desktopGuestWrapper: {
-    maxWidth: 600,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  desktopMenuGrid: {
-    flexDirection: 'row',
-    gap: 16,
-    flexWrap: 'wrap',
-  },
-  desktopLogoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingVertical: 14,
-    marginTop: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
   },
 });

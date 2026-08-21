@@ -22,8 +22,8 @@ import {
   StatusBar,
   Dimensions,
   FlatList,
-  Animated,
   ViewabilityConfig,
+  ViewToken,
 } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { FloatingActionRail } from './components/FloatingActionRail';
@@ -38,11 +38,29 @@ import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { recommendationService } from '../../services/recommendation.service';
 import { mapItemType } from '../../utils/typeHelpers';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../navigation/RootNavigator';
+import { locationService } from '../../services/location.service';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
+// --- Types ---
+type FeedScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'MainTabs'>;
+
+interface FeedScreenProps {
+  navigation: FeedScreenNavigationProp;
+}
+
+// --- Constants ---
+const FEATURED_COUNT = 14;
+const GUEST_PROMPT_THRESHOLD = 3;
+const VIEWABILITY_CONFIG: ViewabilityConfig = {
+  itemVisiblePercentThreshold: 50,
+  minimumViewTime: 100,
+};
+
 // --- Main FeedScreen Component ---
-export const FeedScreen = ({ navigation }: any) => {
+export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
   const { isAuthenticated, isGuest, user } = useAuth();
@@ -50,6 +68,10 @@ export const FeedScreen = ({ navigation }: any) => {
 
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
+
+  // Location state
+  const [userLocation, setUserLocation] = useState<string>('Detecting...');
+  const [isLocationLoading, setIsLocationLoading] = useState(true);
 
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [selectedProductTitle, setSelectedProductTitle] = useState<string>('');
@@ -64,6 +86,7 @@ export const FeedScreen = ({ navigation }: any) => {
   const [swipeCount, setSwipeCount] = useState(0);
   const [contextPanelView, setContextPanelView] = useState<'details' | 'reviews' | 'directions' | null>(null);
   const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false);
+  const [hasAppliedRecommendations, setHasAppliedRecommendations] = useState(false);
 
   const {
     opportunities,
@@ -81,43 +104,87 @@ export const FeedScreen = ({ navigation }: any) => {
     queryFn: feedService.getOpportunities,
   });
 
+  // --- Get Real Location ---
+  useEffect(() => {
+    const getLocation = async () => {
+      try {
+        setIsLocationLoading(true);
+        const location = await locationService.getCurrentLocation();
+        if (location) {
+          const locationString = locationService.formatLocation(location);
+          setUserLocation(locationString);
+        } else {
+          setUserLocation('Jinja, Uganda');
+        }
+      } catch (error) {
+        console.error('Error getting location:', error);
+        setUserLocation('Jinja, Uganda');
+      } finally {
+        setIsLocationLoading(false);
+      }
+    };
+    getLocation();
+  }, []);
+
+  // --- Memoized Values ---
   const uniqueOpportunities = useMemo(() => {
     if (!opportunities || opportunities.length === 0) return [];
-    const seen = new Set();
-    return opportunities.filter((item) => {
-      if (seen.has(item.id)) {
-        return false;
+    const map = new Map();
+    opportunities.forEach((item) => {
+      if (!map.has(item.id)) {
+        map.set(item.id, item);
       }
-      seen.add(item.id);
-      return true;
     });
+    return Array.from(map.values());
   }, [opportunities]);
 
   const currentOpportunity = useMemo(() => {
+    if (!uniqueOpportunities || uniqueOpportunities.length === 0) return null;
+    if (currentIndex < 0 || currentIndex >= uniqueOpportunities.length) return null;
     return uniqueOpportunities[currentIndex] || null;
   }, [uniqueOpportunities, currentIndex]);
 
   const featuredOpportunities = useMemo(() => {
-    return uniqueOpportunities.slice(0, 14);
+    return uniqueOpportunities.slice(0, FEATURED_COUNT);
   }, [uniqueOpportunities]);
 
-  // === RECOMMENDATION ENGINE ===
+  // --- Effects ---
   useEffect(() => {
-    if (data && data.length > 0 && !isApplyingRecommendations) {
+    if (queryError) {
+      setError(queryError.message);
+    }
+    setLoading(queryLoading);
+  }, [queryError, queryLoading, setError, setLoading]);
+
+  // Reset recommendation flag when data changes
+  useEffect(() => {
+    setHasAppliedRecommendations(false);
+  }, [data]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      setHasAppliedRecommendations(false);
+    };
+  }, []);
+
+  // --- Recommendation Engine ---
+  useEffect(() => {
+    if (data && data.length > 0 && !isApplyingRecommendations && !hasAppliedRecommendations) {
       const applyRecommendations = async () => {
         setIsApplyingRecommendations(true);
         try {
           let result: RawOpportunity[] = [];
-          
+
           if (user?.id) {
             console.log('👤 Getting personalized recommendations for user:', user.id);
             result = await recommendationService.getPersonalizedRecommendations(data, user.id);
-            
+
             if (result.length > 0) {
               for (const item of result.slice(0, 3)) {
                 await recommendationService.trackInteraction(
-                  user.id, 
-                  item.id, 
+                  user.id,
+                  item.id,
                   'view',
                   mapItemType(item.type)
                 );
@@ -127,9 +194,10 @@ export const FeedScreen = ({ navigation }: any) => {
             console.log('👤 Getting new user recommendations for guest');
             result = recommendationService.getNewUserRecommendations(data);
           }
-          
+
           console.log(`✅ Set ${result.length} personalized opportunities`);
           setOpportunities(result);
+          setHasAppliedRecommendations(true);
         } catch (error) {
           console.error('❌ Error applying recommendations:', error);
           setOpportunities(data);
@@ -137,158 +205,153 @@ export const FeedScreen = ({ navigation }: any) => {
           setIsApplyingRecommendations(false);
         }
       };
-      
+
       applyRecommendations();
     }
-  }, [data, user?.id]);
+  }, [data, user?.id, isApplyingRecommendations, hasAppliedRecommendations, setOpportunities]);
 
-  // Track when user views an opportunity (for learning)
-  const trackOpportunityView = useCallback(async (opportunity: RawOpportunity) => {
-    if (user?.id) {
-      try {
-        await recommendationService.trackInteraction(
-          user.id, 
-          opportunity.id, 
-          'view',
-          mapItemType(opportunity.type)
-        );
-      } catch (error) {
-        // Silently fail
-        console.log('⚠️ Tracking view failed:', error);
+  // --- Track View ---
+  const trackOpportunityView = useCallback(
+    async (opportunity: RawOpportunity) => {
+      if (user?.id) {
+        try {
+          await recommendationService.trackInteraction(
+            user.id,
+            opportunity.id,
+            'view',
+            mapItemType(opportunity.type)
+          );
+        } catch (error) {
+          // Silently fail - don't break the UI
+          if (__DEV__) {
+            console.log('⚠️ Tracking view failed:', error);
+          }
+        }
       }
-    }
-  }, [user?.id]);
+    },
+    [user?.id]
+  );
 
+  // --- Monitor Swipe Count ---
   useEffect(() => {
-    if (queryError) {
-      setError(queryError.message);
-    }
-    setLoading(queryLoading);
-  }, [queryError, queryLoading]);
-
-  // Monitor swipe count
-  useEffect(() => {
-    console.log('📊 Swipe count:', swipeCount, 'isAuthenticated:', isAuthenticated, 'isGuest:', isGuest);
-    if (swipeCount >= 3 && !isAuthenticated && isGuest) {
-      console.log('🎯 SHOW GUEST PROMPT TRIGGERED!');
+    if (swipeCount >= GUEST_PROMPT_THRESHOLD && !isAuthenticated && isGuest) {
       setShowGuestPrompt(true);
     }
   }, [swipeCount, isAuthenticated, isGuest]);
 
-  const viewableItemsChangedRef = useRef(({ viewableItems }: any) => {
-    if (viewableItems && viewableItems.length > 0) {
-      const index = viewableItems[0].index;
-      if (index !== currentIndex && index >= 0 && index < uniqueOpportunities.length) {
-        console.log('📊 Viewable index:', index, 'currentIndex:', currentIndex);
-        setCurrentIndex(index);
-        if (!isAuthenticated && isGuest) {
-          setSwipeCount(prev => prev + 1);
-        }
-        const item = uniqueOpportunities[index];
-        if (item) {
-          trackOpportunityView(item);
-        }
-        setContextPanelView(null);
-      }
-    }
-  });
+  // --- Viewable Items Handler ---
+  const viewableItemsChangedRef = useRef<((info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => void) | null>(null);
 
   useEffect(() => {
-    viewableItemsChangedRef.current = ({ viewableItems }: any) => {
-      if (viewableItems && viewableItems.length > 0) {
-        const index = viewableItems[0].index;
-        if (index !== currentIndex && index >= 0 && index < uniqueOpportunities.length) {
-          console.log('📊 Viewable index:', index, 'currentIndex:', currentIndex);
-          setCurrentIndex(index);
-          if (!isAuthenticated && isGuest) {
-            setSwipeCount(prev => prev + 1);
-          }
-          const item = uniqueOpportunities[index];
-          if (item) {
-            trackOpportunityView(item);
-          }
-          setContextPanelView(null);
-        }
+    viewableItemsChangedRef.current = (info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => {
+      const { viewableItems } = info;
+      if (!viewableItems || viewableItems.length === 0) return;
+
+      const firstItem = viewableItems[0];
+      const index = firstItem.index;
+      
+      if (index === null || index === undefined) return;
+      if (index === currentIndex || index < 0 || index >= uniqueOpportunities.length) return;
+
+      setCurrentIndex(index);
+
+      if (!isAuthenticated && isGuest) {
+        setSwipeCount((prev) => prev + 1);
       }
+
+      const item = uniqueOpportunities[index];
+      if (item) {
+        trackOpportunityView(item);
+      }
+      setContextPanelView(null);
     };
-  }, [currentIndex, uniqueOpportunities.length, isAuthenticated, isGuest]);
+  }, [currentIndex, uniqueOpportunities, isAuthenticated, isGuest, trackOpportunityView, setCurrentIndex]);
 
-  const handleViewableItemsChanged = useCallback((info: any) => {
-    viewableItemsChangedRef.current(info);
-  }, []);
-
-  const viewabilityConfig: ViewabilityConfig = {
-    itemVisiblePercentThreshold: 50,
-    minimumViewTime: 100,
-  };
+  const handleViewableItemsChanged = useCallback(
+    (info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => {
+      if (viewableItemsChangedRef.current) {
+        viewableItemsChangedRef.current(info);
+      }
+    },
+    []
+  );
 
   // --- Action Handlers ---
-  const handleReviewsPress = useCallback((productId: string, productTitle?: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedProductId(productId);
-    setSelectedProductTitle(productTitle || '');
-    
-    if (isDesktop) {
-      setContextPanelView('reviews');
-    } else {
-      setShowReviewsModal(true);
-    }
-  }, [isDesktop]);
+  const handleReviewsPress = useCallback(
+    (productId: string, productTitle?: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setSelectedProductId(productId);
+      setSelectedProductTitle(productTitle || '');
 
-  const handleSharePress = useCallback(async (opportunity: RawOpportunity) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      if (user?.id) {
-        await recommendationService.trackInteraction(
-          user.id, 
-          opportunity.id, 
-          'share',
-          mapItemType(opportunity.type)
-        );
+      if (isDesktop) {
+        setContextPanelView('reviews');
+      } else {
+        setShowReviewsModal(true);
       }
-      const message = `🛍️ Check out ${opportunity.title}\n\n🏪 ${opportunity.shopName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${opportunity.area || 'Available nearby'}\n\nDownload Munolink to discover more!`;
-      await Share.share({
-        message: message,
-        title: opportunity.title,
-      });
-    } catch (error) {
-      console.error('Error sharing:', error);
-    }
-  }, [user?.id]);
+    },
+    [isDesktop]
+  );
 
-  // --- Directions Handler ---
-  const handleDirectionsPress = useCallback((shopName: string, area: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    console.log(`📍 Directions to ${shopName} in ${area}`);
-    
-    const currentOpportunity = uniqueOpportunities[currentIndex];
-    
-    if (isDesktop) {
-      setContextPanelView('directions');
-      setSelectedOpportunity(currentOpportunity);
-    } else {
-      setSelectedOpportunity(currentOpportunity);
-      setShowDirectionsModal(true);
-    }
-  }, [isDesktop, uniqueOpportunities, currentIndex]);
+  const handleSharePress = useCallback(
+    async (opportunity: RawOpportunity) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      try {
+        if (user?.id) {
+          await recommendationService.trackInteraction(
+            user.id,
+            opportunity.id,
+            'share',
+            mapItemType(opportunity.type)
+          );
+        }
+        const message = `🛍️ Check out ${opportunity.title}\n\n🏪 ${opportunity.shopName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${opportunity.area || 'Available nearby'}\n\nDownload Munolink to discover more!`;
+        await Share.share({
+          message: message,
+          title: opportunity.title,
+        });
+      } catch (error) {
+        console.error('Error sharing:', error);
+      }
+    },
+    [user?.id]
+  );
 
-  // --- AI Handler ---
-  const handleAIPress = useCallback((opportunity: RawOpportunity) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    console.log('🤖 AI Pressed for opportunity:', opportunity.title);
-    setSelectedOpportunity(opportunity);
-    setAiContextHint('');
-    
-    if (isDesktop) {
-      console.log('🖥️ Desktop - Showing AI in context panel');
-      setAiViewActive(true);
-    } else {
-      console.log('📱 Mobile - Showing AI modal');
-      setShowAIModal(true);
-    }
-  }, [isDesktop]);
+  const handleDirectionsPress = useCallback(
+    (shopName: string, area: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      console.log(`📍 Directions to ${shopName} in ${area}`);
 
-  // --- Close AI ---
+      const currentOpportunity = uniqueOpportunities[currentIndex];
+
+      if (isDesktop) {
+        setContextPanelView('directions');
+        setSelectedOpportunity(currentOpportunity);
+      } else {
+        setSelectedOpportunity(currentOpportunity);
+        setShowDirectionsModal(true);
+      }
+    },
+    [isDesktop, uniqueOpportunities, currentIndex]
+  );
+
+  const handleAIPress = useCallback(
+    (opportunity: RawOpportunity) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      console.log('🤖 AI Pressed for opportunity:', opportunity.title);
+      setSelectedOpportunity(opportunity);
+      setAiContextHint('');
+
+      if (isDesktop) {
+        console.log('🖥️ Desktop - Showing AI in context panel');
+        setAiViewActive(true);
+      } else {
+        console.log('📱 Mobile - Showing AI modal');
+        setShowAIModal(true);
+      }
+    },
+    [isDesktop]
+  );
+
   const handleCloseAI = useCallback(() => {
     console.log('🔚 Closing AI');
     setShowAIModal(false);
@@ -297,23 +360,25 @@ export const FeedScreen = ({ navigation }: any) => {
     setAiContextHint('');
   }, []);
 
-  // --- Close Directions ---
   const handleCloseDirections = useCallback(() => {
     console.log('🔚 Closing Directions');
     setShowDirectionsModal(false);
     setSelectedOpportunity(null);
   }, []);
 
-  const handleShowMorePress = useCallback((opportunity: RawOpportunity) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedOpportunity(opportunity);
-    
-    if (isDesktop) {
-      setContextPanelView('details');
-    } else {
-      setShowDetailsModal(true);
-    }
-  }, [isDesktop]);
+  const handleShowMorePress = useCallback(
+    (opportunity: RawOpportunity) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setSelectedOpportunity(opportunity);
+
+      if (isDesktop) {
+        setContextPanelView('details');
+      } else {
+        setShowDetailsModal(true);
+      }
+    },
+    [isDesktop]
+  );
 
   const handleLovePress = useCallback(
     (opportunity: RawOpportunity, isLoved: boolean) => {
@@ -330,8 +395,8 @@ export const FeedScreen = ({ navigation }: any) => {
       }
       if (user?.id && isLoved) {
         recommendationService.trackInteraction(
-          user.id, 
-          opportunity.id, 
+          user.id,
+          opportunity.id,
           'save',
           mapItemType(opportunity.type)
         );
@@ -341,46 +406,50 @@ export const FeedScreen = ({ navigation }: any) => {
     [isAuthenticated, navigation, user?.id]
   );
 
-  const handleSavePress = useCallback((opportunity: RawOpportunity) => {
-    if (!isAuthenticated) {
-      Alert.alert(
-        'Join Munolink',
-        'Create a free account to save items.',
-        [
-          { text: 'Continue Browsing', style: 'cancel' },
-          { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-        ]
-      );
-      return;
-    }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (user?.id) {
-      recommendationService.trackInteraction(
-        user.id, 
-        opportunity.id, 
-        'save',
-        mapItemType(opportunity.type)
-      );
-    }
-    console.log('🔖 Saved:', opportunity.title);
-  }, [isAuthenticated, navigation, user?.id]);
+  const handleSavePress = useCallback(
+    (opportunity: RawOpportunity) => {
+      if (!isAuthenticated) {
+        Alert.alert(
+          'Join Munolink',
+          'Create a free account to save items.',
+          [
+            { text: 'Continue Browsing', style: 'cancel' },
+            { text: 'Join Now', onPress: () => navigation.navigate('Join') },
+          ]
+        );
+        return;
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (user?.id) {
+        recommendationService.trackInteraction(
+          user.id,
+          opportunity.id,
+          'save',
+          mapItemType(opportunity.type)
+        );
+      }
+      console.log('🔖 Saved:', opportunity.title);
+    },
+    [isAuthenticated, navigation, user?.id]
+  );
 
-  const handleFollowPress = useCallback((opportunity: RawOpportunity) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigation.navigate('ShopProfile', {
-      shopId: opportunity.shopId,
-      shopName: opportunity.shopName,
-    });
-  }, [navigation]);
+  const handleFollowPress = useCallback(
+    (opportunity: RawOpportunity) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      navigation.navigate('ShopProfile', {
+        shopId: opportunity.shopId,
+        shopName: opportunity.shopName,
+      });
+    },
+    [navigation]
+  );
 
-  // ============================================================
-  // 🛒 ADD TO CART / BOOK BUTTON HANDLER
-  // ============================================================
+  // --- Add to Cart / Book Handler ---
   const handleAddToCart = useCallback(() => {
     if (!currentOpportunity) return;
-    
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    
+
     if (!isAuthenticated) {
       Alert.alert(
         'Join Munolink',
@@ -394,13 +463,13 @@ export const FeedScreen = ({ navigation }: any) => {
     }
 
     const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
-    
+
     if (isService) {
       if (user?.id) {
         recommendationService.trackInteraction(
           user.id,
           currentOpportunity.id,
-          'purchase',
+          'booking',
           mapItemType(currentOpportunity.type)
         );
       }
@@ -409,15 +478,12 @@ export const FeedScreen = ({ navigation }: any) => {
         `Would you like to book "${currentOpportunity.title}"?`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
+          {
             text: 'Book Now',
             onPress: () => {
               console.log('📅 Booking:', currentOpportunity.title);
-              navigation.navigate('Booking', {
-                opportunity: currentOpportunity,
-              });
-            }
-          }
+            },
+          },
         ]
       );
     } else {
@@ -434,46 +500,48 @@ export const FeedScreen = ({ navigation }: any) => {
         `${currentOpportunity.title} has been added to your cart!`,
         [
           { text: 'Continue Shopping', style: 'cancel' },
-          { 
+          {
             text: 'View Cart',
             onPress: () => {
               console.log('🛒 View Cart');
-              navigation.navigate('Cart');
-            }
-          }
+            },
+          },
         ]
       );
     }
   }, [currentOpportunity, isAuthenticated, user?.id, navigation]);
 
-  // --- Navigate Up/Down ---
-  const scrollToIndex = (index: number) => {
-    if (flatListRef.current && index >= 0 && index < uniqueOpportunities.length) {
-      flatListRef.current.scrollToIndex({
-        index: index,
-        animated: true,
-      });
-      setCurrentIndex(index);
-      setContextPanelView(null);
-    }
-  };
+  // --- Navigation Helpers ---
+  const scrollToIndex = useCallback(
+    (index: number) => {
+      if (flatListRef.current && index >= 0 && index < uniqueOpportunities.length) {
+        flatListRef.current.scrollToIndex({
+          index: index,
+          animated: true,
+        });
+        setCurrentIndex(index);
+        setContextPanelView(null);
+      }
+    },
+    [uniqueOpportunities.length, setCurrentIndex]
+  );
 
-  const goToNext = () => {
+  const goToNext = useCallback(() => {
     if (currentIndex < uniqueOpportunities.length - 1) {
       scrollToIndex(currentIndex + 1);
     }
-  };
+  }, [currentIndex, uniqueOpportunities.length, scrollToIndex]);
 
-  const goToPrevious = () => {
+  const goToPrevious = useCallback(() => {
     if (currentIndex > 0) {
       scrollToIndex(currentIndex - 1);
     }
-  };
+  }, [currentIndex, scrollToIndex]);
 
-  // --- Render Desktop Nav Arrows ---
-  const renderDesktopNavArrows = () => {
+  // --- Render Functions ---
+  const renderDesktopNavArrows = useCallback(() => {
     if (!isDesktop) return null;
-    
+
     return (
       <View style={{ alignItems: 'center', gap: 8 }}>
         <TouchableOpacity
@@ -494,9 +562,8 @@ export const FeedScreen = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
     );
-  };
+  }, [isDesktop, currentIndex, uniqueOpportunities.length, goToPrevious, goToNext]);
 
-  // --- Render Item ---
   const renderItem = useCallback(
     ({ item }: { item: RawOpportunity }) => {
       const cardWidth = isDesktop ? 420 : width;
@@ -507,12 +574,14 @@ export const FeedScreen = ({ navigation }: any) => {
       const scenes = engine.compose();
 
       return (
-        <View style={{
-          height: isDesktop ? height : height,
-          paddingVertical: 0,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
+        <View
+          style={{
+            height: isDesktop ? height : height,
+            paddingVertical: 0,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           <SceneRenderer
             key={item.id}
             scenes={scenes}
@@ -551,10 +620,17 @@ export const FeedScreen = ({ navigation }: any) => {
         </View>
       );
     },
-    [isDesktop, width, height, navigation, handleSharePress, handleSavePress, handleShowMorePress]
+    [
+      isDesktop,
+      width,
+      height,
+      navigation,
+      handleSharePress,
+      handleSavePress,
+      handleShowMorePress,
+    ]
   );
 
-  // --- Render Floating Actions ---
   const renderFloatingActions = useCallback(() => {
     const currentOpportunity = uniqueOpportunities[currentIndex];
     if (!currentOpportunity) return null;
@@ -575,38 +651,44 @@ export const FeedScreen = ({ navigation }: any) => {
         onSavePress={handleSavePress}
       />
     );
-  }, [uniqueOpportunities, currentIndex, navigation, handleReviewsPress, handleSharePress, handleSavePress, handleAIPress, handleDirectionsPress]);
+  }, [
+    uniqueOpportunities,
+    currentIndex,
+    navigation,
+    handleReviewsPress,
+    handleSharePress,
+    handleSavePress,
+    handleAIPress,
+    handleDirectionsPress,
+  ]);
 
-  // ============================================================
-  // 🛒 RENDER ACTION BUTTON - Centered, Raised
-  // ============================================================
-  const renderActionButton = () => {
-  if (!currentOpportunity) return null;
+  const renderActionButton = useCallback(() => {
+    if (!currentOpportunity) return null;
 
-  const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
-  const buttonLabel = isService ? 'Book' : 'Add to Cart';
-  const iconName = isService ? 'calendar-outline' : 'cart-outline';
+    const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
+    const buttonLabel = isService ? 'Book' : 'Add to Cart';
+    const iconName = isService ? 'calendar-outline' : 'cart-outline';
 
-  return (
-    <View style={styles.buttonWrapper}>
-      <TouchableOpacity
-        style={styles.actionButton}
-        onPress={handleAddToCart}
-        activeOpacity={0.85}
-      >
-        <LinearGradient
-          colors={isService ? ['#6C5CE7', '#A855F7'] : ['#4A7DFF', '#6C5CE7']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.actionButtonGradient}
+    return (
+      <View style={styles.buttonWrapper}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={handleAddToCart}
+          activeOpacity={0.85}
         >
-          <Ionicons name={iconName as any} size={14} color="#FFFFFF" />
-          <Text style={styles.actionButtonText}>{buttonLabel}</Text>
-        </LinearGradient>
-      </TouchableOpacity>
-    </View>
-  );
-  };
+          <LinearGradient
+            colors={isService ? ['#6C5CE7', '#A855F7'] : ['#4A7DFF', '#6C5CE7']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.actionButtonGradient}
+          >
+            <Ionicons name={iconName} size={14} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>{buttonLabel}</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
+    );
+  }, [currentOpportunity, handleAddToCart]);
 
   // --- Loading States ---
   if (isLoading || queryLoading || isApplyingRecommendations) {
@@ -623,12 +705,8 @@ export const FeedScreen = ({ navigation }: any) => {
   if (error) {
     return (
       <View style={[styles.centered, { height }]}>
-        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>
-          Error loading feed
-        </Text>
-        <Text style={[styles.errorSubtext, { fontSize: width < 380 ? 12 : 14 }]}>
-          {error}
-        </Text>
+        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>Error loading feed</Text>
+        <Text style={[styles.errorSubtext, { fontSize: width < 380 ? 12 : 14 }]}>{error}</Text>
       </View>
     );
   }
@@ -636,9 +714,7 @@ export const FeedScreen = ({ navigation }: any) => {
   if (uniqueOpportunities.length === 0) {
     return (
       <View style={[styles.centered, { height }]}>
-        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>
-          No opportunities found
-        </Text>
+        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>No opportunities found</Text>
         <Text style={[styles.emptySubtext, { fontSize: width < 380 ? 12 : 14 }]}>
           Check back later for new deals!
         </Text>
@@ -650,7 +726,9 @@ export const FeedScreen = ({ navigation }: any) => {
   return (
     <ResponsiveLayout
       currentRoute="Feed"
-      onNavigate={(route) => navigation.navigate(route)}
+      onNavigate={(route) => {
+        (navigation as any).navigate(route);
+      }}
       floatingActions={renderFloatingActions()}
       desktopNavArrows={renderDesktopNavArrows()}
       selectedOpportunity={uniqueOpportunities[currentIndex] || null}
@@ -697,20 +775,23 @@ export const FeedScreen = ({ navigation }: any) => {
               >
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
-                    <Image 
-                      source={require('../../../assets/logo.png')} 
-                      style={styles.logoImage}
-                      resizeMode="contain"
-                    />
+                    <Image source={require('../../../assets/logo.png')} style={styles.logoImage} resizeMode="contain" />
                   </TouchableOpacity>
 
                   <TouchableOpacity style={styles.locationContainer}>
                     <Ionicons name="location-outline" size={16} color="#4A7DFF" />
-                    <Text style={[styles.locationText, { fontSize: 13 }]}>Jinja, Uganda</Text>
+                    <Text style={[styles.locationText, { fontSize: 13 }]}>
+                      {isLocationLoading ? 'Detecting...' : userLocation}
+                    </Text>
                     <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.searchContainer} onPress={() => navigation.navigate('Search')}>
+                  <TouchableOpacity 
+                    style={styles.searchContainer} 
+                    onPress={() => {
+                      (navigation as any).navigate('Search');
+                    }}
+                  >
                     <Ionicons name="search-outline" size={24} color="#FFFFFF" />
                   </TouchableOpacity>
                 </View>
@@ -727,7 +808,7 @@ export const FeedScreen = ({ navigation }: any) => {
               snapToInterval={isDesktop ? undefined : height}
               snapToAlignment="start"
               decelerationRate="fast"
-              viewabilityConfig={viewabilityConfig}
+              viewabilityConfig={VIEWABILITY_CONFIG}
               onViewableItemsChanged={handleViewableItemsChanged}
               getItemLayout={(data, index) => ({
                 length: height,
@@ -743,7 +824,6 @@ export const FeedScreen = ({ navigation }: any) => {
               style={{ flex: 1, backgroundColor: '#0D0D1A' }}
             />
 
-            {/* 🛒 ACTION BUTTON - Persistent across all scenes */}
             {renderActionButton()}
 
             <ReviewsBottomSheet
@@ -850,11 +930,13 @@ const styles = StyleSheet.create({
     gap: 4,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
+    maxWidth: 180,
   },
   locationText: {
     color: '#FFFFFF',
     fontWeight: '500',
     fontSize: 13,
+    maxWidth: 100,
   },
   searchContainer: {
     padding: 6,
@@ -911,10 +993,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
   },
-  // 🛒 Action Button Styles
- buttonWrapper: {
+  buttonWrapper: {
     position: 'absolute',
-    bottom: 220, // Raised higher
+    bottom: 220,
     left: 0,
     right: 0,
     alignItems: 'center',
@@ -923,7 +1004,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   actionButton: {
-    borderRadius: 20, // More rounded
+    borderRadius: 20,
     overflow: 'hidden',
     width: 'auto',
     maxWidth: 160,
@@ -937,13 +1018,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8, // Smaller padding
-    paddingHorizontal: 16, // Smaller padding
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     gap: 6,
   },
- actionButtonText: {
+  actionButtonText: {
     color: '#FFFFFF',
-    fontSize: 12, // Smaller font
+    fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.3,
   },

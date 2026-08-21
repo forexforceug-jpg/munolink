@@ -7,32 +7,38 @@ import {
   Text, 
   StyleSheet, 
   Image,
-  Animated,
-  Easing,
   Platform,
-  Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
 import { useBreakpoint } from '../../../hooks/useBreakpoint';
 
-// Logo import with fallback
-let munoLogo;
+// ✅ Fixed: Handle image import properly for React Native
+let munoLogo: any = null;
 try {
-  munoLogo = require('../../../assets/muno.png');
-} catch {
+  // Try different possible paths
+  const logoPath = '../../../assets/muno.png';
+  munoLogo = require(logoPath);
+} catch (e) {
   try {
     munoLogo = require('../../../../assets/muno.png');
-  } catch {
-    try {
-      munoLogo = require('../../../public/muno.png');
-    } catch {
-      console.warn('⚠️ muno.png not found - using text fallback');
-      munoLogo = null;
-    }
+  } catch (e2) {
+    console.warn('⚠️ muno.png not found - using text fallback');
+    munoLogo = null;
   }
 }
+
+// ✅ Type-safe icon mapping
+type IconName = keyof typeof Ionicons.glyphMap;
+
+const ICONS: Record<string, IconName> = {
+  reviews: 'chatbubble-ellipses',
+  directions: 'map',
+  share: 'share-social',
+  save: 'bookmark',
+  saveOutline: 'bookmark-outline',
+};
 
 interface FloatingActionRailProps {
   opportunity: Opportunity;
@@ -48,14 +54,6 @@ interface FloatingActionRailProps {
   savedCount?: number;
   isSaved?: boolean;
 }
-
-const ICONS = {
-  reviews: 'chatbubble-ellipses',
-  directions: 'map',
-  share: 'share-social',
-  save: 'bookmark',
-  saveOutline: 'bookmark-outline',
-};
 
 const DESKTOP_POSITION = {
   BUTTON_SIZE: 56,
@@ -77,6 +75,31 @@ const MOBILE_POSITION = {
   LABEL_FONT_SIZE: 9,
 };
 
+// ✅ Logo fallback component
+const LogoFallback = ({ size }: { size: number }) => (
+  <View style={[styles.fallbackLogo, { width: size, height: size }]}>
+    <Text style={[styles.fallbackText, { fontSize: size * 0.4 }]}>M</Text>
+  </View>
+);
+
+// ✅ Logo component with error handling
+const LogoImage = ({ size }: { size: number }) => {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError || !munoLogo) {
+    return <LogoFallback size={size} />;
+  }
+
+  return (
+    <Image
+      source={munoLogo}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+      onError={() => setHasError(true)}
+    />
+  );
+};
+
 const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   opportunity,
   onShopPress,
@@ -93,54 +116,71 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
 }) => {
   const { isDesktop } = useBreakpoint();
   
-  // ✅ Sync local state with props when opportunity changes
-  const [saved, setSaved] = useState(isSaved);
-  const [localSavedCount, setLocalSavedCount] = useState(savedCount);
+  // ✅ Track user interaction to prevent race condition
+  const hasInteractedRef = useRef(false);
+  
+  // ✅ Use object state for save to avoid race conditions
+  const [saveState, setSaveState] = useState({
+    saved: isSaved,
+    count: savedCount,
+  });
 
-  // ✅ Update state when props change (new opportunity)
+  // ✅ Only sync props if user hasn't interacted
   useEffect(() => {
-    setSaved(isSaved);
-    setLocalSavedCount(savedCount);
-  }, [isSaved, savedCount, opportunity.id]); // Re-run when opportunity changes
+    if (!hasInteractedRef.current) {
+      setSaveState({
+        saved: isSaved,
+        count: savedCount,
+      });
+    }
+  }, [isSaved, savedCount, opportunity.id]);
 
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.15,
-          duration: 1000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: false,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: false,
-        }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
-
-  const handlePress = (action: string, callback: () => void) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    callback();
+  // ✅ Safe haptics with error handling
+  const triggerHaptic = async (style: 'light' | 'medium' | 'heavy') => {
+    try {
+      if (Platform.OS !== 'web') {
+        const styleMap = {
+          light: Haptics.ImpactFeedbackStyle.Light,
+          medium: Haptics.ImpactFeedbackStyle.Medium,
+          heavy: Haptics.ImpactFeedbackStyle.Heavy,
+        };
+        await Haptics.impactAsync(styleMap[style]);
+      }
+    } catch (error) {
+      // Silently fail - haptics are optional
+      console.warn('Haptics not supported on this device');
+    }
   };
 
+  // ✅ Safe callback handler
+  const handlePress = (action: string, callback: () => void) => {
+    triggerHaptic('light');
+    if (callback && typeof callback === 'function') {
+      callback();
+    }
+  };
+
+  // ✅ Save handler with interaction tracking
   const handleSavePress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const newSavedState = !saved;
-    setSaved(newSavedState);
-    setLocalSavedCount(prev => newSavedState ? prev + 1 : Math.max(0, prev - 1));
+    hasInteractedRef.current = true;
+    triggerHaptic('medium');
+    
+    const newSaved = !saveState.saved;
+    setSaveState(prev => ({
+      saved: newSaved,
+      count: newSaved ? prev.count + 1 : Math.max(0, prev.count - 1),
+    }));
     
     if (onSavePress) {
       onSavePress(opportunity);
     }
   };
+
+  // ✅ Defensive check
+  if (!opportunity) {
+    console.warn('FloatingActionRail: No opportunity provided');
+    return null;
+  }
 
   const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : MOBILE_POSITION.BUTTON_SIZE;
   const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : MOBILE_POSITION.SHOP_BUTTON_SIZE;
@@ -159,7 +199,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const formattedDistance = distance > 0 ? `${distance.toFixed(1)}km` : '0km';
   const rating = opportunity.rating ? opportunity.rating.toFixed(1) : '0.0';
   const displayShareCount = shareCount > 0 ? shareCount : 0;
-  const displaySavedCount = localSavedCount > 0 ? localSavedCount : 0;
+  const displaySavedCount = saveState.count > 0 ? saveState.count : 0;
 
   return (
     <View style={[styles.container, { gap }]}>
@@ -175,6 +215,9 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         ]}
         onPress={() => handlePress('Shop', () => onShopPress(opportunity.shopId))}
         activeOpacity={0.8}
+        accessibilityLabel={`Shop ${opportunity.shopName}`}
+        accessibilityRole="button"
+        accessibilityHint="Opens shop profile"
       >
         <View style={styles.shopLetterContainer}>
           <Text style={[styles.shopLetter, { fontSize: shopButtonSize * 0.5 }]}>
@@ -191,8 +234,11 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         ]}
         onPress={() => handlePress('Reviews', () => onReviewsPress(opportunity.id))}
         activeOpacity={0.7}
+        accessibilityLabel={`Reviews for ${opportunity.title}`}
+        accessibilityRole="button"
+        accessibilityHint="Opens reviews modal"
       >
-        <Ionicons name={ICONS.reviews as any} size={iconSize} color="#FFFFFF" />
+        <Ionicons name={ICONS.reviews} size={iconSize} color="#FFFFFF" />
         <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
           {rating}
         </Text>
@@ -211,8 +257,11 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         ]}
         onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.shopName, opportunity.area || ''))}
         activeOpacity={0.7}
+        accessibilityLabel={`Directions to ${opportunity.shopName}`}
+        accessibilityRole="button"
+        accessibilityHint="Opens directions"
       >
-        <Ionicons name={ICONS.directions as any} size={iconSize} color="#FFFFFF" />
+        <Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />
         <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
           {formattedDistance}
         </Text>
@@ -226,14 +275,17 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         ]}
         onPress={() => handlePress('Share', () => onSharePress(opportunity))}
         activeOpacity={0.7}
+        accessibilityLabel={`Share ${opportunity.title}`}
+        accessibilityRole="button"
+        accessibilityHint="Shares this opportunity"
       >
-        <Ionicons name={ICONS.share as any} size={iconSize} color="#FFFFFF" />
+        <Ionicons name={ICONS.share} size={iconSize} color="#FFFFFF" />
         <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
           {displayShareCount}
         </Text>
       </TouchableOpacity>
 
-      {/* ✅ Save/Wishlist Button - Now properly syncs with props */}
+      {/* Save/Wishlist Button */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -241,15 +293,18 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         ]}
         onPress={handleSavePress}
         activeOpacity={0.7}
+        accessibilityLabel={saveState.saved ? 'Remove from saved' : 'Save this item'}
+        accessibilityRole="button"
+        accessibilityHint={saveState.saved ? 'Removes from wishlist' : 'Adds to wishlist'}
       >
         <Ionicons 
-          name={(saved ? ICONS.save : ICONS.saveOutline) as any} 
+          name={(saveState.saved ? ICONS.save : ICONS.saveOutline)} 
           size={iconSize} 
-          color={saved ? '#FF6B6B' : '#FFFFFF'} 
+          color={saveState.saved ? '#FF6B6B' : '#FFFFFF'} 
         />
         <Text style={[styles.valueText, { 
           fontSize: valueFontSize,
-          color: saved ? '#FF6B6B' : 'rgba(255,255,255,0.8)'
+          color: saveState.saved ? '#FF6B6B' : 'rgba(255,255,255,0.8)'
         }]}>
           {displaySavedCount}
         </Text>
@@ -267,27 +322,17 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
             }
           ]}
           onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            triggerHaptic('heavy');
             onAIPress(opportunity);
           }}
           activeOpacity={0.8}
+          accessibilityLabel={`AI assistant for ${opportunity.title}`}
+          accessibilityRole="button"
+          accessibilityHint="Opens AI assistant"
         >
           <View style={styles.aiGlowContainer}>
             <View style={styles.aiGlow}>
-              {munoLogo ? (
-                <Image
-                  source={munoLogo}
-                  style={{ 
-                    width: logoSize,
-                    height: logoSize,
-                  }}
-                  resizeMode="contain"
-                />
-              ) : (
-                <Text style={[styles.aiFallbackText, { fontSize: shopButtonSize * 0.4 }]}>
-                  M
-                </Text>
-              )}
+              <LogoImage size={logoSize} />
             </View>
           </View>
         </TouchableOpacity>
@@ -458,7 +503,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  aiFallbackText: {
+  // ✅ Logo fallback styles
+  fallbackLogo: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    borderRadius: 999,
+  },
+
+  fallbackText: {
     color: '#4A7DFF',
     fontWeight: 'bold',
   },

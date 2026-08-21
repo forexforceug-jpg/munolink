@@ -25,6 +25,7 @@ interface AuthContextType {
   createSessionForUser: (userId: string) => Promise<void>;
   setIsAuthenticated: (value: boolean) => void;
   setIsGuest: (value: boolean) => void;
+  logout: () => Promise<void>;  // ✅ Add logout
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -190,11 +191,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // ✅ FIXED: Sign in with phone - creates user in database
   const signInWithPhone = async (phone: string): Promise<void> => {
     console.log('📝 Signing in with phone (custom auth):', phone);
     try {
-      // Clean phone number
       const cleanPhone = phone.replace(/\s/g, '');
       const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
       
@@ -211,7 +210,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lifetime_savings: 0,
       };
 
-      // Check if user already exists with this phone number
       const { data: existingUser } = await supabase
         .from('users')
         .select('id')
@@ -233,7 +231,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Create new user in the database
       console.log('📝 Creating new user in database...');
       const { error: insertError } = await supabase
         .from('users')
@@ -255,7 +252,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('✅ User created in database successfully');
       }
 
-      // Store in AsyncStorage
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
@@ -279,7 +275,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       const phoneNumber = userData.phone || userData.phone_number || '';
       
-      // Check if user exists
       const { data: existingUser, error: checkError } = await supabase
         .from('users')
         .select('id')
@@ -339,7 +334,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     }
   };
-
+  
+  // ✅ Alias logout to signOut
+  const logout = signOut;
+  
   const joinAsGuest = (): void => {
     setIsGuest(true);
     setIsAuthenticated(false);
@@ -390,6 +388,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithPhone,
         signInWithGoogle,
         signOut,
+        logout,  // ✅ Add logout here
         joinAsGuest,
         refreshSession,
         createSessionForUser,

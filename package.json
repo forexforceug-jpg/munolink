@@ -12,6 +12,7 @@
     "@react-navigation/stack": "^7.10.17",
     "@supabase/supabase-js": "^2.111.0",
     "@tanstack/react-query": "^5.101.4",
+    "base64-arraybuffer": "^1.0.2",
     "date-fns": "^4.4.0",
     "expo": "~57.0.10",
     "expo-auth-session": "^57.0.6",

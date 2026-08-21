@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
 import { FeedScreen } from '../features/feed/FeedScreen';
@@ -37,7 +37,7 @@ const CustomTabBarButton = ({ children, onPress }: any) => (
 
 // Custom Tab Icon
 const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }: any) => {
-  const iconColor = focused ? '#4A7DFF' : '#8A8AAE';
+  const iconColor = focused ? '#4A7DFF' : 'rgb(255, 255, 255)';
   const iconSize = focused ? 24 : 22;
 
   const renderIcon = () => {
@@ -90,7 +90,7 @@ export const TabNavigator = () => {
           ? { display: 'none' } 
           : styles.tabBar,
         tabBarActiveTintColor: '#4A7DFF',
-        tabBarInactiveTintColor: '#8A8AAE',
+        tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
         tabBarShowLabel: false,
       }}
     >
@@ -176,21 +176,20 @@ export const TabNavigator = () => {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: 'rgba(31, 47, 95, 0.92)',
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    borderTopWidth: 1,
-    height: 65,
-    paddingBottom: 10,
-    paddingTop: 8,
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 10,
+    height: 65,
+    paddingBottom: 10,
+    paddingTop: 8,
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   tabItem: {
     alignItems: 'center',
@@ -203,10 +202,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   iconWrapperFocused: {
-    backgroundColor: 'rgba(74, 125, 255, 0.12)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
   },
   tabLabel: {
-    color: '#8A8AAE',
+    color: 'rgb(255, 255, 255)',
     fontSize: 10,
     marginTop: 2,
     fontWeight: '500',
@@ -225,13 +224,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#4A7DFF',
   },
   payButton: {
-    top: -22,
+    top: -12,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#4A7DFF',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
     elevation: 12,
   },
   payButtonGradient: {

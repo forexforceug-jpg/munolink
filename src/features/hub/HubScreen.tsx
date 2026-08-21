@@ -382,13 +382,12 @@ const HubContent = ({ navigation }: any) => {
   const scrollViewRef = useRef<ScrollView>(null);
 
   // ============================================================
-  // FETCH CART ITEMS (Products only - 'purchase' action)
+  // FETCH CART ITEMS (Products with 'purchase' action)
   // ============================================================
   const fetchCartItems = useCallback(async () => {
     if (!user?.id) return [];
 
     try {
-      // Get cart items from user_interactions with 'purchase' action
       const { data: interactions, error: interactionsError } = await supabaseAny
         .from('user_interactions')
         .select('id, item_id, metadata, created_at')
@@ -407,7 +406,6 @@ const HubContent = ({ navigation }: any) => {
 
       const itemIds = interactions.map((i: any) => i.item_id);
       
-      // Fetch catalog items (products) only
       const { data: catalogItems, error: catalogError } = await supabaseAny
         .from('catalog')
         .select('*')
@@ -418,7 +416,6 @@ const HubContent = ({ navigation }: any) => {
         return [];
       }
 
-      // Get shop_products for catalog items
       const productIds = catalogItems?.map((item: any) => item.id) || [];
       let shopProducts: any[] = [];
       if (productIds.length > 0) {
@@ -429,7 +426,6 @@ const HubContent = ({ navigation }: any) => {
         if (!error) shopProducts = data || [];
       }
 
-      // Get shops
       const shopIds = shopProducts.map((sp: any) => sp.shop_id).filter(Boolean);
       let shops: any[] = [];
       if (shopIds.length > 0) {
@@ -440,7 +436,6 @@ const HubContent = ({ navigation }: any) => {
         if (!error) shops = data || [];
       }
 
-      // Build the cart items (products only)
       const cartItems: CartItem[] = [];
 
       for (const interaction of interactions) {
@@ -485,7 +480,7 @@ const HubContent = ({ navigation }: any) => {
     if (!user?.id) return [];
 
     try {
-      // Get bookings from user_interactions with 'booking' action
+      // ✅ Get bookings with 'booking' action
       const { data: interactions, error: interactionsError } = await supabaseAny
         .from('user_interactions')
         .select('id, item_id, metadata, created_at')
@@ -504,7 +499,6 @@ const HubContent = ({ navigation }: any) => {
 
       const itemIds = interactions.map((i: any) => i.item_id);
       
-      // Fetch service catalog items
       const { data: serviceItems, error: serviceError } = await supabaseAny
         .from('service_catalog')
         .select('*')
@@ -515,7 +509,6 @@ const HubContent = ({ navigation }: any) => {
         return [];
       }
 
-      // Get provider services
       const serviceCatalogIds = serviceItems?.map((item: any) => item.id) || [];
       let providerServices: any[] = [];
       if (serviceCatalogIds.length > 0) {
@@ -526,7 +519,6 @@ const HubContent = ({ navigation }: any) => {
         if (!error) providerServices = data || [];
       }
 
-      // Get users for provider services
       const userIds = providerServices.map((ps: any) => ps.user_id).filter(Boolean);
       let users: any[] = [];
       if (userIds.length > 0) {
@@ -537,7 +529,6 @@ const HubContent = ({ navigation }: any) => {
         if (!error) users = data || [];
       }
 
-      // Build booking items
       const bookingItems: Booking[] = [];
 
       for (const interaction of interactions) {
@@ -609,7 +600,6 @@ const HubContent = ({ navigation }: any) => {
         return [];
       }
 
-      // Get shop_products for pricing
       const productIds = catalogItems?.map((item: any) => item.id) || [];
       let shopProducts: any[] = [];
       if (productIds.length > 0) {
@@ -620,7 +610,6 @@ const HubContent = ({ navigation }: any) => {
         if (!error) shopProducts = data || [];
       }
 
-      // Get shops for names
       const shopIds = shopProducts.map((sp: any) => sp.shop_id).filter(Boolean);
       let shops: any[] = [];
       if (shopIds.length > 0) {
@@ -829,7 +818,6 @@ const HubContent = ({ navigation }: any) => {
   // --- Handle Change Provider ---
   const handleChangeProvider = async (item: any, newProvider: any) => {
     try {
-      // Update the interaction with new provider
       const { error } = await supabaseAny
         .from('user_interactions')
         .update({
@@ -849,7 +837,6 @@ const HubContent = ({ navigation }: any) => {
         return;
       }
 
-      // Refresh data
       await loadAllData();
       setShowProviderModal(false);
       Alert.alert('Success', 'Provider changed successfully');
@@ -864,11 +851,9 @@ const HubContent = ({ navigation }: any) => {
     setSelectedItem(item);
     
     try {
-      // Fetch available providers for this item
       let providers: any[] = [];
       
       if (item.item_type === 'product') {
-        // Get shops that sell this product
         const { data: shopProducts } = await supabaseAny
           .from('shop_products')
           .select('shop_id, shops(id, name, area, rating)')
@@ -883,7 +868,6 @@ const HubContent = ({ navigation }: any) => {
           }));
         }
       } else {
-        // Get providers for this service
         const { data: providerServices } = await supabaseAny
           .from('provider_services')
           .select('user_id, users(id, full_name, phone_number)')
@@ -1138,7 +1122,6 @@ const HubContent = ({ navigation }: any) => {
           )}
         </View>
 
-        {/* Provider Selection Modal */}
         <ProviderSelectionModal
           visible={showProviderModal}
           onClose={() => setShowProviderModal(false)}
@@ -1198,7 +1181,6 @@ const HubContent = ({ navigation }: any) => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* Provider Selection Modal */}
       <ProviderSelectionModal
         visible={showProviderModal}
         onClose={() => setShowProviderModal(false)}
@@ -1235,82 +1217,6 @@ export const HubScreen = ({ navigation }: any) => {
 // ============================================================
 
 const styles = StyleSheet.create({
-  // ... existing styles ...
-
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#1A2A4F',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: height * 0.7,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  providerList: {
-    paddingBottom: 20,
-  },
-  providerOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  providerOptionSelected: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  providerOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  providerAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  providerAvatarText: {
-    color: '#4A7DFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  providerOptionName: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  providerOptionLocation: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-
-
-// Also add the missing bookingCard styles if they're not already present
-// ... rest of existing styles ...
   desktopContainer: {
     flex: 1,
     backgroundColor: '#1A2A4F',
@@ -1887,6 +1793,75 @@ const styles = StyleSheet.create({
   guestContinueText: {
     color: '#8A8AAE',
     fontSize: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#1A2A4F',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: height * 0.7,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  providerList: {
+    paddingBottom: 20,
+  },
+  providerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  providerOptionSelected: {
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+  },
+  providerOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  providerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  providerAvatarText: {
+    color: '#4A7DFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  providerOptionName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  providerOptionLocation: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
   },
   bottomSpacer: {
     height: 20,
