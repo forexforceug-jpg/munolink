@@ -31,7 +31,7 @@ import { Opportunity as RawOpportunity } from '../../services/feed.service';
 import { recommendationService } from '../../services/recommendation.service';
 import { mapItemType } from '../../utils/typeHelpers';
 import { ViewabilityConfig, ViewToken } from 'react-native';
-import { ResponsiveLayout } from '../../layouts/ResponsiveLayout'; // ✅ Import ResponsiveLayout
+import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -41,12 +41,26 @@ interface SearchResult extends RawOpportunity {
   aiTag?: boolean;
 }
 
+interface SearchIntent {
+  keywords: string[];
+  categories: string[];
+  priceRange: { min: number; max: number } | null;
+  location: string | null;
+  type: 'product' | 'service' | 'all';
+  inStock: boolean;
+  minRating: number;
+}
+
 interface SearchResultsScreenProps {
   route: {
     params: {
       results: SearchResult[];
       query: string;
       initialIndex?: number;
+      intent?: SearchIntent;
+      hasResults?: boolean;
+      totalResults?: number;
+      recommendationsCount?: number;
     };
   };
   navigation: any;
@@ -70,7 +84,7 @@ const FILTER_OPTIONS: FilterOption[] = [
 ];
 
 // ============================================================
-// ✅ IMAGE HELPER
+// IMAGE HELPER
 // ============================================================
 
 const getItemImage = (item: any): string => {
@@ -149,7 +163,7 @@ const FilterChip = React.memo(({ option, isActive, onPress, count }: any) => (
   </TouchableOpacity>
 ));
 
-// Grid Result Card
+// Grid Result Card - NO BADGES
 const GridResultCard = React.memo(({ item, onPress }: any) => {
   const imageUrl = getItemImage(item);
 
@@ -180,27 +194,12 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
           </View>
         </View>
       </View>
-      {item.aiTag && (
-        <View style={styles.gridAITag}>
-          <Ionicons name="sparkles" size={10} color="#FFFFFF" />
-          <Text style={styles.gridAITagText}>AI Pick</Text>
-        </View>
-      )}
-      {/* Type badge */}
-      <View style={[
-        styles.gridTypeBadge,
-        item.type === 'service' ? styles.gridTypeBadgeService : styles.gridTypeBadgeProduct,
-      ]}>
-        <Text style={styles.gridTypeBadgeText}>
-          {item.type === 'service' ? 'Service' : 'Product'}
-        </Text>
-      </View>
     </TouchableOpacity>
   );
 });
 
 // ============================================================
-// SEARCH RESULTS CONTENT (Extracted for ResponsiveLayout)
+// SEARCH RESULTS CONTENT
 // ============================================================
 
 const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) => {
@@ -208,13 +207,21 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
 
-  const { results, query, initialIndex = 0 } = route.params || { results: [], query: '', initialIndex: 0 };
+  const { 
+    results, 
+    query, 
+    initialIndex = 0, 
+    intent,
+    hasResults = true,
+    totalResults = 0,
+    recommendationsCount = 0
+  } = route.params || { results: [], query: '', initialIndex: 0 };
 
-  // ✅ State
+  // State
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [filteredResults, setFilteredResults] = useState<SearchResult[]>(results);
   
-  // ✅ Refs for stable values
+  // Refs for stable values
   const flatListRef = useRef<FlatList>(null);
   const trackedViewRef = useRef<string>('');
   const currentIndexRef = useRef(initialIndex);
@@ -232,10 +239,10 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
   const [aiContextHint, setAiContextHint] = useState('');
 
-  // ✅ Memoized results
+  // Memoized results
   const memoizedResults = useMemo(() => results, [results]);
 
-  // ✅ Get counts for each filter
+  // Get counts for each filter
   const getFilterCounts = useCallback(() => {
     const counts = {
       all: memoizedResults.length,
@@ -249,7 +256,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
   const filterCounts = getFilterCounts();
 
-  // ✅ Apply filter
+  // Apply filter
   useEffect(() => {
     let filtered = [...memoizedResults];
     
@@ -287,7 +294,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     setFilteredResults(filtered);
   }, [activeFilter, memoizedResults]);
 
-  // ✅ Reset tracked view when results change
+  // Reset tracked view when results change
   useEffect(() => {
     trackedViewRef.current = '';
     currentIndexRef.current = initialIndex;
@@ -295,7 +302,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   }, [results, initialIndex]);
 
   // ============================================================
-  // ✅ HANDLERS
+  // HANDLERS
   // ============================================================
 
   const handleFilterPress = useCallback((filterKey: FilterType) => {
@@ -330,7 +337,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     setSelectedItem(null);
   }, []);
 
-  // ✅ STABLE: onViewableItemsChanged
+  // STABLE: onViewableItemsChanged
   const onViewableItemsChanged = useCallback((info: { viewableItems: ViewToken<SearchResult>[]; changed: ViewToken<SearchResult>[] }) => {
     const { viewableItems } = info;
     if (!viewableItems || viewableItems.length === 0) return;
@@ -357,18 +364,18 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     }
   }, [filteredResults, user?.id]);
 
-  // ✅ STABLE: viewabilityConfig
+  // STABLE: viewabilityConfig
   const viewabilityConfig = useMemo<ViewabilityConfig>(() => ({
     itemVisiblePercentThreshold: 50,
     minimumViewTime: 300,
   }), []);
 
-  // ✅ STABLE: keyExtractor
+  // STABLE: keyExtractor
   const keyExtractor = useCallback((item: SearchResult, index: number) => {
     return `result-${item.id}-${index}`;
   }, []);
 
-  // ✅ STABLE: getItemLayout
+  // STABLE: getItemLayout
   const getItemLayout = useCallback((data: any, index: number) => {
     const itemHeight = isDesktop ? height : height;
     return {
@@ -378,7 +385,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     };
   }, [isDesktop, height]);
 
-  // ✅ STABLE: renderGridItem
+  // STABLE: renderGridItem
   const renderGridItem = useCallback(
     ({ item }: { item: SearchResult }) => (
       <GridResultCard item={item} onPress={handleGridItemPress} />
@@ -386,7 +393,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     [handleGridItemPress]
   );
 
-  // ✅ STABLE: renderFullScreenItem
+  // STABLE: renderFullScreenItem
   const renderFullScreenItem = useCallback(
     ({ item }: { item: SearchResult }) => {
       if (!item) return null;
@@ -627,7 +634,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
               viewabilityConfig={viewabilityConfig}
               onViewableItemsChanged={onViewableItemsChanged}
               getItemLayout={getItemLayout}
-              initialScrollIndex={initialIndex}
+              initialScrollIndex={currentIndex}
               removeClippedSubviews={true}
               maxToRenderPerBatch={isDesktop ? 3 : 1}
               windowSize={isDesktop ? 5 : 2}
@@ -676,6 +683,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   const numColumns = isDesktop ? 4 : 2;
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
   const hasFilters = filteredResults.length !== memoizedResults.length;
+  const hasDirectResults = totalResults > 0;
 
   return (
     <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]}>
@@ -686,10 +694,17 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
         <TouchableOpacity style={styles.headerBack} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {memoizedResults.length} results for "{query}"
-          {hasFilters && ` (${filteredResults.length} filtered)`}
-        </Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {query}
+          </Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            {hasDirectResults 
+              ? `${totalResults} matches found` 
+              : `Showing ${memoizedResults.length} recommendations`}
+            {recommendationsCount > 0 && hasDirectResults && ` + ${recommendationsCount} recommendations`}
+          </Text>
+        </View>
         <TouchableOpacity style={styles.headerViewToggle} onPress={() => {
           setCurrentIndex(0);
           setViewMode('fullscreen');
@@ -699,7 +714,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
         </TouchableOpacity>
       </View>
 
-      {/* ✅ Filter Chips */}
+      {/* Filter Chips */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -717,10 +732,11 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
         ))}
       </ScrollView>
 
-      {/* Results Count */}
+      {/* Results Count with Intent Info */}
       <View style={styles.resultsCountContainer}>
         <Text style={styles.resultsCountText}>
           Showing {filteredResults.length} {filteredResults.length === 1 ? 'result' : 'results'}
+          {!hasDirectResults && ` (${recommendationsCount || 0} recommendations included)`}
           {hasFilters && ` (filtered from ${memoizedResults.length})`}
         </Text>
         {activeFilter !== 'all' && (
@@ -729,6 +745,55 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Intent Info - Show what was parsed from the query */}
+      {intent && (intent.keywords.length > 0 || intent.categories.length > 0 || intent.priceRange || intent.location) && (
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          style={styles.intentContainer}
+          contentContainerStyle={styles.intentContent}
+        >
+          {intent.keywords.length > 0 && (
+            <View style={styles.intentChip}>
+              <Ionicons name="search" size={12} color="#4A7DFF" />
+              <Text style={styles.intentChipText}>{intent.keywords.join(', ')}</Text>
+            </View>
+          )}
+          {intent.categories.length > 0 && (
+            <View style={styles.intentChip}>
+              <Ionicons name="pricetag" size={12} color="#4A7DFF" />
+              <Text style={styles.intentChipText}>{intent.categories.join(', ')}</Text>
+            </View>
+          )}
+          {intent.priceRange && (
+            <View style={styles.intentChip}>
+              <Ionicons name="cash" size={12} color="#4A7DFF" />
+              <Text style={styles.intentChipText}>
+                UGX {intent.priceRange.min.toLocaleString()} - {intent.priceRange.max.toLocaleString()}
+              </Text>
+            </View>
+          )}
+          {intent.location && (
+            <View style={styles.intentChip}>
+              <Ionicons name="location" size={12} color="#4A7DFF" />
+              <Text style={styles.intentChipText}>{intent.location}</Text>
+            </View>
+          )}
+          {intent.inStock && (
+            <View style={styles.intentChip}>
+              <Ionicons name="checkmark-circle" size={12} color="#2ECC71" />
+              <Text style={styles.intentChipText}>In Stock</Text>
+            </View>
+          )}
+          {intent.minRating > 0 && (
+            <View style={styles.intentChip}>
+              <Ionicons name="star" size={12} color="#F1C40F" />
+              <Text style={styles.intentChipText}>{intent.minRating}+ Stars</Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       {/* Grid FlatList */}
       <FlatList
@@ -755,6 +820,16 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
               <Text style={styles.clearFilterButtonText}>Show all results</Text>
             </TouchableOpacity>
           </View>
+        }
+        ListFooterComponent={
+          recommendationsCount > 0 && !hasDirectResults ? (
+            <View style={styles.recommendationFooter}>
+              <Ionicons name="bulb-outline" size={20} color="#F1C40F" />
+              <Text style={styles.recommendationFooterText}>
+                Showing {recommendationsCount} recommended items based on your search
+              </Text>
+            </View>
+          ) : null
         }
       />
 
@@ -791,7 +866,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 };
 
 // ============================================================
-// ✅ MAIN COMPONENT (Wrapped with ResponsiveLayout)
+// MAIN COMPONENT (Wrapped with ResponsiveLayout)
 // ============================================================
 
 export const SearchResultsScreen = ({ route, navigation }: SearchResultsScreenProps) => {
@@ -841,12 +916,19 @@ const styles = StyleSheet.create({
   headerBack: {
     padding: 4,
   },
-  headerTitle: {
+  headerCenter: {
     flex: 1,
+    marginLeft: 8,
+  },
+  headerTitle: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-    marginLeft: 8,
+  },
+  headerSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 1,
   },
   headerViewToggle: {
     flexDirection: 'row',
@@ -861,6 +943,33 @@ const styles = StyleSheet.create({
     color: '#4A7DFF',
     fontSize: 12,
     fontWeight: '500',
+  },
+
+  // Intent chips
+  intentContainer: {
+    backgroundColor: 'rgba(13, 13, 26, 0.9)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.03)',
+    paddingVertical: 4,
+  },
+  intentContent: {
+    paddingHorizontal: 16,
+    gap: 6,
+    alignItems: 'center',
+  },
+  intentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    gap: 4,
+    marginRight: 4,
+  },
+  intentChipText: {
+    color: '#8A8AAE',
+    fontSize: 10,
   },
 
   // Filters
@@ -941,18 +1050,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  clearFilterButton: {
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginTop: 12,
-  },
-  clearFilterButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
 
   // Grid
   gridContainer: {
@@ -1021,62 +1118,56 @@ const styles = StyleSheet.create({
     color: '#F1C40F',
     fontSize: 11,
   },
-  gridAITag: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
+
+  // Recommendation footer
+  recommendationFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 125, 255, 0.9)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    gap: 3,
-  },
-  gridAITagText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: '600',
-  },
-  gridTypeBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 8,
+    backgroundColor: 'rgba(241, 196, 15, 0.05)',
     borderRadius: 8,
+    marginHorizontal: 8,
+    marginTop: 8,
   },
-  gridTypeBadgeProduct: {
-    backgroundColor: 'rgba(74, 125, 255, 0.8)',
+  recommendationFooterText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    textAlign: 'center',
   },
-  gridTypeBadgeService: {
-    backgroundColor: 'rgba(108, 92, 231, 0.8)',
-  },
-  gridTypeBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: '500',
-  },
+
+  // Empty state
   noResults: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 60,
   },
-  noResultsIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
   noResultsTitle: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
+    marginTop: 12,
   },
   noResultsSubtext: {
     color: '#8A8AAE',
     fontSize: 14,
     marginTop: 4,
   },
+  clearFilterButton: {
+    backgroundColor: '#4A7DFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  clearFilterButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
   // Fullscreen
   backButton: {
     position: 'absolute',
@@ -1103,6 +1194,7 @@ const styles = StyleSheet.create({
     transform: [{ translateY: -150 }],
     zIndex: 50,
   },
+
   // Empty State
   emptyContainer: {
     flex: 1,

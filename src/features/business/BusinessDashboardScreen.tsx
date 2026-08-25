@@ -1,6 +1,6 @@
 // src/features/business/BusinessDashboardScreen.tsx
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,10 @@ import {
   FlatList,
   ActivityIndicator,
   Switch,
+  Animated,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -38,7 +42,22 @@ type ServiceCatalogItem = Database['public']['Tables']['service_catalog']['Row']
 type ShopProduct = Database['public']['Tables']['shop_products']['Row'];
 type ProviderService = Database['public']['Tables']['provider_services']['Row'];
 type ProductAttribute = Database['public']['Tables']['product_attributes']['Row'];
-type ProductAttributeValue = Database['public']['Tables']['product_attribute_values']['Row'];
+type Category = Database['public']['Tables']['categories']['Row'];
+
+// --- Opportunity Scene Interface ---
+interface OpportunityScene {
+  id: string;
+  opportunity_id: string;
+  opportunity_type: 'product' | 'service';
+  scene_index: number;
+  scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
+  image_url: string;
+  image_caption: string | null;
+  order_index: number;
+  is_primary: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 // --- Business Type Configuration ---
 const BUSINESS_CONFIGS: Record<string, any> = {
@@ -49,15 +68,15 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activityIcon: 'receipt-outline',
     statuses: ['New', 'Confirmed', 'Preparing', 'Ready', 'Shipped', 'Completed', 'Cancelled'],
     stats: ['Revenue', 'Orders', 'Customers', 'Products'],
-    quickActions: ['Browse Catalog', 'View Orders', 'Analytics', 'Business Settings'],
     catalogTable: 'catalog',
     offeringTable: 'shop_products',
     foreignKey: 'catalog_id',
     priceField: 'regular_price',
     stockField: 'in_stock',
     activeField: 'in_stock',
-    sellerSpecsField: 'seller_specifications',
+    sellerSpecsField: 'seller_specifications' as string,
     supportsAttributes: true,
+    hasStock: true,
   },
   service: {
     offeringLabel: 'Services',
@@ -66,7 +85,6 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activityIcon: 'calendar-outline',
     statuses: ['Requested', 'Accepted', 'Scheduled', 'In Progress', 'Completed', 'Cancelled'],
     stats: ['Revenue', 'Bookings', 'Customers', 'Services'],
-    quickActions: ['Browse Catalog', 'View Bookings', 'Set Availability', 'Business Settings'],
     catalogTable: 'service_catalog',
     offeringTable: 'provider_services',
     foreignKey: 'service_id',
@@ -74,6 +92,7 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activeField: 'is_active',
     sellerSpecsField: null,
     supportsAttributes: false,
+    hasStock: false,
   },
   institution: {
     offeringLabel: 'Offerings',
@@ -82,7 +101,6 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activityIcon: 'calendar-outline',
     statuses: ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled'],
     stats: ['Revenue', 'Reservations', 'Customers', 'Offerings'],
-    quickActions: ['Browse Catalog', 'View Reservations', 'Business Hours', 'Business Settings'],
     catalogTable: 'service_catalog',
     offeringTable: 'provider_services',
     foreignKey: 'service_id',
@@ -90,13 +108,35 @@ const BUSINESS_CONFIGS: Record<string, any> = {
     activeField: 'is_active',
     sellerSpecsField: null,
     supportsAttributes: false,
+    hasStock: false,
   },
 };
 
-// --- Main Component ---
+// --- Scene Types ---
+const SCENE_TYPES = [
+  { id: 'hero', label: 'Hero', icon: 'star', description: 'Main image shown first' },
+  { id: 'details', label: 'Details', icon: 'information-circle', description: 'Product details view' },
+  { id: 'trust', label: 'Trust', icon: 'shield-checkmark', description: 'Trust signals' },
+  { id: 'gallery', label: 'Gallery', icon: 'images', description: 'Multiple images' },
+  { id: 'extra', label: 'Extra', icon: 'add-circle', description: 'Additional image' },
+];
+
+// --- Tag Suggestions ---
+const SUGGESTED_TAGS = [
+  'Premium', 'Best Seller', 'New', 'Limited', 'Exclusive', 
+  'Free Delivery', 'Warranty', 'Certified', 'Eco-Friendly', 
+  'Organic', 'Handmade', 'Custom', 'On Sale', 'Trending'
+];
+
+// ============================================================
+// BUSINESS DASHBOARD MAIN COMPONENT
+// ============================================================
+
 const BusinessDashboardContent = ({ navigation }: any) => {
   const { user } = useAuth();
   const { isDesktop } = useBreakpoint();
+  
+  // --- State ---
   const [business, setBusiness] = useState<Shop | null>(null);
   const [businessType, setBusinessType] = useState<string>('shop');
   const [category, setCategory] = useState<string>('');
@@ -106,360 +146,200 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [stats, setStats] = useState<any>({});
-  const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [offerings, setOfferings] = useState<any[]>([]);
   const [walletBalance, setWalletBalance] = useState(0);
-  const [walletTransactions, setWalletTransactions] = useState<Transaction[]>([]);
+  const [selectedOffering, setSelectedOffering] = useState<any>(null);
+  const [showSceneManager, setShowSceneManager] = useState(false);
+  const [showBusinessSettings, setShowBusinessSettings] = useState(false);
   
-  // --- Catalog Browser States ---
-  const [showCatalogModal, setShowCatalogModal] = useState(false);
-  const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
-  const [catalogResults, setCatalogResults] = useState<any[]>([]);
+  // --- Categories from Database ---
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [brandOptions, setBrandOptions] = useState<string[]>([]);
+  
+  // --- Add Offering States ---
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [offeringType, setOfferingType] = useState<'product' | 'service'>('product');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [selectedCatalogItem, setSelectedCatalogItem] = useState<any>(null);
-  const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('All');
-  const [catalogCategories, setCatalogCategories] = useState<string[]>([]);
-  
-  // --- Offering Customization States ---
-  const [showCustomizeModal, setShowCustomizeModal] = useState(false);
-  const [customOffering, setCustomOffering] = useState<any>({
+  const [isCustomMode, setIsCustomMode] = useState(false);
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    category: '',
+    brand: '',
+    description: '',
     price: '',
     discount: '',
-    discountType: 'percentage',
-    specifications: {} as Record<string, any>,
-    attributeValues: {} as Record<string, string>,
+    discountType: 'percentage' as 'percentage' | 'fixed',
+    stock: '',
     in_stock: true,
     is_active: true,
+    images: [] as string[],
+    specifications: {} as Record<string, any>,
+    attributeValues: {} as Record<string, string>,
+    tags: [] as string[],
+    tagInput: '',
+    duration: '',
     custom_name: '',
     custom_description: '',
-    custom_images: [] as string[],
-    stock: '',
   });
   const [saving, setSaving] = useState(false);
-  const [uploadingImages, setUploadingImages] = useState(false);
   const [productAttributes, setProductAttributes] = useState<ProductAttribute[]>([]);
+  const [showSpecsModal, setShowSpecsModal] = useState(false);
+  const [specKey, setSpecKey] = useState('');
+  const [specValue, setSpecValue] = useState('');
+  
+  // --- Scene Manager States ---
+  const [sceneImages, setSceneImages] = useState<Record<string, string>>({});
+  const [galleryImages, setGalleryImages] = useState<string[]>([]);
+  
+  // --- Business Settings States ---
+  const [businessSettings, setBusinessSettings] = useState({
+    logo: '',
+    banner: '',
+    description: '',
+    phone: '',
+    email: '',
+    website: '',
+    workingHours: '',
+    isOpen: true,
+  });
+  const [savingSettings, setSavingSettings] = useState(false);
+  
+  const searchInputRef = useRef<TextInput>(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(height)).current;
 
-  // Load dashboard data
-  const loadDashboard = useCallback(async () => {
-    if (!user?.id) {
-      setLoading(false);
-      return;
-    }
+  // ============================================================
+  // 1. HELPER FUNCTIONS
+  // ============================================================
 
-    try {
-      // 1. Get business data
-      const { data: businessData, error: businessError } = await supabase
-        .from('shops')
-        .select('*')
-        .eq('owner_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (businessError) {
-        console.error('Business load error:', businessError);
-        setLoading(false);
-        return;
-      }
-
-      if (!businessData || businessData.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      const shop = businessData[0];
-      setBusiness(shop);
-      
-      const bizType = shop.business_type || 'shop';
-      setBusinessType(bizType);
-      setCategory(shop.category || '');
-
-      const bizConfig = BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop;
-      setConfig(bizConfig);
-
-      // 2. Get wallet balance
-      const { data: walletData, error: walletError } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('shop_id', shop.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (!walletError && walletData) {
-        const totalBalance = walletData
-          .filter((transaction) => transaction.status === 'completed')
-          .reduce(
-            (sum: number, transaction) =>
-              sum + (transaction.seller_received ?? transaction.amount ?? 0),
-            0,
-          );
-        setWalletBalance(totalBalance);
-        setWalletTransactions(walletData);
-      }
-
-      // 3. Get activity
-      const { data: activityData, error: activityError } = await supabase
-        .from('transactions')
-        .select(`
-          *,
-          users:user_id (
-            full_name,
-            phone_number
-          )
-        `)
-        .eq('shop_id', shop.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (!activityError && activityData) {
-        setRecentActivity(activityData);
-      }
-
-      // 4. Get offerings based on business type
-      await loadOfferings(shop, bizType);
-
-      // 5. Calculate stats
-      const today = new Date().toISOString().split('T')[0];
-      const todayActivity: Transaction[] =
-        activityData?.filter(
-          (activity) => activity.created_at?.startsWith(today),
-        ) ?? [];
-
-      const todayRevenue = todayActivity.reduce(
-        (sum: number, activity: Transaction) =>
-          sum + (activity.seller_received ?? activity.amount ?? 0),
-        0,
-      );
-
-      setStats({
-        revenue: todayRevenue,
-        activityCount: activityData?.length || 0,
-        customers: new Set(activityData?.map((a: any) => a.user_id)).size || 0,
-        offerings: offerings.length,
-        rating: shop.rating || 0,
-        reviews: shop.review_count || 0,
-      });
-
-    } catch (error) {
-      console.error('Error loading dashboard:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [user?.id]);
-
-  // Load offerings separately
-  const loadOfferings = async (shop: Shop, bizType: string) => {
-    if (bizType === 'shop') {
-      const { data: productData, error: productError } = await supabase
-        .from('shop_products')
-        .select(`
-          *,
-          catalog:catalog_id (
-            id,
-            name,
-            description,
-            images,
-            specifications,
-            category,
-            brand
-          )
-        `)
-        .eq('shop_id', shop.id)
-        .order('created_at', { ascending: false });
-
-      if (productError) {
-        console.error('Product load error:', productError);
-        if (productError.code === 'PGRST200' || productError.message?.includes('could not find')) {
-          console.log('⚠️ Join failed, trying without join...');
-          const { data: fallbackData, error: fallbackError } = await supabase
-            .from('shop_products')
-            .select('*')
-            .eq('shop_id', shop.id)
-            .order('created_at', { ascending: false });
-          
-          if (!fallbackError && fallbackData) {
-            setOfferings(fallbackData);
-          }
-        }
-        return;
-      }
-      
-      if (productData) {
-        setOfferings(productData);
-      }
-    } else if (bizType === 'service' || bizType === 'institution') {
-      if (shop.owner_id) {
-        const { data: serviceData, error: serviceError } = await supabase
-          .from('provider_services')
-          .select(`
-            *,
-            service_catalog:service_id (
-              id,
-              name,
-              description,
-              images,
-              duration,
-              category,
-              specifications
-            )
-          `)
-          .eq('user_id', shop.owner_id)
-          .order('created_at', { ascending: false });
-
-        if (serviceError) {
-          console.error('Service load error:', serviceError);
-          if (serviceError.code === 'PGRST200' || serviceError.message?.includes('could not find')) {
-            console.log('⚠️ Join failed, trying without join...');
-            const { data: fallbackData, error: fallbackError } = await supabase
-              .from('provider_services')
-              .select('*')
-              .eq('user_id', shop.owner_id)
-              .order('created_at', { ascending: false });
-            
-            if (!fallbackError && fallbackData) {
-              setOfferings(fallbackData);
-            }
-          }
-          return;
-        }
-
-        if (serviceData) {
-          setOfferings(serviceData);
-        }
-      }
-    }
-  };
-
-  useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    loadDashboard();
-  };
-
-  // --- Get the correct catalog table based on business type ---
-  const getCatalogTable = () => {
-    return config.catalogTable || 'catalog';
-  };
-
-  // --- Get the correct offering table based on business type ---
-  const getOfferingTable = () => {
-    return config.offeringTable || 'shop_products';
-  };
-
-  // --- Catalog Search ---
-  const searchCatalog = async (query: string, categoryFilter: string = 'All') => {
-    setCatalogSearchQuery(query);
-    setCatalogCategoryFilter(categoryFilter);
-    
-    const table = getCatalogTable();
-    setCatalogLoading(true);
-    
-    try {
-      let supabaseQuery = supabase
-        .from(table)
-        .select('*')
-        .order('name');
-
-      if (query.trim()) {
-        supabaseQuery = supabaseQuery.or(`name.ilike.%${query}%,description.ilike.%${query}%,category.ilike.%${query}%`);
-      }
-
-      if (categoryFilter !== 'All') {
-        supabaseQuery = supabaseQuery.eq('category', categoryFilter);
-      }
-
-      supabaseQuery = supabaseQuery.limit(30);
-
-      const { data, error } = await supabaseQuery;
-
-      if (error) {
-        console.error('Catalog search error:', error);
-        return;
-      }
-
-      setCatalogResults(data || []);
-
-      const categories = ['All', ...new Set(data?.map((item: any) => item.category).filter(Boolean))];
-      setCatalogCategories(categories);
-
-    } catch (error) {
-      console.error('Catalog search error:', error);
-    } finally {
-      setCatalogLoading(false);
-    }
-  };
-
-  // --- Open Catalog Browser ---
-  const openCatalogBrowser = () => {
-    setShowCatalogModal(true);
-    setCatalogSearchQuery('');
-    setCatalogCategoryFilter('All');
-    searchCatalog('', 'All');
-  };
-
-  // --- Select Catalog Item ---
-  const handleSelectCatalogItem = async (item: any) => {
-    setSelectedCatalogItem(item);
-    
-    const specs = item.specifications || {};
-    const editableSpecs: Record<string, any> = {};
-    Object.keys(specs).forEach(key => {
-      editableSpecs[key] = specs[key] || '';
-    });
-
-    setCustomOffering({
-      price: '',
-      discount: '',
-      discountType: 'percentage',
-      specifications: editableSpecs,
-      attributeValues: {},
-      in_stock: true,
-      is_active: true,
-      custom_name: item.name || '',
-      custom_description: item.description || '',
-      custom_images: item.images || [],
-      stock: '',
-    });
-
-    if (businessType === 'shop' && config.supportsAttributes) {
-      await loadProductAttributes(item.id);
-    }
-
-    setShowCatalogModal(false);
-    setShowCustomizeModal(true);
-  };
-
-  // --- Load Product Attributes ---
-  const loadProductAttributes = async (catalogId: string) => {
+  // --- Load Categories ---
+  const loadCategories = async () => {
     try {
       const { data, error } = await supabase
-        .from('product_attributes')
-        .select('*')
-        .eq('catalog_id', catalogId)
-        .order('sort_order', { ascending: true });
+        .from('categories')
+        .select('name')
+        .order('name', { ascending: true });
 
-      if (error) {
-        console.error('Error loading attributes:', error);
-        return;
+      if (!error && data) {
+        const names = data.map(c => c.name);
+        setCategoryOptions(names);
       }
-
-      setProductAttributes(data || []);
-      
-      const attributeValues: Record<string, string> = {};
-      data?.forEach((attr: ProductAttribute) => {
-        attributeValues[attr.attribute_name] = '';
-      });
-      
-      setCustomOffering((prev: any) => ({
-        ...prev,
-        attributeValues,
-      }));
-      
     } catch (error) {
-      console.error('Error loading attributes:', error);
+      console.error('Error loading categories:', error);
     }
+  };
+
+  // --- Save Scenes ---
+  const saveScenes = async (opportunityId: string, images: string[], type: 'product' | 'service') => {
+    try {
+      const sceneTypes = ['hero', 'details', 'trust', 'gallery', 'extra'];
+      const maxScenes = Math.min(images.length, 5);
+
+      for (let i = 0; i < maxScenes; i++) {
+        const sceneType = sceneTypes[i] || 'gallery';
+        await (supabase as any)
+          .from('opportunity_scenes')
+          .insert({
+            opportunity_id: opportunityId,
+            opportunity_type: type,
+            scene_index: i + 1,
+            scene_type: sceneType,
+            image_url: images[i],
+            is_primary: i === 0,
+            order_index: i,
+          });
+      }
+    } catch (error) {
+      console.error('Error saving scenes:', error);
+    }
+  };
+
+  // --- Save Product Attributes ---
+  const saveProductAttributes = async (catalogId: string, productId: string) => {
+    try {
+      const entries = Object.entries(formData.attributeValues).filter(([_, value]) => 
+        value && typeof value === 'string' && value.trim() !== ''
+      );
+
+      for (const [attributeName, value] of entries) {
+        let { data: existingAttribute } = await supabase
+          .from('product_attributes')
+          .select('id')
+          .eq('catalog_id', catalogId)
+          .eq('attribute_name', attributeName)
+          .single();
+
+        let attributeId: string;
+
+        if (!existingAttribute) {
+          const { data: newAttr, error: createError } = await supabase
+            .from('product_attributes')
+            .insert({
+              catalog_id: catalogId,
+              attribute_name: attributeName,
+              attribute_value: value,
+              attribute_type: 'text',
+            })
+            .select()
+            .single();
+
+          if (createError) throw createError;
+          if (!newAttr) throw new Error('Failed to create attribute');
+          attributeId = (newAttr as any).id;
+        } else {
+          attributeId = existingAttribute.id;
+        }
+
+        await supabase
+          .from('product_attribute_values')
+          .insert({
+            product_id: productId,
+            attribute_id: attributeId,
+            value: value,
+          });
+      }
+    } catch (error) {
+      console.error('Error saving attributes:', error);
+    }
+  };
+
+  // --- Add Tag ---
+  const addTag = (tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    if (formData.tags.includes(trimmed)) {
+      Alert.alert('Tag Exists', 'This tag is already added');
+      return;
+    }
+    if (formData.tags.length >= 10) {
+      Alert.alert('Too Many Tags', 'Maximum 10 tags allowed');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      tags: [...prev.tags, trimmed],
+      tagInput: '',
+    }));
+  };
+
+  // --- Remove Tag ---
+  const removeTag = (tag: string) => {
+    setFormData(prev => ({
+      ...prev,
+      tags: prev.tags.filter(t => t !== tag),
+    }));
+  };
+
+  // --- Remove Specification ---
+  const removeSpecification = (key: string) => {
+    const newSpecs = { ...formData.specifications };
+    delete newSpecs[key];
+    setFormData(prev => ({ ...prev, specifications: newSpecs }));
   };
 
   // --- Pick Images ---
@@ -479,9 +359,9 @@ const BusinessDashboardContent = ({ navigation }: any) => {
 
       if (!result.canceled && result.assets) {
         const imageUris = result.assets.map(asset => asset.uri);
-        setCustomOffering((prev: any) => ({
+        setFormData(prev => ({
           ...prev,
-          custom_images: [...prev.custom_images, ...imageUris],
+          images: [...prev.images, ...imageUris],
         }));
       }
     } catch (error) {
@@ -492,623 +372,874 @@ const BusinessDashboardContent = ({ navigation }: any) => {
 
   // --- Remove Image ---
   const removeImage = (index: number) => {
-    setCustomOffering((prev: any) => ({
+    setFormData(prev => ({
       ...prev,
-      custom_images: prev.custom_images.filter((_: any, i: number) => i !== index),
+      images: prev.images.filter((_, i) => i !== index),
     }));
   };
 
-  // --- Add Offering with Customization ---
-  const handleAddCustomizedOffering = async () => {
-    if (!business || !selectedCatalogItem) {
-      Alert.alert('Error', 'No item selected');
+  // --- Select Catalog Item ---
+  const selectCatalogItem = (item: any) => {
+    setSelectedCatalogItem(item);
+    setIsCustomMode(false);
+    setShowCustomForm(true);
+    
+    const specs = item.specifications || {};
+    const editableSpecs: Record<string, any> = {};
+    Object.keys(specs).forEach(key => {
+      editableSpecs[key] = specs[key] || '';
+    });
+
+    setFormData({
+      name: item.name || '',
+      category: item.category || '',
+      brand: item.brand || '',
+      description: item.description || '',
+      price: '',
+      discount: '',
+      discountType: 'percentage',
+      stock: '',
+      in_stock: true,
+      is_active: true,
+      images: item.images || [],
+      specifications: editableSpecs,
+      attributeValues: {},
+      tags: item.tags || [],
+      tagInput: '',
+      duration: item.duration || '',
+      custom_name: item.name || '',
+      custom_description: item.description || '',
+    });
+
+    if (offeringType === 'product' && config.supportsAttributes) {
+      loadProductAttributes(item.id);
+    }
+  };
+
+  // --- Create New Custom Offering ---
+  const createCustomOffering = () => {
+    setSelectedCatalogItem(null);
+    setIsCustomMode(true);
+    setShowCustomForm(true);
+    setFormData({
+      name: searchQuery.trim() || '',
+      category: '',
+      brand: '',
+      description: '',
+      price: '',
+      discount: '',
+      discountType: 'percentage',
+      stock: '',
+      in_stock: true,
+      is_active: true,
+      images: [],
+      specifications: {},
+      attributeValues: {},
+      tags: [],
+      tagInput: '',
+      duration: '',
+      custom_name: '',
+      custom_description: '',
+    });
+    setSearchResults([]);
+    setSearchQuery('');
+    setProductAttributes([]);
+  };
+
+  // --- Load Product Attributes ---
+  const loadProductAttributes = async (catalogId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('product_attributes')
+        .select('*')
+        .eq('catalog_id', catalogId)
+        .order('sort_order', { ascending: true });
+
+      if (!error && data) {
+        setProductAttributes(data);
+        const attributeValues: Record<string, string> = {};
+        data.forEach((attr: ProductAttribute) => {
+          attributeValues[attr.attribute_name] = '';
+        });
+        setFormData(prev => ({ ...prev, attributeValues }));
+      }
+    } catch (error) {
+      console.error('Error loading attributes:', error);
+    }
+  };
+
+  // --- Add Specification ---
+  const addSpecification = () => {
+    if (!specKey.trim() || !specValue.trim()) {
+      Alert.alert('Error', 'Please enter both key and value');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      specifications: { ...prev.specifications, [specKey.trim()]: specValue.trim() },
+    }));
+    setSpecKey('');
+    setSpecValue('');
+    setShowSpecsModal(false);
+  };
+
+  // --- Smart Search ---
+  const performSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
       return;
     }
 
-    if (!customOffering.price || parseFloat(customOffering.price) <= 0) {
+    setIsSearching(true);
+    const table = offeringType === 'product' ? 'catalog' : 'service_catalog';
+    
+    try {
+      let searchQuery = `name.ilike.%${query}%,category.ilike.%${query}%`;
+      if (offeringType === 'product') {
+        searchQuery += `,brand.ilike.%${query}%`;
+      }
+      
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .or(searchQuery)
+        .limit(15);
+
+      if (!error && data) {
+        setSearchResults(data);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // --- Reset Form ---
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      category: '',
+      brand: '',
+      description: '',
+      price: '',
+      discount: '',
+      discountType: 'percentage',
+      stock: '',
+      in_stock: true,
+      is_active: true,
+      images: [],
+      specifications: {},
+      attributeValues: {},
+      tags: [],
+      tagInput: '',
+      duration: '',
+      custom_name: '',
+      custom_description: '',
+    });
+    setSelectedCatalogItem(null);
+    setIsCustomMode(false);
+    setSearchResults([]);
+    setSearchQuery('');
+    setProductAttributes([]);
+    setShowCustomForm(false);
+  };
+
+  // --- Load All Offerings (Products + Services) ---
+  const loadAllOfferings = async (shop: Shop) => {
+    console.log('🔄 Loading offerings for shop:', shop.id);
+    let allOfferings: any[] = [];
+
+    // 1. Load Products with catalog data
+    try {
+      const { data: productData, error: productError } = await supabase
+        .from('shop_products')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .order('created_at', { ascending: false });
+
+      if (!productError && productData) {
+        console.log('✅ Found', productData.length, 'products');
+        
+        const productsWithCatalog = await Promise.all(productData.map(async (item) => {
+          let catalogData = null;
+          if (item.catalog_id) {
+            const { data: catalog, error: catalogError } = await supabase
+              .from('catalog')
+              .select('*')
+              .eq('id', item.catalog_id)
+              .single();
+            
+            if (!catalogError) {
+              catalogData = catalog;
+            }
+          }
+          
+          const { data: sceneData } = await (supabase as any)
+            .from('opportunity_scenes')
+            .select('*')
+            .eq('opportunity_id', item.id)
+            .eq('opportunity_type', 'product')
+            .order('scene_index', { ascending: true });
+          
+          return { 
+            ...item, 
+            catalog: catalogData, 
+            type: 'product', 
+            scenes: sceneData || [] 
+          };
+        }));
+        
+        allOfferings = [...allOfferings, ...productsWithCatalog];
+      } else if (productError) {
+        console.error('❌ Product load error:', productError);
+      }
+    } catch (error) {
+      console.error('❌ Product load exception:', error);
+    }
+
+    // 2. Load Services with catalog data
+    if (shop.owner_id) {
+      try {
+        const { data: serviceData, error: serviceError } = await supabase
+          .from('provider_services')
+          .select('*')
+          .eq('user_id', shop.owner_id)
+          .order('created_at', { ascending: false });
+
+        if (!serviceError && serviceData) {
+          console.log('✅ Found', serviceData.length, 'services');
+          
+          const servicesWithCatalog = await Promise.all(serviceData.map(async (item) => {
+            let catalogData = null;
+            if (item.service_id) {
+              const { data: catalog, error: catalogError } = await supabase
+                .from('service_catalog')
+                .select('*')
+                .eq('id', item.service_id)
+                .single();
+              
+              if (!catalogError) {
+                catalogData = catalog;
+              }
+            }
+            
+            const { data: sceneData } = await (supabase as any)
+              .from('opportunity_scenes')
+              .select('*')
+              .eq('opportunity_id', item.id)
+              .eq('opportunity_type', 'service')
+              .order('scene_index', { ascending: true });
+            
+            return { 
+              ...item, 
+              service_catalog: catalogData, 
+              type: 'service', 
+              scenes: sceneData || [] 
+            };
+          }));
+          
+          allOfferings = [...allOfferings, ...servicesWithCatalog];
+        } else if (serviceError) {
+          console.error('❌ Service load error:', serviceError);
+        }
+      } catch (error) {
+        console.error('❌ Service load exception:', error);
+      }
+    }
+
+    allOfferings.sort((a, b) => {
+      const dateA = new Date(a.created_at || 0);
+      const dateB = new Date(b.created_at || 0);
+      return dateB.getTime() - dateA.getTime();
+    });
+    
+    console.log('📊 Total offerings loaded:', allOfferings.length);
+    setOfferings(allOfferings);
+  };
+
+  // ============================================================
+  // 2. MAIN FUNCTIONS
+  // ============================================================
+
+  // --- Load Dashboard ---
+  const loadDashboard = useCallback(async () => {
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { data: businessData, error: businessError } = await supabase
+        .from('shops')
+        .select('*')
+        .eq('owner_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (businessError || !businessData || businessData.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const shop = businessData[0];
+      setBusiness(shop);
+      
+      const bizType = shop.business_type || 'shop';
+      setBusinessType(bizType);
+      setCategory(shop.category || '');
+      setConfig(BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop);
+
+      setBusinessSettings({
+        logo: shop.logo_url || '',
+        banner: '',
+        description: shop.description || '',
+        phone: shop.phone || '',
+        email: '',
+        website: '',
+        workingHours: shop.opening_hours || '',
+        isOpen: shop.is_open !== false,
+      });
+
+      await loadAllOfferings(shop);
+
+      const { data: activityData } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('shop_id', shop.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      const today = new Date().toISOString().split('T')[0];
+      const todayActivity = activityData?.filter(a => a.created_at?.startsWith(today)) ?? [];
+      const todayRevenue = todayActivity.reduce((sum, a) => sum + (a.amount || 0), 0);
+
+      setStats({
+        revenue: todayRevenue,
+        activityCount: activityData?.length || 0,
+        customers: new Set(activityData?.map(a => a.user_id)).size || 0,
+        offerings: offerings.length,
+        rating: shop.rating || 0,
+        reviews: shop.review_count || 0,
+      });
+
+      await loadCategories();
+
+    } catch (error) {
+      console.error('Error loading dashboard:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [user?.id]);
+
+  // --- Publish Offering ---
+  const publishOffering = async () => {
+    if (!business) {
+      Alert.alert('Error', 'No business found');
+      return;
+    }
+
+    if (!formData.name.trim()) {
+      Alert.alert('Error', 'Please enter a name');
+      return;
+    }
+
+    if (!formData.price || parseFloat(formData.price) <= 0) {
       Alert.alert('Error', 'Please enter a valid price');
       return;
     }
 
     setSaving(true);
+
     try {
-      const price = parseFloat(customOffering.price);
-      const discount = customOffering.discount ? parseFloat(customOffering.discount) : 0;
+      const price = parseFloat(formData.price);
+      const discount = formData.discount ? parseFloat(formData.discount) : 0;
       
       let finalPrice = price;
       if (discount > 0) {
-        if (customOffering.discountType === 'percentage') {
+        if (formData.discountType === 'percentage') {
           finalPrice = price - (price * discount / 100);
         } else {
           finalPrice = price - discount;
         }
       }
 
-      let offeringId: string | null = null;
-      let shopProductId: string | null = null;
+      let catalogId: string = selectedCatalogItem?.id || '';
+      const table = offeringType === 'product' ? 'catalog' : 'service_catalog';
 
-      if (businessType === 'shop') {
-        const offeringData = {
-          shop_id: business.id,
-          catalog_id: selectedCatalogItem.id,
-          regular_price: finalPrice,
-          in_stock: customOffering.in_stock,
-          seller_specifications: customOffering.specifications || {},
+      // If custom mode or no catalog ID, create catalog entry first
+      if (isCustomMode || !catalogId) {
+        const insertData: any = {
+          name: formData.name.trim(),
+          category: formData.category || 'Uncategorized',
+          description: formData.description || null,
+          specifications: formData.specifications || {},
+          images: formData.images || [],
+          is_active: true,
+          tags: formData.tags || [],
         };
+        
+        if (offeringType === 'product') {
+          insertData.brand = formData.brand || null;
+        }
+        
+        if (offeringType === 'service') {
+          insertData.duration = formData.duration || null;
+        }
 
-        console.log('📤 Inserting into shop_products:', offeringData);
-
-        const { data, error } = await supabase
-          .from('shop_products')
-          .insert(offeringData)
+        const { data: newCatalog, error: catalogError } = await supabase
+          .from(table)
+          .insert(insertData)
           .select()
           .single();
 
-        if (error) {
-          console.error('❌ Shop product insert error:', error);
-          if (error.message?.includes('catalog_id')) {
-            throw new Error('Invalid catalog item. Please try again.');
-          }
-          if (error.message?.includes('shop_id')) {
-            throw new Error('Invalid shop. Please contact support.');
-          }
-          throw error;
-        }
-
-        offeringId = data.id;
-        shopProductId = data.id;
-        console.log('✅ Shop product created:', offeringId);
-
-        if (config.supportsAttributes && Object.keys(customOffering.attributeValues).length > 0) {
-          await handleProductAttributes(selectedCatalogItem.id, shopProductId);
-        }
-
-      } else {
-        const offeringData: any = {
-          user_id: business.owner_id,
-          service_id: selectedCatalogItem.id,
-          price: finalPrice,
-          is_active: customOffering.is_active,
-        };
-
-        if (businessType === 'institution') {
-          offeringData.institution_id = business.id;
-        }
-
-        console.log('📤 Inserting into provider_services:', offeringData);
-
-        const { data, error } = await supabase
-          .from('provider_services')
-          .insert(offeringData)
-          .select()
-          .single();
-
-        if (error) {
-          console.error('❌ Provider service insert error:', error);
-          if (error.message?.includes('service_id')) {
-            throw new Error('Invalid service. Please try again.');
-          }
-          if (error.message?.includes('user_id')) {
-            throw new Error('Invalid user. Please contact support.');
-          }
-          throw error;
-        }
-
-        offeringId = data.id;
-        console.log('✅ Provider service created:', offeringId);
+        if (catalogError) throw catalogError;
+        if (!newCatalog) throw new Error('Failed to create catalog item');
+        catalogId = (newCatalog as any).id;
       }
 
-      Alert.alert(
-        'Success', 
-        `${config.offeringLabel.slice(0, -1)} added successfully!`,
-        [{ text: 'OK' }]
-      );
+      if (!catalogId) {
+        throw new Error('No catalog ID available. Please select or create a catalog item.');
+      }
+
+      let existingOffering = null;
       
-      setShowCustomizeModal(false);
-      setSelectedCatalogItem(null);
-      setProductAttributes([]);
-      setCustomOffering({
-        price: '',
-        discount: '',
-        discountType: 'percentage',
-        specifications: {},
-        attributeValues: {},
-        in_stock: true,
-        is_active: true,
-        custom_name: '',
-        custom_description: '',
-        custom_images: [],
-        stock: '',
-      });
-      loadDashboard();
+      if (offeringType === 'product') {
+        const { data, error } = await supabase
+          .from('shop_products')
+          .select('id, catalog_id, regular_price, in_stock, seller_specifications')
+          .eq('shop_id', business.id)
+          .eq('catalog_id', catalogId)
+          .maybeSingle();
+
+        if (!error && data) {
+          existingOffering = data;
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('provider_services')
+          .select('id, service_id, price, is_active')
+          .eq('user_id', business.owner_id!)
+          .eq('service_id', catalogId)
+          .maybeSingle();
+
+        if (!error && data) {
+          existingOffering = data;
+        }
+      }
+
+      let offeringId: string | null = null;
+
+      if (existingOffering) {
+        if (offeringType === 'product') {
+          const { data, error } = await supabase
+            .from('shop_products')
+            .update({
+              regular_price: finalPrice,
+              in_stock: formData.in_stock,
+              seller_specifications: formData.specifications || {},
+            })
+            .eq('id', existingOffering.id)
+            .select()
+            .single();
+
+          if (error) throw error;
+          offeringId = existingOffering.id;
+        } else {
+          const { data, error } = await supabase
+            .from('provider_services')
+            .update({
+              price: finalPrice,
+              is_active: formData.is_active,
+            })
+            .eq('id', existingOffering.id)
+            .select()
+            .single();
+
+          if (error) throw error;
+          offeringId = existingOffering.id;
+        }
+
+        Alert.alert(
+          'Updated!',
+          `Your ${offeringType} has been updated successfully!`,
+          [{ text: 'OK' }]
+        );
+
+      } else {
+        if (offeringType === 'product') {
+          const { data, error } = await supabase
+            .from('shop_products')
+            .insert({
+              shop_id: business.id,
+              catalog_id: catalogId,
+              regular_price: finalPrice,
+              in_stock: formData.in_stock,
+              seller_specifications: formData.specifications || {},
+            })
+            .select()
+            .single();
+
+          if (error) {
+            if (error.code === '23505') {
+              await loadDashboard();
+              Alert.alert(
+                'Already Exists',
+                `This ${offeringType} is already in your catalog. It has been refreshed.`,
+                [{ text: 'OK' }]
+              );
+              setSaving(false);
+              setShowAddModal(false);
+              setShowCustomForm(false);
+              resetForm();
+              return;
+            }
+            throw error;
+          }
+          if (!data) throw new Error('Failed to create product');
+          offeringId = (data as any).id;
+
+          if (config.supportsAttributes && Object.keys(formData.attributeValues).length > 0 && catalogId) {
+            await saveProductAttributes(catalogId, offeringId);
+          }
+
+        } else {
+          const { data, error } = await supabase
+            .from('provider_services')
+            .insert({
+              user_id: business.owner_id!,
+              service_id: catalogId,
+              price: finalPrice,
+              is_active: formData.is_active,
+              ...(businessType === 'institution' ? { institution_id: business.id } : {}),
+            })
+            .select()
+            .single();
+
+          if (error) {
+            if (error.code === '23505') {
+              await loadDashboard();
+              Alert.alert(
+                'Already Exists',
+                `This ${offeringType} is already in your catalog. It has been refreshed.`,
+                [{ text: 'OK' }]
+              );
+              setSaving(false);
+              setShowAddModal(false);
+              setShowCustomForm(false);
+              resetForm();
+              return;
+            }
+            throw error;
+          }
+          if (!data) throw new Error('Failed to create service');
+          offeringId = (data as any).id;
+        }
+
+        Alert.alert(
+          'Success!',
+          `${isCustomMode ? 'Custom ' : ''}${offeringType === 'product' ? 'Product' : 'Service'} published successfully!`,
+          [{ text: 'OK' }]
+        );
+      }
+
+      if (offeringId && formData.images.length > 0) {
+        await (supabase as any)
+          .from('opportunity_scenes')
+          .delete()
+          .eq('opportunity_id', offeringId)
+          .eq('opportunity_type', offeringType);
+        
+        await saveScenes(offeringId, formData.images, offeringType);
+      }
+
+      resetForm();
+      setShowAddModal(false);
+      setShowCustomForm(false);
+      await loadDashboard();
 
     } catch (error: any) {
-      console.error('❌ Add offering error:', error);
-      Alert.alert('Error', error.message || 'Failed to add offering');
+      console.error('Publish error:', error);
+      Alert.alert('Error', error.message || 'Failed to publish');
     } finally {
       setSaving(false);
     }
   };
 
-  // --- Handle Product Attributes ---
-  const handleProductAttributes = async (catalogId: string, productId: string) => {
-    try {
-      const attributeValues = customOffering.attributeValues || {};
-      const entries = Object.entries(attributeValues).filter(([_, value]) => 
-        value && typeof value === 'string' && value.trim() !== ''
-      );
-      if (entries.length === 0) {
-        console.log('No attribute values to save');
-        return;
-      }
+  // --- Open Scene Manager ---
+  const openSceneManager = async (offering: any) => {
+    setSelectedOffering(offering);
+    setShowSceneManager(true);
+    
+    const type = offering.type || 'product';
+    
+    const { data } = await (supabase as any)
+      .from('opportunity_scenes')
+      .select('*')
+      .eq('opportunity_id', offering.id)
+      .eq('opportunity_type', type)
+      .order('scene_index', { ascending: true });
 
-      console.log('📤 Saving product attributes:', entries);
-
-      for (const [attributeName, value] of entries) {
-        let { data: existingAttribute, error: findError } = await supabase
-          .from('product_attributes')
-          .select('id')
-          .eq('catalog_id', catalogId)
-          .eq('attribute_name', attributeName)
-          .single();
-
-        if (findError && findError.code !== 'PGRST116') {
-          console.error('Error finding attribute:', findError);
-          continue;
-        }
-
-        let attributeId: string;
-
-        if (!existingAttribute) {
-          const { data: newAttr, error: createError } = await supabase
-            .from('product_attributes')
-            .insert({
-              catalog_id: catalogId,
-              attribute_name: attributeName,
-              attribute_value: typeof value === 'string' ? value : String(value),
-              attribute_type: 'text',
-            })
-            .select()
-            .single();
-
-          if (createError) {
-            console.error('Error creating attribute:', createError);
-            continue;
-          }
-          attributeId = newAttr.id;
+    if (data) {
+      const sceneMap: Record<string, string> = {};
+      const gallery: string[] = [];
+      data.forEach((scene: OpportunityScene) => {
+        if (scene.scene_type === 'gallery') {
+          gallery.push(scene.image_url);
         } else {
-          attributeId = existingAttribute.id;
+          sceneMap[scene.scene_type] = scene.image_url;
         }
-
-        const { error: valueError } = await supabase
-          .from('product_attribute_values')
-          .insert({
-            product_id: productId,
-            attribute_id: attributeId,
-            value: typeof value === 'string' ? value : String(value),
-          });
-
-        if (valueError) {
-          console.error('Error inserting attribute value:', valueError);
-          if (valueError.code === '23505') {
-            const { error: updateError } = await supabase
-              .from('product_attribute_values')
-              .update({ value: typeof value === 'string' ? value : String(value) })
-              .eq('product_id', productId)
-              .eq('attribute_id', attributeId);
-            if (updateError) {
-              console.error('Error updating attribute value:', updateError);
-            }
+      });
+      setSceneImages(sceneMap);
+      setGalleryImages(gallery);
+    } else {
+      const catalogData = offering.catalog || offering.service_catalog;
+      if (catalogData?.images && catalogData.images.length > 0) {
+        const initialSceneMap: Record<string, string> = {};
+        const initialGallery: string[] = [];
+        catalogData.images.forEach((img: string, index: number) => {
+          if (index < 3) {
+            const sceneTypes = ['hero', 'details', 'trust'];
+            initialSceneMap[sceneTypes[index]] = img;
+          } else {
+            initialGallery.push(img);
           }
-        }
+        });
+        setSceneImages(initialSceneMap);
+        setGalleryImages(initialGallery);
       }
-
-      console.log('✅ Product attributes saved successfully');
-
-    } catch (error) {
-      console.error('Error handling product attributes:', error);
     }
   };
 
-  // --- Render Catalog Browser ---
-  const renderCatalogBrowser = () => (
-    <Modal
-      visible={showCatalogModal}
-      transparent={false}
-      animationType="slide"
-      onRequestClose={() => setShowCatalogModal(false)}
-    >
-      <SafeAreaView style={styles.modalFullScreen}>
-        <View style={styles.modalFullHeader}>
-          <TouchableOpacity onPress={() => setShowCatalogModal(false)}>
-            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-          </TouchableOpacity>
-          <Text style={styles.modalFullTitle}>Browse {config.offeringLabel}</Text>
-          <View style={{ width: 24 }} />
-        </View>
+  // --- Update Scene Image ---
+  const updateSceneImage = async (sceneType: string, imageUri: string) => {
+    if (!selectedOffering) return;
 
-        <View style={styles.searchContainer}>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={20} color="#8A8AAE" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder={`Search ${config.offeringLabel.toLowerCase()}...`}
-              placeholderTextColor="#8A8AAE"
-              value={catalogSearchQuery}
-              onChangeText={(text) => searchCatalog(text, catalogCategoryFilter)}
-            />
-            {catalogSearchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => searchCatalog('', catalogCategoryFilter)}>
-                <Ionicons name="close-circle" size={20} color="#8A8AAE" />
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
+    try {
+      const imageUrl = imageUri;
+      const type = selectedOffering.type || 'product';
+      
+      const { error } = await (supabase as any)
+        .from('opportunity_scenes')
+        .upsert({
+          opportunity_id: selectedOffering.id,
+          opportunity_type: type,
+          scene_type: sceneType,
+          scene_index: SCENE_TYPES.findIndex(s => s.id === sceneType) + 1,
+          image_url: imageUrl,
+          is_primary: sceneType === 'hero',
+        }, { onConflict: 'opportunity_id, scene_type' });
 
-        {catalogCategories.length > 1 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.categoryFilters}
-            contentContainerStyle={styles.categoryFiltersContent}
-          >
-            {catalogCategories.map((cat) => (
-              <TouchableOpacity
-                key={cat}
-                style={[
-                  styles.categoryFilterChip,
-                  catalogCategoryFilter === cat && styles.categoryFilterChipActive,
-                ]}
-                onPress={() => searchCatalog(catalogSearchQuery, cat)}
-              >
-                <Text
-                  style={[
-                    styles.categoryFilterText,
-                    catalogCategoryFilter === cat && styles.categoryFilterTextActive,
-                  ]}
-                >
-                  {cat}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
+      if (error) throw error;
 
-        {catalogLoading ? (
-          <View style={styles.catalogLoading}>
-            <ActivityIndicator size="large" color="#4A7DFF" />
-            <Text style={styles.catalogLoadingText}>Loading catalog...</Text>
-          </View>
-        ) : catalogResults.length === 0 ? (
-          <View style={styles.catalogEmpty}>
-            <Ionicons name="search-outline" size={48} color="#8A8AAE" />
-            <Text style={styles.catalogEmptyTitle}>No items found</Text>
-            <Text style={styles.catalogEmptySubtext}>
-              Try adjusting your search or filters
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            data={catalogResults}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.catalogItemCard}
-                onPress={() => handleSelectCatalogItem(item)}
-              >
-                <Image
-                  source={{ uri: item.images?.[0] || 'https://via.placeholder.com/80' }}
-                  style={styles.catalogItemImage}
-                />
-                <View style={styles.catalogItemInfo}>
-                  <Text style={styles.catalogItemName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.catalogItemCategory}>
-                    {item.category || 'Uncategorized'}
-                  </Text>
-                  {item.brand && (
-                    <Text style={styles.catalogItemBrand}>🏷️ {item.brand}</Text>
-                  )}
-                  {item.duration && (
-                    <Text style={styles.catalogItemDuration}>⏱️ {item.duration}</Text>
-                  )}
-                </View>
-                <View style={styles.catalogItemSelect}>
-                  <Ionicons name="chevron-forward" size={20} color="#4A7DFF" />
-                </View>
-              </TouchableOpacity>
-            )}
-            contentContainerStyle={styles.catalogListContent}
-          />
-        )}
-      </SafeAreaView>
-    </Modal>
-  );
+      setSceneImages(prev => ({ ...prev, [sceneType]: imageUrl }));
+      Alert.alert('Success', 'Scene updated successfully!');
 
-  // --- Render Customization Modal ---
-  const renderCustomizeModal = () => (
-    <Modal
-      visible={showCustomizeModal}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => {
-        setShowCustomizeModal(false);
-        setSelectedCatalogItem(null);
-        setProductAttributes([]);
-      }}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              Customize {config.offeringLabel.slice(0, -1)}
-            </Text>
-            <TouchableOpacity onPress={() => {
-              setShowCustomizeModal(false);
-              setSelectedCatalogItem(null);
-              setProductAttributes([]);
-            }}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
+    } catch (error) {
+      console.error('Error updating scene:', error);
+      Alert.alert('Error', 'Failed to update scene');
+    }
+  };
 
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {selectedCatalogItem && (
-              <View style={styles.catalogPreview}>
-                <Image
-                  source={{ uri: selectedCatalogItem.images?.[0] || 'https://via.placeholder.com/100' }}
-                  style={styles.catalogPreviewImage}
-                />
-                <View style={styles.catalogPreviewInfo}>
-                  <Text style={styles.catalogPreviewName}>{selectedCatalogItem.name}</Text>
-                  <Text style={styles.catalogPreviewCategory}>
-                    {selectedCatalogItem.category}
-                  </Text>
-                </View>
-              </View>
-            )}
+  // --- Add Gallery Images ---
+  const addGalleryImages = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        return;
+      }
 
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Your Price (UGX) *</Text>
-              <TextInput
-                style={styles.formInput}
-                placeholder="Enter your price"
-                placeholderTextColor="#8A8AAE"
-                keyboardType="numeric"
-                value={customOffering.price}
-                onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, price: text }))}
-              />
-            </View>
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.8,
+      });
 
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Discount</Text>
-              <View style={styles.discountRow}>
-                <TextInput
-                  style={[styles.formInput, styles.discountInput]}
-                  placeholder="0"
-                  placeholderTextColor="#8A8AAE"
-                  keyboardType="numeric"
-                  value={customOffering.discount}
-                  onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, discount: text }))}
-                />
-                <View style={styles.discountTypeContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.discountTypeBtn,
-                      customOffering.discountType === 'percentage' && styles.discountTypeActive,
-                    ]}
-                    onPress={() => setCustomOffering((prev: any) => ({ ...prev, discountType: 'percentage' }))}
-                  >
-                    <Text style={[styles.discountTypeText, customOffering.discountType === 'percentage' && styles.discountTypeTextActive]}>
-                      %
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.discountTypeBtn,
-                      customOffering.discountType === 'fixed' && styles.discountTypeActive,
-                    ]}
-                    onPress={() => setCustomOffering((prev: any) => ({ ...prev, discountType: 'fixed' }))}
-                  >
-                    <Text style={[styles.discountTypeText, customOffering.discountType === 'fixed' && styles.discountTypeTextActive]}>
-                      UGX
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
+      if (!result.canceled && result.assets) {
+        const newImages = result.assets.map(asset => asset.uri);
+        const allImages = [...galleryImages, ...newImages];
+        const type = selectedOffering.type || 'product';
+        
+        for (const img of newImages) {
+          await (supabase as any)
+            .from('opportunity_scenes')
+            .insert({
+              opportunity_id: selectedOffering.id,
+              opportunity_type: type,
+              scene_type: 'gallery',
+              scene_index: galleryImages.length + 1,
+              image_url: img,
+              is_primary: false,
+            });
+        }
+        
+        setGalleryImages(allImages);
+      }
+    } catch (error) {
+      console.error('Error adding gallery images:', error);
+    }
+  };
 
-            {businessType === 'shop' && (
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Stock Quantity</Text>
-                <TextInput
-                  style={styles.formInput}
-                  placeholder="Enter stock quantity"
-                  placeholderTextColor="#8A8AAE"
-                  keyboardType="numeric"
-                  value={customOffering.stock}
-                  onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, stock: text }))}
-                />
-              </View>
-            )}
+  // --- Remove Gallery Image ---
+  const removeGalleryImage = async (index: number) => {
+    const imageToRemove = galleryImages[index];
+    try {
+      await (supabase as any)
+        .from('opportunity_scenes')
+        .delete()
+        .eq('opportunity_id', selectedOffering.id)
+        .eq('image_url', imageToRemove);
 
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Your Images</Text>
-              <View style={styles.imageUploadRow}>
-                {customOffering.custom_images.map((uri: string, index: number) => (
-                  <View key={index} style={styles.imagePreviewContainer}>
-                    <Image source={{ uri }} style={styles.imagePreview} />
-                    <TouchableOpacity
-                      style={styles.imageRemoveBtn}
-                      onPress={() => removeImage(index)}
-                    >
-                      <Ionicons name="close-circle" size={20} color="#E74C3C" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                <TouchableOpacity style={styles.imageAddBtn} onPress={pickImages}>
-                  <Ionicons name="camera" size={24} color="#4A7DFF" />
-                  <Text style={styles.imageAddText}>Add Photos</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+      setGalleryImages(prev => prev.filter((_, i) => i !== index));
+    } catch (error) {
+      console.error('Error removing gallery image:', error);
+    }
+  };
 
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Custom Name (Optional)</Text>
-              <TextInput
-                style={styles.formInput}
-                placeholder="Override the default name"
-                placeholderTextColor="#8A8AAE"
-                value={customOffering.custom_name}
-                onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, custom_name: text }))}
-              />
-            </View>
+  // --- Save Business Settings ---
+  const saveBusinessSettings = async () => {
+    if (!business) return;
+    
+    setSavingSettings(true);
+    try {
+      const { error } = await supabase
+        .from('shops')
+        .update({
+          logo_url: businessSettings.logo || null,
+          description: businessSettings.description || null,
+          phone: businessSettings.phone || null,
+          opening_hours: businessSettings.workingHours || null,
+          is_open: businessSettings.isOpen,
+        })
+        .eq('id', business.id);
 
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>Custom Description (Optional)</Text>
-              <TextInput
-                style={[styles.formInput, styles.formTextArea]}
-                placeholder="Override the default description"
-                placeholderTextColor="#8A8AAE"
-                multiline
-                numberOfLines={3}
-                value={customOffering.custom_description}
-                onChangeText={(text) => setCustomOffering((prev: any) => ({ ...prev, custom_description: text }))}
-              />
-            </View>
+      if (error) throw error;
 
-            {Object.keys(customOffering.specifications).length > 0 && (
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Specifications</Text>
-                {Object.keys(customOffering.specifications).map((key) => (
-                  <View key={key} style={styles.specRow}>
-                    <Text style={styles.specLabel}>
-                      {key.charAt(0).toUpperCase() + key.slice(1)}
-                    </Text>
-                    <TextInput
-                      style={styles.specInput}
-                      placeholder={`Enter ${key}`}
-                      placeholderTextColor="#8A8AAE"
-                      value={customOffering.specifications[key] || ''}
-                      onChangeText={(text) => {
-                        setCustomOffering((prev: any) => ({
-                          ...prev,
-                          specifications: { ...prev.specifications, [key]: text }
-                        }));
-                      }}
-                    />
-                  </View>
-                ))}
-              </View>
-            )}
+      Alert.alert('Success', 'Business settings updated successfully!');
+      setShowBusinessSettings(false);
+      loadDashboard();
 
-            {businessType === 'shop' && productAttributes.length > 0 && (
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Product Attributes</Text>
-                {productAttributes.map((attr: ProductAttribute) => (
-                  <View key={attr.id} style={styles.specRow}>
-                    <Text style={styles.specLabel}>
-                      {attr.attribute_name}
-                    </Text>
-                    <TextInput
-                      style={styles.specInput}
-                      placeholder={`Enter ${attr.attribute_name}`}
-                      placeholderTextColor="#8A8AAE"
-                      value={customOffering.attributeValues[attr.attribute_name] || ''}
-                      onChangeText={(text) => {
-                        setCustomOffering((prev: any) => ({
-                          ...prev,
-                          attributeValues: { 
-                            ...prev.attributeValues, 
-                            [attr.attribute_name]: text 
-                          }
-                        }));
-                      }}
-                    />
-                  </View>
-                ))}
-              </View>
-            )}
+    } catch (error: any) {
+      console.error('Error saving settings:', error);
+      Alert.alert('Error', error.message || 'Failed to save settings');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>
-                {businessType === 'shop' ? 'In Stock' : 'Available'}
-              </Text>
-              <Switch
-                value={customOffering.in_stock}
-                onValueChange={(value) => setCustomOffering((prev: any) => ({ ...prev, in_stock: value }))}
-                trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
-              />
-            </View>
+  // --- Pick Logo ---
+  const pickLogo = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+      });
 
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Visible to Customers</Text>
-              <Switch
-                value={customOffering.is_active}
-                onValueChange={(value) => setCustomOffering((prev: any) => ({ ...prev, is_active: value }))}
-                trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
-              />
-            </View>
+      if (!result.canceled && result.assets[0]) {
+        setBusinessSettings(prev => ({ ...prev, logo: result.assets[0].uri }));
+      }
+    } catch (error) {
+      console.error('Error picking logo:', error);
+    }
+  };
 
-            <TouchableOpacity
-              style={[styles.modalSubmit, saving && styles.modalSubmitDisabled]}
-              onPress={handleAddCustomizedOffering}
-              disabled={saving}
-            >
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.modalSubmitGradient}
-              >
-                <Text style={styles.modalSubmitText}>
-                  {saving ? 'Publishing...' : `Publish ${config.offeringLabel.slice(0, -1)}`}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
+  // --- Pick Banner ---
+  const pickBanner = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setBusinessSettings(prev => ({ ...prev, banner: result.assets[0].uri }));
+      }
+    } catch (error) {
+      console.error('Error picking banner:', error);
+    }
+  };
+
+  // --- Animated Modals ---
+  const showAddModalAnimated = (show: boolean, type: 'product' | 'service' = 'product') => {
+    if (show) {
+      setOfferingType(type);
+      setShowAddModal(true);
+      setShowCustomForm(false);
+      setSearchQuery('');
+      setSearchResults([]);
+      setIsCustomMode(false);
+      setSelectedCatalogItem(null);
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: height, duration: 300, useNativeDriver: true }),
+      ]).start(() => {
+        setShowAddModal(false);
+        resetForm();
+      });
+    }
+  };
+
+  // ============================================================
+  // 3. EFFECTS AND HANDLERS
+  // ============================================================
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadDashboard();
+  };
+
+  // ============================================================
+  // 4. RENDER FUNCTIONS
+  // ============================================================
 
   // --- Render Stats ---
   const renderStats = () => {
     const statItems = [
       { 
         icon: '💰', 
-        label: config.stats[0] || 'Revenue', 
+        label: 'Revenue Today', 
         value: `UGX ${stats.revenue?.toLocaleString() || 0}`,
-        color: '#4A7DFF' 
+        color: '#4A7DFF',
+        bg: 'rgba(74,125,255,0.1)'
       },
       { 
         icon: '📦', 
-        label: config.stats[1] || 'Orders', 
-        value: stats.activityCount?.toString() || '0',
-        color: '#2ECC71' 
+        label: 'Products', 
+        value: offerings.filter(o => o.type === 'product').length.toString() || '0',
+        color: '#2ECC71',
+        bg: 'rgba(46,204,113,0.1)'
       },
       { 
-        icon: '👥', 
-        label: config.stats[2] || 'Customers', 
-        value: stats.customers?.toString() || '0',
-        color: '#F1C40F' 
+        icon: '🔧', 
+        label: 'Services', 
+        value: offerings.filter(o => o.type === 'service').length.toString() || '0',
+        color: '#6C5CE7',
+        bg: 'rgba(108,92,231,0.1)'
       },
       { 
-        icon: '📋', 
-        label: config.stats[3] || 'Products', 
-        value: stats.offerings?.toString() || '0',
-        color: '#E74C3C' 
+        icon: '⭐', 
+        label: 'Rating', 
+        value: stats.rating?.toFixed(1) || '0.0',
+        color: '#F1C40F',
+        bg: 'rgba(241,196,15,0.1)'
       },
     ];
-
-    const lastStatIndex = statItems.length - 1;
-    statItems[lastStatIndex].label = config.offeringLabel || 'Offerings';
 
     return (
       <View style={[styles.statsGrid, isDesktop && styles.statsGridDesktop]}>
         {statItems.map((stat, index) => (
-          <View key={index} style={[styles.statCard, { backgroundColor: stat.color + '10' }]}>
+          <View key={index} style={[styles.statCard, { backgroundColor: stat.bg }]}>
             <Text style={styles.statIcon}>{stat.icon}</Text>
             <Text style={styles.statValue}>{stat.value}</Text>
             <Text style={styles.statLabel}>{stat.label}</Text>
@@ -1121,94 +1252,33 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   // --- Render Quick Actions ---
   const renderQuickActions = () => (
     <View style={[styles.quickActions, isDesktop && styles.quickActionsDesktop]}>
-      {(config.quickActions || []).map((action: string, index: number) => {
-        let icon = '';
-        let onPress = () => {};
-
-        switch(action) {
-          case 'Browse Catalog':
-            icon = 'grid-outline';
-            onPress = openCatalogBrowser;
-            break;
-          case 'View Orders':
-          case 'View Bookings':
-          case 'View Reservations':
-            icon = 'list-outline';
-            onPress = () => setActiveTab('activity');
-            break;
-          case 'Set Availability':
-          case 'Business Hours':
-            icon = 'time-outline';
-            onPress = () => console.log('Set availability');
-            break;
-          case 'Analytics':
-            icon = 'analytics-outline';
-            onPress = () => console.log('Analytics');
-            break;
-          case 'Business Settings':
-            icon = 'settings-outline';
-            onPress = () => setActiveTab('business');
-            break;
-          default:
-            icon = 'apps-outline';
-        }
-
-        return (
-          <TouchableOpacity key={index} style={styles.quickAction} onPress={onPress}>
-            <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(74, 125, 255, 0.1)' }]}>
-              <Ionicons name={icon as any} size={24} color="#4A7DFF" />
-            </View>
-            <Text style={styles.quickActionLabel}>{action}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-
-  // --- Render Recent Activity ---
-  const renderRecentActivity = () => (
-    <View style={styles.recentActivity}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent {config.activityLabel}</Text>
-        <TouchableOpacity onPress={() => setActiveTab('activity')}>
-          <Text style={styles.sectionLink}>View All</Text>
-        </TouchableOpacity>
-      </View>
-      {recentActivity.length === 0 ? (
-        <Text style={styles.noDataText}>No {config.activityLabel.toLowerCase()} yet.</Text>
-      ) : (
-        recentActivity.map((item, index) => {
-          const status = item.status || 'pending';
-          const statusColors: Record<string, any> = {
-            completed: { bg: 'rgba(46, 204, 113, 0.1)', color: '#2ECC71' },
-            pending: { bg: 'rgba(241, 196, 15, 0.1)', color: '#F1C40F' },
-            confirmed: { bg: 'rgba(74, 125, 255, 0.1)', color: '#4A7DFF' },
-            cancelled: { bg: 'rgba(231, 76, 60, 0.1)', color: '#E74C3C' },
-          };
-          const statusStyle = statusColors[status] || statusColors.pending;
-
-          return (
-            <View key={index} style={styles.activityItem}>
-              <View style={styles.activityHeader}>
-                <Text style={styles.activityTitle}>
-                  {item.type || config.activityLabel.slice(0, -1)}
-                </Text>
-                <Text style={styles.activityAmount}>UGX {item.amount?.toLocaleString() || 0}</Text>
-              </View>
-              <View style={styles.activityFooter}>
-                <Text style={styles.activityCustomer}>
-                  {item.users?.full_name || 'Customer'}
-                </Text>
-                <View style={[styles.activityStatus, { backgroundColor: statusStyle.bg }]}>
-                  <Text style={[styles.activityStatusText, { color: statusStyle.color }]}>
-                    {status.charAt(0).toUpperCase() + status.slice(1)}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          );
-        })
-      )}
+      <TouchableOpacity style={styles.quickAction} onPress={() => showAddModalAnimated(true, 'product')}>
+        <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(46,204,113,0.15)' }]}>
+          <Ionicons name="cube-outline" size={24} color="#2ECC71" />
+        </View>
+        <Text style={styles.quickActionLabel}>Add Product</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity style={styles.quickAction} onPress={() => showAddModalAnimated(true, 'service')}>
+        <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(108,92,231,0.15)' }]}>
+          <Ionicons name="construct-outline" size={24} color="#6C5CE7" />
+        </View>
+        <Text style={styles.quickActionLabel}>Add Service</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity style={styles.quickAction} onPress={() => setShowBusinessSettings(true)}>
+        <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(241,196,15,0.15)' }]}>
+          <Ionicons name="settings-outline" size={24} color="#F1C40F" />
+        </View>
+        <Text style={styles.quickActionLabel}>Settings</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity style={styles.quickAction} onPress={() => setActiveTab('wallet')}>
+        <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(231,76,60,0.15)' }]}>
+          <Ionicons name="wallet-outline" size={24} color="#E74C3C" />
+        </View>
+        <Text style={styles.quickActionLabel}>Wallet</Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -1216,23 +1286,34 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   const renderOfferings = () => (
     <View style={styles.tabContent}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{config.offeringLabel} ({offerings.length})</Text>
-        <TouchableOpacity style={styles.addButton} onPress={openCatalogBrowser}>
-          <Ionicons name="add" size={20} color="#FFFFFF" />
-          <Text style={styles.addButtonText}>Browse Catalog</Text>
-        </TouchableOpacity>
+        <Text style={styles.sectionTitle}>All Offerings ({offerings.length})</Text>
+        <View style={styles.addButtonsRow}>
+          <TouchableOpacity style={[styles.addButton, styles.addButtonProduct]} onPress={() => showAddModalAnimated(true, 'product')}>
+            <Ionicons name="cube-outline" size={14} color="#FFFFFF" />
+            <Text style={styles.addButtonText}>Product</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.addButton, styles.addButtonService]} onPress={() => showAddModalAnimated(true, 'service')}>
+            <Ionicons name="construct-outline" size={14} color="#FFFFFF" />
+            <Text style={styles.addButtonText}>Service</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {offerings.length === 0 ? (
         <View style={styles.emptyOfferings}>
-          <Ionicons name={config.offeringIcon} size={48} color="#8A8AAE" />
-          <Text style={styles.emptyOfferingsTitle}>No {config.offeringLabel.toLowerCase()} yet</Text>
+          <Ionicons name="storefront-outline" size={48} color="#8A8AAE" />
+          <Text style={styles.emptyOfferingsTitle}>No offerings yet</Text>
           <Text style={styles.emptyOfferingsSubtext}>
-            Browse the catalog to add {config.offeringLabel.toLowerCase()} to your shop
+            Add your first product or service to start selling
           </Text>
-          <TouchableOpacity style={styles.browseCatalogBtn} onPress={openCatalogBrowser}>
-            <Text style={styles.browseCatalogBtnText}>Browse Catalog</Text>
-          </TouchableOpacity>
+          <View style={styles.emptyActions}>
+            <TouchableOpacity style={[styles.browseCatalogBtn, { backgroundColor: '#2ECC71' }]} onPress={() => showAddModalAnimated(true, 'product')}>
+              <Text style={styles.browseCatalogBtnText}>Add Product</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.browseCatalogBtn, { backgroundColor: '#6C5CE7' }]} onPress={() => showAddModalAnimated(true, 'service')}>
+              <Text style={styles.browseCatalogBtnText}>Add Service</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
         offerings.map((item, index) => {
@@ -1240,107 +1321,48 @@ const BusinessDashboardContent = ({ navigation }: any) => {
           const name = catalogData.name || item.name || 'Offering';
           const price = item.regular_price || item.price || 0;
           const images = catalogData.images || [];
+          const sceneCount = item.scenes?.length || images.length || 0;
+          const isActive = item.type === 'product' ? item.in_stock : item.is_active;
+          const isProduct = item.type === 'product';
           
           return (
-            <View key={index} style={styles.offeringCard}>
-              {images.length > 0 ? (
-                <Image source={{ uri: images[0] }} style={styles.offeringImage} />
-              ) : (
-                <View style={[styles.offeringImage, styles.offeringImagePlaceholder]}>
-                  <Text style={styles.offeringImageText}>📦</Text>
-                </View>
-              )}
+            <View key={index} style={[styles.offeringCard, isProduct ? styles.offeringCardProduct : styles.offeringCardService]}>
+              <View style={styles.offeringTypeBadge}>
+                <Text style={[styles.offeringTypeBadgeText, { color: isProduct ? '#2ECC71' : '#6C5CE7' }]}>
+                  {isProduct ? 'Product' : 'Service'}
+                </Text>
+              </View>
+              <Image
+                source={{ uri: images[0] || 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=No+Image' }}
+                style={styles.offeringImage}
+              />
               <View style={styles.offeringInfo}>
                 <Text style={styles.offeringName}>{name}</Text>
                 <Text style={styles.offeringPrice}>UGX {price.toLocaleString()}</Text>
                 <View style={styles.offeringStats}>
-                  {businessType === 'shop' ? (
-                    <>
-                      <Text style={styles.offeringStat}>👁️ {item.views || 0}</Text>
-                      <Text style={styles.offeringStat}>🛒 {item.sales || 0}</Text>
-                      <Text style={[styles.offeringStock, { color: item.in_stock ? '#2ECC71' : '#E74C3C' }]}>
-                        {item.in_stock ? 'In Stock' : 'Out of Stock'}
-                      </Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.offeringStat}>📅 {catalogData.duration || 'N/A'}</Text>
-                      <Text style={[styles.offeringStock, { color: item.is_active ? '#2ECC71' : '#E74C3C' }]}>
-                        {item.is_active ? 'Available' : 'Unavailable'}
-                      </Text>
-                    </>
-                  )}
+                  <Text style={styles.offeringStat}>🖼️ {sceneCount} scenes</Text>
+                  <Text style={[styles.offeringStock, { color: isActive ? '#2ECC71' : '#E74C3C' }]}>
+                    {isActive ? 'Active' : 'Inactive'}
+                  </Text>
                 </View>
               </View>
-              <TouchableOpacity style={styles.offeringAction}>
-                <Ionicons name="create-outline" size={20} color="#4A7DFF" />
-              </TouchableOpacity>
+              <View style={styles.offeringActions}>
+                <TouchableOpacity 
+                  style={styles.offeringAction}
+                  onPress={() => openSceneManager(item)}
+                >
+                  <Ionicons name="images-outline" size={18} color="#4A7DFF" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.offeringAction}>
+                  <Ionicons name="create-outline" size={18} color="#4A7DFF" />
+                </TouchableOpacity>
+              </View>
             </View>
           );
         })
       )}
     </View>
   );
-
-  // --- Render Activity ---
-  const renderActivity = () => {
-    const statuses = config.statuses || ['All', 'Pending', 'Completed', 'Cancelled'];
-
-    return (
-      <View style={styles.tabContent}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{config.activityLabel}</Text>
-          <View style={styles.filterChips}>
-            {statuses.slice(0, 4).map((status: string) => (
-              <TouchableOpacity key={status} style={[styles.filterChip, status === 'All' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, status === 'All' && styles.filterChipTextActive]}>
-                  {status}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {recentActivity.length === 0 ? (
-          <Text style={styles.noDataText}>No {config.activityLabel.toLowerCase()} found.</Text>
-        ) : (
-          recentActivity.map((item, index) => {
-            const status = item.status || 'pending';
-            const statusColors: Record<string, any> = {
-              completed: { bg: 'rgba(46, 204, 113, 0.1)', color: '#2ECC71' },
-              pending: { bg: 'rgba(241, 196, 15, 0.1)', color: '#F1C40F' },
-              confirmed: { bg: 'rgba(74, 125, 255, 0.1)', color: '#4A7DFF' },
-              cancelled: { bg: 'rgba(231, 76, 60, 0.1)', color: '#E74C3C' },
-              'in progress': { bg: 'rgba(74, 125, 255, 0.1)', color: '#4A7DFF' },
-            };
-            const statusStyle = statusColors[status] || statusColors.pending;
-            const statusDisplay = status.charAt(0).toUpperCase() + status.slice(1);
-
-            return (
-              <View key={index} style={styles.activityCard}>
-                <View style={styles.activityCardHeader}>
-                  <Text style={styles.activityCardId}>#{item.reference || item.id?.slice(0, 8)}</Text>
-                  <View style={[styles.activityCardStatus, { backgroundColor: statusStyle.bg }]}>
-                    <Text style={[styles.activityCardStatusText, { color: statusStyle.color }]}>
-                      {statusDisplay}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.activityCardBody}>
-                  <Text style={styles.activityCardCustomer}>
-                    {item.users?.full_name || 'Customer'}
-                  </Text>
-                  <Text style={styles.activityCardAmount}>
-                    UGX {item.amount?.toLocaleString() || 0}
-                  </Text>
-                </View>
-              </View>
-            );
-          })
-        )}
-      </View>
-    );
-  };
 
   // --- Render Wallet ---
   const renderWallet = () => (
@@ -1349,9 +1371,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
         <View style={styles.walletBalanceCard}>
           <Text style={styles.walletBalanceLabel}>Available Balance</Text>
           <View style={styles.walletBalanceRow}>
-            <Text style={styles.walletBalanceAmount}>
-              {balanceVisible ? `UGX ${walletBalance.toLocaleString()}` : '****'}
-            </Text>
+            <Text style={styles.walletBalanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
             <TouchableOpacity onPress={() => setBalanceVisible(!balanceVisible)}>
               <Ionicons 
                 name={balanceVisible ? 'eye-outline' : 'eye-off-outline'} 
@@ -1360,179 +1380,18 @@ const BusinessDashboardContent = ({ navigation }: any) => {
               />
             </TouchableOpacity>
           </View>
-          <View style={styles.walletBalanceActions}>
-            <TouchableOpacity style={styles.walletActionBtn}>
-              <Ionicons name="arrow-down-outline" size={16} color="#FFFFFF" />
-              <Text style={styles.walletActionBtnText}>Withdraw</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.walletActionBtn, styles.walletActionBtnSecondary]}>
-              <Ionicons name="arrow-up-outline" size={16} color="#4A7DFF" />
-              <Text style={styles.walletActionBtnTextSecondary}>Add Funds</Text>
-            </TouchableOpacity>
-          </View>
         </View>
-
-        <View style={styles.walletStats}>
-          <View style={styles.walletStat}>
-            <Text style={styles.walletStatValue}>UGX {walletBalance.toLocaleString()}</Text>
-            <Text style={styles.walletStatLabel}>Total Earnings</Text>
-          </View>
-          <View style={styles.walletStatDivider} />
-          <View style={styles.walletStat}>
-            <Text style={styles.walletStatValue}>{recentActivity.length}</Text>
-            <Text style={styles.walletStatLabel}>Transactions</Text>
-          </View>
-          <View style={styles.walletStatDivider} />
-          <View style={styles.walletStat}>
-            <Text style={styles.walletStatValue}>UGX 0</Text>
-            <Text style={styles.walletStatLabel}>Pending</Text>
-          </View>
+        
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recent Transactions</Text>
         </View>
-      </View>
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent Transactions</Text>
-        <TouchableOpacity>
-          <Text style={styles.sectionLink}>View All</Text>
-        </TouchableOpacity>
-      </View>
-
-      {walletTransactions.length === 0 ? (
-        <Text style={styles.noDataText}>No transactions yet.</Text>
-      ) : (
-        walletTransactions.map((item, index) => (
-          <View key={index} style={styles.transactionItem}>
-            <View style={styles.transactionLeft}>
-              <View style={[styles.transactionIcon, { backgroundColor: item.amount > 0 ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)' }]}>
-                <Ionicons name={item.amount > 0 ? 'arrow-down' : 'arrow-up'} size={16} color={item.amount > 0 ? '#2ECC71' : '#E74C3C'} />
-              </View>
-              <View>
-                <Text style={styles.transactionTitle}>{item.type || 'Transaction'}</Text>
-                <Text style={styles.transactionDate}>
-                  {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
-                </Text>
-              </View>
-            </View>
-            <Text style={[styles.transactionAmount, { color: item.amount > 0 ? '#2ECC71' : '#E74C3C' }]}>
-              {item.amount > 0 ? '+' : ''}UGX {Math.abs(item.amount || 0).toLocaleString()}
-            </Text>
-          </View>
-        ))
-      )}
-    </View>
-  );
-
-  // --- Render Business Settings ---
-  const renderBusiness = () => (
-    <View style={styles.tabContent}>
-      <View style={styles.businessProfile}>
-        <View style={styles.businessHeader}>
-          <View style={styles.businessLogoContainer}>
-            <View style={styles.businessLogo}>
-              <Text style={styles.businessLogoText}>
-                {business?.name?.charAt(0)?.toUpperCase() || 'B'}
-              </Text>
-            </View>
-            <View style={[styles.businessVerified, { backgroundColor: business?.is_verified ? '#2ECC71' : '#F1C40F' }]}>
-              <Text style={styles.businessVerifiedText}>
-                {business?.is_verified ? '✓' : '⏳'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.businessInfo}>
-            <Text style={styles.businessName}>{business?.name || 'Business'}</Text>
-            <Text style={styles.businessType}>{category || 'Uncategorized'}</Text>
-            <Text style={styles.businessJoin}>
-              {business?.is_active ? '🟢 Active' : '⏸️ Inactive'}
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.businessEditButton}>
-            <Ionicons name="create-outline" size={20} color="#4A7DFF" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.businessStats}>
-          <View style={styles.businessStat}>
-            <Text style={styles.businessStatValue}>{stats.rating?.toFixed(1) || '0.0'}</Text>
-            <Text style={styles.businessStatLabel}>⭐ Rating</Text>
-          </View>
-          <View style={styles.businessStatDivider} />
-          <View style={styles.businessStat}>
-            <Text style={styles.businessStatValue}>{stats.activityCount || 0}</Text>
-            <Text style={styles.businessStatLabel}>{config.activityLabel}</Text>
-          </View>
-          <View style={styles.businessStatDivider} />
-          <View style={styles.businessStat}>
-            <Text style={styles.businessStatValue}>{offerings.length}</Text>
-            <Text style={styles.businessStatLabel}>{config.offeringLabel}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.businessSections}>
-        <Text style={styles.sectionTitle}>Profile</Text>
-        <TouchableOpacity style={styles.settingsItem}>
-          <Ionicons name="image-outline" size={20} color="#4A7DFF" />
-          <Text style={styles.settingsLabel}>Logo & Cover</Text>
-          <Ionicons name="chevron-forward" size={20} color="#8A8AAE" style={styles.settingsArrow} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.settingsItem}>
-          <Ionicons name="information-circle-outline" size={20} color="#4A7DFF" />
-          <Text style={styles.settingsLabel}>Business Description</Text>
-          <Ionicons name="chevron-forward" size={20} color="#8A8AAE" style={styles.settingsArrow} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.businessSections}>
-        <Text style={styles.sectionTitle}>Operations</Text>
-        <TouchableOpacity style={styles.settingsItem}>
-          <Ionicons name="time-outline" size={20} color="#4A7DFF" />
-          <Text style={styles.settingsLabel}>Business Hours</Text>
-          <Ionicons name="chevron-forward" size={20} color="#8A8AAE" style={styles.settingsArrow} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.settingsItem}>
-          <Ionicons name="location-outline" size={20} color="#4A7DFF" />
-          <Text style={styles.settingsLabel}>Location & Service Area</Text>
-          <Ionicons name="chevron-forward" size={20} color="#8A8AAE" style={styles.settingsArrow} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.businessSections}>
-        <Text style={styles.sectionTitle}>Payments</Text>
-        <TouchableOpacity style={styles.settingsItem}>
-          <Ionicons name="wallet-outline" size={20} color="#4A7DFF" />
-          <Text style={styles.settingsLabel}>Payout Account</Text>
-          <Ionicons name="chevron-forward" size={20} color="#8A8AAE" style={styles.settingsArrow} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.settingsItem}>
-          <Ionicons name="card-outline" size={20} color="#4A7DFF" />
-          <Text style={styles.settingsLabel}>Accepted Payment Methods</Text>
-          <Ionicons name="chevron-forward" size={20} color="#8A8AAE" style={styles.settingsArrow} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.businessSections}>
-        <Text style={styles.sectionTitle}>Verification</Text>
-        <View style={styles.verificationItem}>
-          <View style={[styles.verificationIcon, { backgroundColor: '#E8F5E9' }]}>
-            <Ionicons name="checkmark-circle" size={20} color="#2ECC71" />
-          </View>
-          <View style={styles.verificationContent}>
-            <Text style={styles.verificationTitle}>Phone Verified</Text>
-            <Text style={styles.verificationDesc}>Your phone number is verified</Text>
-          </View>
-        </View>
-        <View style={[styles.verificationItem, { opacity: 0.6 }]}>
-          <View style={[styles.verificationIcon, { backgroundColor: '#FFF3E0' }]}>
-            <Ionicons name="document-text-outline" size={20} color="#FF9800" />
-          </View>
-          <View style={styles.verificationContent}>
-            <Text style={styles.verificationTitle}>Business Documents</Text>
-            <Text style={styles.verificationDesc}>Upload business registration</Text>
-          </View>
-          <TouchableOpacity style={styles.verificationButton}>
-            <Text style={styles.verificationButtonText}>Upload</Text>
-          </TouchableOpacity>
+        
+        <View style={styles.emptyOfferings}>
+          <Ionicons name="receipt-outline" size={40} color="#8A8AAE" />
+          <Text style={styles.emptyOfferingsTitle}>No transactions yet</Text>
+          <Text style={styles.emptyOfferingsSubtext}>
+            Your financial activity will appear here
+          </Text>
         </View>
       </View>
     </View>
@@ -1543,35 +1402,606 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     switch (activeTab) {
       case 'overview':
         return (
-          <>
+          <View style={styles.tabContent}>
             {renderStats()}
             {renderQuickActions()}
-            {renderRecentActivity()}
-          </>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Offerings</Text>
+            </View>
+            {offerings.slice(0, 3).map((item, index) => {
+              const catalogData = item.catalog || item.service_catalog || {};
+              const name = catalogData.name || item.name || 'Offering';
+              const price = item.regular_price || item.price || 0;
+              const images = catalogData.images || [];
+              const isProduct = item.type === 'product';
+              
+              return (
+                <View key={index} style={[styles.offeringCard, isProduct ? styles.offeringCardProduct : styles.offeringCardService]}>
+                  <Image
+                    source={{ uri: images[0] || 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=No+Image' }}
+                    style={styles.offeringImage}
+                  />
+                  <View style={styles.offeringInfo}>
+                    <Text style={styles.offeringName}>{name}</Text>
+                    <Text style={styles.offeringPrice}>UGX {price.toLocaleString()}</Text>
+                    <View style={styles.offeringStats}>
+                      <Text style={[styles.offeringStock, { color: isProduct ? '#2ECC71' : '#6C5CE7' }]}>
+                        {isProduct ? 'Product' : 'Service'}
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity 
+                    style={styles.offeringAction}
+                    onPress={() => openSceneManager(item)}
+                  >
+                    <Ionicons name="images-outline" size={18} color="#4A7DFF" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+            {offerings.length > 3 && (
+              <TouchableOpacity style={styles.viewAllBtn} onPress={() => setActiveTab('offerings')}>
+                <Text style={styles.viewAllBtnText}>View All Offerings →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         );
       case 'offerings':
         return renderOfferings();
-      case 'activity':
-        return renderActivity();
       case 'wallet':
         return renderWallet();
-      case 'business':
-        return renderBusiness();
       default:
         return null;
     }
   };
 
-  // --- Tabs Configuration ---
-  const getTabs = () => {
-    return [
-      { key: 'overview', icon: 'home-outline', label: 'Overview' },
-      { key: 'offerings', icon: config.offeringIcon || 'cube-outline', label: config.offeringLabel },
-      { key: 'activity', icon: config.activityIcon || 'receipt-outline', label: config.activityLabel },
-      { key: 'wallet', icon: 'wallet-outline', label: 'Wallet' },
-      { key: 'business', icon: 'business-outline', label: 'Business' },
-    ];
+  // --- Render Add Modal ---
+  const renderAddModal = () => {
+    if (!showAddModal) return null;
+    
+    return (
+      <Modal
+        visible={showAddModal}
+        transparent
+        animationType="none"
+        onRequestClose={() => showAddModalAnimated(false)}
+      >
+        <View style={styles.addModalOverlay}>
+          <TouchableOpacity 
+            style={styles.addModalBackdrop} 
+            activeOpacity={1}
+            onPress={() => showAddModalAnimated(false)}
+          />
+          <Animated.View 
+            style={[
+              styles.addModalContent,
+              { transform: [{ translateY: slideAnim }], opacity: fadeAnim }
+            ]}
+          >
+            <View style={styles.addModalHeader}>
+              <Text style={styles.addModalTitle}>
+                Add {offeringType === 'product' ? 'Product' : 'Service'}
+              </Text>
+              <TouchableOpacity onPress={() => showAddModalAnimated(false)}>
+                <Ionicons name="close" size={24} color="#1F2F5F" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView 
+              style={styles.addModalScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {!showCustomForm ? (
+                // Search / Selection Mode
+                <View>
+                  <View style={styles.typeSelector}>
+                    <TouchableOpacity
+                      style={[styles.typeOption, offeringType === 'product' && styles.typeOptionActive]}
+                      onPress={() => setOfferingType('product')}
+                    >
+                      <Ionicons name="cube-outline" size={18} color={offeringType === 'product' ? '#2ECC71' : '#8A8AAE'} />
+                      <Text style={[styles.typeOptionText, offeringType === 'product' && styles.typeOptionTextActive]}>
+                        Product
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.typeOption, offeringType === 'service' && styles.typeOptionActive]}
+                      onPress={() => setOfferingType('service')}
+                    >
+                      <Ionicons name="construct-outline" size={18} color={offeringType === 'service' ? '#6C5CE7' : '#8A8AAE'} />
+                      <Text style={[styles.typeOptionText, offeringType === 'service' && styles.typeOptionTextActive]}>
+                        Service
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.searchSection}>
+                    <View style={styles.searchInputWrapper}>
+                      <Ionicons name="search" size={20} color="#8A8AAE" />
+                      <TextInput
+                        ref={searchInputRef}
+                        style={styles.searchInput}
+                        placeholder={`Search ${offeringType === 'product' ? 'products' : 'services'}...`}
+                        placeholderTextColor="#8A8AAE"
+                        value={searchQuery}
+                        onChangeText={performSearch}
+                        autoFocus={false}
+                      />
+                      {isSearching && <ActivityIndicator size="small" color="#4A7DFF" />}
+                    </View>
+                    
+                    <TouchableOpacity style={styles.createCustomBtn} onPress={createCustomOffering}>
+                      <Ionicons name="add-circle-outline" size={18} color="#4A7DFF" />
+                      <Text style={styles.createCustomBtnText}>Create Custom {offeringType === 'product' ? 'Product' : 'Service'}</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {isSearching ? (
+                    <View style={styles.searchLoading}>
+                      <ActivityIndicator size="small" color="#4A7DFF" />
+                      <Text style={styles.searchLoadingText}>Searching...</Text>
+                    </View>
+                  ) : searchResults.length > 0 ? (
+                    <FlatList
+                      data={searchResults}
+                      keyExtractor={(item) => item.id}
+                      style={styles.searchResultsList}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity style={styles.searchResultItem} onPress={() => selectCatalogItem(item)}>
+                          {item.images && item.images.length > 0 ? (
+                            <Image source={{ uri: item.images[0] }} style={styles.searchResultImage} />
+                          ) : (
+                            <View style={[styles.searchResultImage, { backgroundColor: '#F5F7FA', justifyContent: 'center', alignItems: 'center' }]}>
+                              <Ionicons name={offeringType === 'product' ? 'cube-outline' : 'construct-outline'} size={20} color="#8A8AAE" />
+                            </View>
+                          )}
+                          <View style={styles.searchResultInfo}>
+                            <Text style={styles.searchResultName}>{item.name}</Text>
+                            <Text style={styles.searchResultCategory}>{item.category || 'Uncategorized'}</Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={18} color="#8A8AAE" />
+                        </TouchableOpacity>
+                      )}
+                    />
+                  ) : searchQuery.trim() ? (
+                    <View style={styles.searchEmpty}>
+                      <Ionicons name="search-outline" size={40} color="#8A8AAE" />
+                      <Text style={styles.searchEmptyTitle}>No results found</Text>
+                      <Text style={styles.searchEmptySubtext}>
+                        Try a different search term or create a custom {offeringType}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : (
+                // Custom Form
+                <View style={styles.formSection}>
+                  <TouchableOpacity onPress={() => {
+                    setShowCustomForm(false);
+                    resetForm();
+                  }}>
+                    <Ionicons name="arrow-back" size={20} color="#4A7DFF" />
+                  </TouchableOpacity>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>Name *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="Enter name"
+                      value={formData.name}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+                    />
+                  </View>
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>Category</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g., Electronics"
+                      value={formData.category}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, category: text }))}
+                    />
+                  </View>
+
+                  {offeringType === 'product' && (
+                    <View style={styles.formGroup}>
+                      <Text style={styles.formLabel}>Brand</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="e.g., Apple"
+                        value={formData.brand}
+                        onChangeText={(text) => setFormData(prev => ({ ...prev, brand: text }))}
+                      />
+                    </View>
+                  )}
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>Description</Text>
+                    <TextInput
+                      style={[styles.formInput, styles.formTextArea]}
+                      placeholder="Describe your offering..."
+                      multiline
+                      numberOfLines={3}
+                      value={formData.description}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
+                    />
+                  </View>
+
+                  <View style={styles.formRow}>
+                    <View style={styles.formGroupHalf}>
+                      <Text style={styles.formLabel}>Price *</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="0"
+                        keyboardType="numeric"
+                        value={formData.price}
+                        onChangeText={(text) => setFormData(prev => ({ ...prev, price: text }))}
+                      />
+                    </View>
+                    <View style={styles.formGroupHalf}>
+                      <Text style={styles.formLabel}>Discount</Text>
+                      <View style={styles.discountRow}>
+                        <TextInput
+                          style={[styles.formInput, styles.discountInput]}
+                          placeholder="0"
+                          keyboardType="numeric"
+                          value={formData.discount}
+                          onChangeText={(text) => setFormData(prev => ({ ...prev, discount: text }))}
+                        />
+                        <View style={styles.discountTypeContainer}>
+                          <TouchableOpacity
+                            style={[styles.discountTypeBtn, formData.discountType === 'percentage' && styles.discountTypeActive]}
+                            onPress={() => setFormData(prev => ({ ...prev, discountType: 'percentage' }))}
+                          >
+                            <Text style={[styles.discountTypeText, formData.discountType === 'percentage' && styles.discountTypeTextActive]}>%</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.discountTypeBtn, formData.discountType === 'fixed' && styles.discountTypeActive]}
+                            onPress={() => setFormData(prev => ({ ...prev, discountType: 'fixed' }))}
+                          >
+                            <Text style={[styles.discountTypeText, formData.discountType === 'fixed' && styles.discountTypeTextActive]}>UGX</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  {offeringType === 'service' && (
+                    <View style={styles.formGroup}>
+                      <Text style={styles.formLabel}>Duration (optional)</Text>
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="e.g., 1 hour"
+                        value={formData.duration}
+                        onChangeText={(text) => setFormData(prev => ({ ...prev, duration: text }))}
+                      />
+                    </View>
+                  )}
+
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>Images</Text>
+                    <View style={styles.imageUploadRow}>
+                      {formData.images.map((uri, index) => (
+                        <View key={index} style={styles.imagePreviewContainer}>
+                          <Image source={{ uri }} style={styles.imagePreview} />
+                          <TouchableOpacity onPress={() => removeImage(index)} style={styles.imageRemoveBtn}>
+                            <Ionicons name="close-circle" size={20} color="#E74C3C" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                      {formData.images.length < 5 && (
+                        <TouchableOpacity style={styles.imageAddBtn} onPress={pickImages}>
+                          <Ionicons name="camera" size={20} color="#4A7DFF" />
+                          <Text style={styles.imageAddText}>Add</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
+                  <View style={styles.toggleRow}>
+                    <Text style={styles.toggleLabel}>In Stock / Active</Text>
+                    <Switch
+                      value={offeringType === 'product' ? formData.in_stock : formData.is_active}
+                      onValueChange={(value) => {
+                        if (offeringType === 'product') {
+                          setFormData(prev => ({ ...prev, in_stock: value }));
+                        } else {
+                          setFormData(prev => ({ ...prev, is_active: value }));
+                        }
+                      }}
+                      trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.publishButton, saving && styles.publishButtonDisabled]}
+                    onPress={publishOffering}
+                    disabled={saving}
+                  >
+                    <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.publishGradient}>
+                      {saving ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.publishButtonText}>
+                          {isCustomMode ? 'Create Custom' : 'Publish'} {offeringType}
+                        </Text>
+                      )}
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
+    );
   };
+
+  // --- Render Scene Manager ---
+  const renderSceneManager = () => {
+    if (!showSceneManager || !selectedOffering) return null;
+
+    const catalogData = selectedOffering.catalog || selectedOffering.service_catalog || {};
+    const name = catalogData.name || selectedOffering.name || 'Offering';
+    const price = selectedOffering.regular_price || selectedOffering.price || 0;
+    const isProduct = selectedOffering.type === 'product';
+
+    return (
+      <Modal
+        visible={showSceneManager}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSceneManager(false)}
+      >
+        <View style={styles.sceneManagerContainer}>
+          <View style={styles.sceneManagerHeader}>
+            <TouchableOpacity onPress={() => setShowSceneManager(false)}>
+              <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+            </TouchableOpacity>
+            <Text style={styles.sceneManagerTitle}>Manage Scenes</Text>
+            <TouchableOpacity onPress={() => setShowSceneManager(false)}>
+              <Ionicons name="close" size={24} color="#1F2F5F" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.sceneManagerContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.sceneManagerProduct}>
+              <View style={styles.sceneManagerTypeBadge}>
+                <Text style={styles.sceneManagerTypeBadgeText}>
+                  {isProduct ? 'Product' : 'Service'}
+                </Text>
+              </View>
+              <Text style={styles.sceneManagerProductName}>{name}</Text>
+              <Text style={styles.sceneManagerProductPrice}>UGX {price.toLocaleString()}</Text>
+            </View>
+
+            <Text style={styles.sceneManagerSectionTitle}>Scene Images</Text>
+            <Text style={styles.sceneManagerSectionSubtitle}>
+              Each scene represents a different image slot for your offering
+            </Text>
+
+            {SCENE_TYPES.map((sceneType) => (
+              <View key={sceneType.id} style={styles.sceneItem}>
+                <View style={styles.sceneItemHeader}>
+                  <View style={styles.sceneItemIcon}>
+                    <Ionicons name={sceneType.icon as any} size={16} color="#4A7DFF" />
+                  </View>
+                  <View style={styles.sceneItemInfo}>
+                    <Text style={styles.sceneItemLabel}>{sceneType.label}</Text>
+                    <Text style={styles.sceneItemDescription}>{sceneType.description}</Text>
+                  </View>
+                  <View style={styles.sceneItemBadge}>
+                    <Text style={styles.sceneItemBadgeText}>
+                      {sceneImages[sceneType.id] ? 'Set' : 'Empty'}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.sceneImageContainer}
+                  onPress={async () => {
+                    const result = await ImagePicker.launchImageLibraryAsync({
+                      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                      quality: 0.8,
+                    });
+                    if (!result.canceled && result.assets[0]) {
+                      updateSceneImage(sceneType.id, result.assets[0].uri);
+                    }
+                  }}
+                >
+                  {sceneImages[sceneType.id] ? (
+                    <Image source={{ uri: sceneImages[sceneType.id] }} style={styles.sceneImage} />
+                  ) : (
+                    <View style={styles.sceneImagePlaceholder}>
+                      <Ionicons name="image-outline" size={32} color="#8A8AAE" />
+                      <Text style={styles.sceneImagePlaceholderText}>Tap to add image</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <Text style={styles.sceneManagerSectionTitle}>Gallery Images</Text>
+            <Text style={styles.sceneManagerSectionSubtitle}>
+              Additional images for your offering
+            </Text>
+
+            <View style={styles.galleryContainer}>
+              {galleryImages.length === 0 ? (
+                <View style={styles.galleryEmpty}>
+                  <Ionicons name="images-outline" size={40} color="#8A8AAE" />
+                  <Text style={styles.galleryEmptyText}>No gallery images yet</Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {galleryImages.map((uri, index) => (
+                    <View key={index} style={styles.galleryImageContainer}>
+                      <Image source={{ uri }} style={styles.galleryImage} />
+                      <TouchableOpacity 
+                        style={styles.galleryImageRemove} 
+                        onPress={() => removeGalleryImage(index)}
+                      >
+                        <Ionicons name="close" size={12} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            <TouchableOpacity style={styles.galleryAddButton} onPress={addGalleryImages}>
+              <Ionicons name="add-circle-outline" size={20} color="#4A7DFF" />
+              <Text style={styles.galleryAddText}>Add Gallery Images</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.saveScenesButton} 
+              onPress={() => {
+                Alert.alert('Success', 'Scenes updated successfully!');
+                setShowSceneManager(false);
+              }}
+            >
+              <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.saveScenesGradient}>
+                <Text style={styles.saveScenesButtonText}>Done</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+    );
+  };
+
+  // --- Render Business Settings ---
+  const renderBusinessSettings = () => {
+    if (!showBusinessSettings) return null;
+
+    return (
+      <Modal
+        visible={showBusinessSettings}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowBusinessSettings(false)}
+      >
+        <View style={styles.settingsContainer}>
+          <View style={styles.settingsHeader}>
+            <TouchableOpacity onPress={() => setShowBusinessSettings(false)}>
+              <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+            </TouchableOpacity>
+            <Text style={styles.settingsTitle}>Business Settings</Text>
+            <TouchableOpacity onPress={saveBusinessSettings} disabled={savingSettings}>
+              <Text style={styles.settingsSave}>
+                {savingSettings ? 'Saving...' : 'Save'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.settingsContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.settingsGroup}>
+              <Text style={styles.settingsGroupTitle}>Branding</Text>
+              
+              <View style={styles.settingsImagePicker}>
+                <TouchableOpacity onPress={pickLogo}>
+                  {businessSettings.logo ? (
+                    <Image source={{ uri: businessSettings.logo }} style={styles.settingsLogo} />
+                  ) : (
+                    <View style={styles.settingsImagePlaceholder}>
+                      <Ionicons name="camera" size={24} color="#8A8AAE" />
+                      <Text style={styles.settingsImagePlaceholderText}>Logo</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.settingsBannerPicker}>
+                <TouchableOpacity onPress={pickBanner}>
+                  {businessSettings.banner ? (
+                    <Image source={{ uri: businessSettings.banner }} style={styles.settingsBanner} />
+                  ) : (
+                    <View style={styles.settingsBannerPlaceholder}>
+                      <Ionicons name="image-outline" size={32} color="#8A8AAE" />
+                      <Text style={styles.settingsBannerPlaceholderText}>Add Banner</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.settingsGroup}>
+              <Text style={styles.settingsGroupTitle}>Business Details</Text>
+              
+              <View style={styles.settingsField}>
+                <Text style={styles.settingsLabel}>Description</Text>
+                <TextInput
+                  style={[styles.settingsInput, styles.settingsTextArea]}
+                  placeholder="Describe your business"
+                  multiline
+                  numberOfLines={3}
+                  value={businessSettings.description}
+                  onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, description: text }))}
+                />
+              </View>
+
+              <View style={styles.settingsField}>
+                <Text style={styles.settingsLabel}>Phone</Text>
+                <TextInput
+                  style={styles.settingsInput}
+                  placeholder="+256 700 000 000"
+                  value={businessSettings.phone}
+                  onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, phone: text }))}
+                />
+              </View>
+
+              <View style={styles.settingsField}>
+                <Text style={styles.settingsLabel}>Working Hours</Text>
+                <TextInput
+                  style={styles.settingsInput}
+                  placeholder="Mon-Fri 9AM-5PM"
+                  value={businessSettings.workingHours}
+                  onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, workingHours: text }))}
+                />
+              </View>
+
+              <View style={styles.settingsToggle}>
+                <Text style={styles.toggleLabel}>Business Open</Text>
+                <Switch
+                  value={businessSettings.isOpen}
+                  onValueChange={(value) => setBusinessSettings(prev => ({ ...prev, isOpen: value }))}
+                  trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+                />
+              </View>
+            </View>
+
+            <View style={styles.settingsGroup}>
+              <Text style={styles.settingsGroupTitle}>Verification</Text>
+              <View style={styles.verificationItem}>
+                <View style={[styles.verificationIcon, { backgroundColor: 'rgba(46,204,113,0.1)' }]}>
+                  <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
+                </View>
+                <View style={styles.verificationContent}>
+                  <Text style={styles.verificationTitle}>Email Verified</Text>
+                  <Text style={styles.verificationDesc}>Your email has been confirmed</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+    );
+  };
+
+  // ============================================================
+  // 5. TABS AND LOADING STATES
+  // ============================================================
+
+  // --- Tabs ---
+  const tabs = [
+    { key: 'overview', icon: 'home-outline', label: 'Overview' },
+    { key: 'offerings', icon: 'grid-outline', label: 'Offerings' },
+    { key: 'wallet', icon: 'wallet-outline', label: 'Wallet' },
+  ];
 
   // --- Loading State ---
   if (loading) {
@@ -1597,14 +2027,11 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     );
   }
 
-  const tabs = getTabs();
-
   // --- Main Render ---
   return (
     <View style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Desktop Header */}
       {isDesktop ? (
         <View style={styles.desktopHeader}>
           <Text style={styles.desktopHeaderTitle}>Business Dashboard</Text>
@@ -1615,136 +2042,65 @@ const BusinessDashboardContent = ({ navigation }: any) => {
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Business Dashboard</Text>
-          <TouchableOpacity>
-            <Ionicons name="notifications-outline" size={24} color="#1F2F5F" />
+          <Text style={styles.headerTitle}>Dashboard</Text>
+          <TouchableOpacity onPress={() => setShowBusinessSettings(true)}>
+            <Ionicons name="settings-outline" size={24} color="#1F2F5F" />
           </TouchableOpacity>
         </View>
       )}
 
-      {isDesktop ? (
-        // --- DESKTOP LAYOUT ---
-        <View style={styles.desktopGrid}>
-          {/* Left Column */}
-          <View style={styles.desktopLeftColumn}>
-            <View style={styles.bannerDesktop}>
-              <View>
-                <Text style={styles.bannerNameDesktop}>{business.name}</Text>
-                <Text style={styles.bannerTypeDesktop}>{category || 'Uncategorized'}</Text>
-              </View>
-              <View style={styles.bannerStatus}>
-                <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
-                <Text style={[styles.bannerStatusText, { color: business.is_active ? '#2ECC71' : '#F1C40F' }]}>
-                  {business.is_active ? 'Active' : 'Inactive'}
-                </Text>
-              </View>
-            </View>
-            {renderStats()}
-            {renderQuickActions()}
-            {renderRecentActivity()}
-          </View>
-
-          {/* Right Column */}
-          <View style={styles.desktopRightColumn}>
-            <View style={styles.tabsContainerDesktop}>
-              {tabs.map((tab) => (
-                <TouchableOpacity
-                  key={tab.key}
-                  style={[styles.tabDesktop, activeTab === tab.key && styles.tabActiveDesktop]}
-                  onPress={() => setActiveTab(tab.key)}
-                >
-                  <Ionicons
-                    name={tab.icon as any}
-                    size={18}
-                    color={activeTab === tab.key ? '#4A7DFF' : '#8A8AAE'}
-                  />
-                  <Text style={[styles.tabLabelDesktop, activeTab === tab.key && styles.tabLabelActiveDesktop]}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <ScrollView
-              style={styles.contentDesktop}
-              contentContainerStyle={styles.contentContainerDesktop}
-              showsVerticalScrollIndicator={false}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
-              }
-            >
-              {renderTabContent()}
-              <View style={styles.bottomSpacer} />
-            </ScrollView>
-          </View>
+      <View style={styles.banner}>
+        <View>
+          <Text style={styles.bannerName}>{business.name}</Text>
+          <Text style={styles.bannerType}>{category || 'Uncategorized'}</Text>
         </View>
-      ) : (
-        // --- MOBILE LAYOUT ---
-        <>
-          <View style={styles.banner}>
-            <View>
-              <Text style={styles.bannerName}>{business.name}</Text>
-              <Text style={styles.bannerType}>{category || 'Uncategorized'}</Text>
-            </View>
-            <View style={styles.bannerStatus}>
-              <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
-              <Text style={[styles.bannerStatusText, { color: business.is_active ? '#2ECC71' : '#F1C40F' }]}>
-                {business.is_active ? 'Active' : 'Inactive'}
-              </Text>
-            </View>
-          </View>
+        <View style={styles.bannerStatus}>
+          <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
+          <Text style={[styles.bannerStatusText, { color: business.is_active ? '#2ECC71' : '#F1C40F' }]}>
+            {business.is_active ? 'Active' : 'Inactive'}
+          </Text>
+        </View>
+      </View>
 
-          <TouchableOpacity style={styles.walletCompact} onPress={() => setActiveTab('wallet')}>
-            <View style={styles.walletCompactLeft}>
-              <Text style={styles.walletCompactLabel}>Wallet Balance</Text>
-              <Text style={styles.walletCompactAmount}>
-                {balanceVisible ? `UGX ${walletBalance.toLocaleString()}` : '****'}
-              </Text>
-            </View>
-            <View style={styles.walletCompactRight}>
-              <Ionicons name="chevron-forward" size={20} color="#4A7DFF" />
-            </View>
-          </TouchableOpacity>
-
-          <View style={styles.tabsContainer}>
-            {tabs.map((tab) => (
-              <TouchableOpacity
-                key={tab.key}
-                style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-                onPress={() => setActiveTab(tab.key)}
-              >
-                <Ionicons
-                  name={tab.icon as any}
-                  size={18}
-                  color={activeTab === tab.key ? '#4A7DFF' : '#8A8AAE'}
-                />
-                <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <ScrollView
-            style={styles.content}
-            contentContainerStyle={styles.contentContainer}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
-            }
+      <View style={styles.tabsContainer}>
+        {tabs.map((tab) => (
+          <TouchableOpacity
+            key={tab.key}
+            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+            onPress={() => setActiveTab(tab.key)}
           >
-            {renderTabContent()}
-            <View style={styles.bottomSpacer} />
-          </ScrollView>
-        </>
-      )}
+            <Ionicons
+              name={tab.icon as any}
+              size={18}
+              color={activeTab === tab.key ? '#4A7DFF' : '#8A8AAE'}
+            />
+            <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-      {renderCatalogBrowser()}
-      {renderCustomizeModal()}
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
+        }
+      >
+        {renderTabContent()}
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
+
+      {renderAddModal()}
+      {renderSceneManager()}
+      {renderBusinessSettings()}
     </View>
   );
 };
 
-// --- Main Component (Wrapped with ResponsiveLayout) ---
+// --- Main Component ---
 export const BusinessDashboardScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -1761,27 +2117,61 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
   );
 };
 
-// src/features/business/BusinessDashboardScreen.tsx - Styles
-
+// --- Styles ---
 const styles = StyleSheet.create({
-  // ============================================================
-  // DESKTOP STYLES
-  // ============================================================
+  container: {
+    flex: 1,
+    backgroundColor: '#F8F9FC',
+  },
   containerDesktop: {
     backgroundColor: '#F8F9FC',
     padding: 24,
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   loadingContainerDesktop: {
+    padding: 40,
+  },
+  loadingText: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 10,
+  },
+  emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
   },
   emptyStateDesktop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     padding: 40,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#8A8AAE',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  setupBtn: {
+    backgroundColor: '#4A7DFF',
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 10,
+  },
+  setupBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   desktopHeader: {
     marginBottom: 24,
@@ -1795,108 +2185,6 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 16,
     marginTop: 4,
-  },
-  desktopGrid: {
-    flexDirection: 'row',
-    gap: 24,
-    maxWidth: 1400,
-    width: '100%',
-    alignSelf: 'center',
-    flex: 1,
-  },
-  desktopLeftColumn: {
-    flex: 1,
-    minWidth: 350,
-    maxWidth: 500,
-  },
-  desktopRightColumn: {
-    flex: 2,
-    minWidth: 450,
-  },
-  bannerDesktop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-    marginBottom: 16,
-  },
-  bannerNameDesktop: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1F2F5F',
-  },
-  bannerTypeDesktop: {
-    fontSize: 13,
-    color: '#8A8AAE',
-    marginTop: 2,
-  },
-  tabsContainerDesktop: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  tabDesktop: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-  },
-  tabActiveDesktop: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  tabLabelDesktop: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  tabLabelActiveDesktop: {
-    color: '#4A7DFF',
-  },
-  contentDesktop: {
-    flex: 1,
-  },
-  contentContainerDesktop: {
-    paddingBottom: 40,
-  },
-  statsGridDesktop: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  quickActionsDesktop: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-
-  // ============================================================
-  // MOBILE STYLES
-  // ============================================================
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FC',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 10,
   },
   header: {
     flexDirection: 'row',
@@ -1948,35 +2236,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  walletCompact: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
-    padding: 12,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  walletCompactLeft: {
-    flex: 1,
-  },
-  walletCompactLabel: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  walletCompactAmount: {
-    color: '#1F2F5F',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 2,
-  },
-  walletCompactRight: {
-    justifyContent: 'center',
-  },
   tabsContainer: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
@@ -2019,15 +2278,14 @@ const styles = StyleSheet.create({
   bottomSpacer: {
     height: 20,
   },
-
-  // ============================================================
-  // SHARED STYLES
-  // ============================================================
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
     marginBottom: 16,
+  },
+  statsGridDesktop: {
+    gap: 12,
   },
   statCard: {
     width: (width - 42) / 2,
@@ -2054,6 +2312,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 16,
+  },
+  quickActionsDesktop: {
+    gap: 12,
   },
   quickAction: {
     flex: 1,
@@ -2090,123 +2351,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  sectionLink: {
-    color: '#4A7DFF',
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#4A7DFF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 2,
+  },
+  addButtonText: {
+    color: '#FFFFFF',
     fontSize: 12,
-  },
-  noDataText: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    textAlign: 'center',
-    paddingVertical: 20,
-  },
-  recentActivity: {
-    marginBottom: 8,
-  },
-  activityItem: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  activityTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
     fontWeight: '500',
   },
-  activityAmount: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  activityFooter: {
+  addButtonsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    gap: 8,
   },
-  activityCustomer: {
-    color: '#8A8AAE',
-    fontSize: 12,
+  addButtonProduct: {
+    backgroundColor: '#2ECC71',
   },
-  activityStatus: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  activityStatusText: {
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  activityCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  activityCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  activityCardId: {
-    color: '#1F2F5F',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  activityCardStatus: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  activityCardStatusText: {
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  activityCardBody: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  activityCardCustomer: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  activityCardAmount: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  filterChips: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  filterChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    backgroundColor: '#F5F7FA',
-  },
-  filterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  filterChipText: {
-    color: '#8A8AAE',
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  filterChipTextActive: {
-    color: '#4A7DFF',
+  addButtonService: {
+    backgroundColor: '#6C5CE7',
   },
   offeringCard: {
     flexDirection: 'row',
@@ -2218,19 +2385,19 @@ const styles = StyleSheet.create({
     borderColor: '#E8ECF4',
     alignItems: 'center',
   },
+  offeringCardProduct: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#2ECC71',
+  },
+  offeringCardService: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#6C5CE7',
+  },
   offeringImage: {
     width: 56,
     height: 56,
     borderRadius: 8,
     marginRight: 10,
-  },
-  offeringImagePlaceholder: {
-    backgroundColor: '#F5F7FA',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  offeringImageText: {
-    fontSize: 24,
   },
   offeringInfo: {
     flex: 1,
@@ -2260,24 +2427,63 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
   },
+  offeringActions: {
+    flexDirection: 'row',
+    gap: 4,
+  },
   offeringAction: {
     padding: 6,
     borderRadius: 8,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    gap: 2,
+  offeringTypeBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    zIndex: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
   },
-  addButtonText: {
+  offeringTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  emptyOfferings: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  emptyOfferingsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2F5F',
+    marginTop: 12,
+  },
+  emptyOfferingsSubtext: {
+    fontSize: 13,
+    color: '#8A8AAE',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  emptyActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  browseCatalogBtn: {
+    backgroundColor: '#4A7DFF',
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  browseCatalogBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
   },
   walletSummary: {
     marginBottom: 16,
@@ -2305,497 +2511,146 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
   },
-  walletBalanceActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  walletActionBtn: {
+  addModalOverlay: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#4A7DFF',
-    paddingVertical: 8,
-    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
   },
-  walletActionBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
+  addModalBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  walletActionBtnSecondary: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  walletActionBtnTextSecondary: {
-    color: '#4A7DFF',
-  },
-  walletStats: {
-    flexDirection: 'row',
+  addModalContent: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: height * 0.9,
+    paddingBottom: 20,
   },
-  walletStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  walletStatValue: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  walletStatLabel: {
-    color: '#8A8AAE',
-    fontSize: 10,
-    marginTop: 2,
-  },
-  walletStatDivider: {
-    width: 1,
-    backgroundColor: '#E8ECF4',
-  },
-  transactionItem: {
+  addModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  transactionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  transactionIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  transactionTitle: {
-    color: '#1F2F5F',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  transactionDate: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 1,
-  },
-  transactionAmount: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  businessProfile: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  businessHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
-  },
-  businessLogoContainer: {
-    position: 'relative',
-  },
-  businessLogo: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(74, 125, 255, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  businessLogoText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#4A7DFF',
-  },
-  businessVerified: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  businessVerifiedText: {
-    color: '#FFFFFF',
-    fontSize: 7,
-    fontWeight: 'bold',
-  },
-  businessInfo: {
-    flex: 1,
-  },
-  businessName: {
-    color: '#1F2F5F',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  businessType: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  businessJoin: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  businessEditButton: {
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  businessStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E8ECF4',
-  },
-  businessStat: {
-    alignItems: 'center',
-  },
-  businessStatValue: {
-    color: '#1F2F5F',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  businessStatLabel: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  businessStatDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: '#E8ECF4',
-  },
-  businessSections: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  settingsItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F6FA',
-  },
-  settingsLabel: {
-    flex: 1,
-    color: '#1F2F5F',
-    fontSize: 13,
-    marginLeft: 10,
-  },
-  settingsArrow: {
-    marginLeft: 8,
-  },
-  verificationItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  verificationIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  verificationContent: {
-    flex: 1,
-  },
-  verificationTitle: {
-    color: '#1F2F5F',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  verificationDesc: {
-    color: '#8A8AAE',
-    fontSize: 11,
-  },
-  verificationButton: {
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  verificationButtonText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1F2F5F',
-    marginTop: 12,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: '#8A8AAE',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20,
-  },
-  setupBtn: {
-    backgroundColor: '#4A7DFF',
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 10,
-  },
-  setupBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  emptyOfferings: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyOfferingsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2F5F',
-    marginTop: 12,
-  },
-  emptyOfferingsSubtext: {
-    fontSize: 13,
-    color: '#8A8AAE',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  browseCatalogBtn: {
-    backgroundColor: '#4A7DFF',
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  browseCatalogBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
-  // ============================================================
-  // MODAL STYLES
-  // ============================================================
-  modalFullScreen: {
-    flex: 1,
-    backgroundColor: '#F8F9FC',
-  },
-  modalFullHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E8ECF4',
   },
-  modalFullTitle: {
+  addModalTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#1F2F5F',
   },
-  searchContainer: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
+  addModalScroll: {
+    paddingHorizontal: 20,
   },
-  searchBar: {
+  searchSection: {
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F5F7FA',
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 10,
     borderWidth: 1,
     borderColor: '#E8ECF4',
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
     color: '#1F2F5F',
-    fontSize: 14,
+    fontSize: 15,
+    padding: 0,
   },
-  categoryFilters: {
-    maxHeight: 44,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+  createCustomBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    marginTop: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(74,125,255,0.08)',
+    gap: 6,
   },
-  categoryFiltersContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    gap: 8,
-  },
-  categoryFilterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-    backgroundColor: '#F5F7FA',
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  categoryFilterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-    borderColor: '#4A7DFF',
-  },
-  categoryFilterText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  categoryFilterTextActive: {
+  createCustomBtnText: {
     color: '#4A7DFF',
+    fontSize: 14,
     fontWeight: '500',
   },
-  catalogLoading: {
-    flex: 1,
-    justifyContent: 'center',
+  searchLoading: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    gap: 8,
   },
-  catalogLoadingText: {
+  searchLoadingText: {
     color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 10,
+    fontSize: 13,
   },
-  catalogEmpty: {
-    flex: 1,
-    justifyContent: 'center',
+  searchResultsList: {
+    maxHeight: 300,
+    marginTop: 8,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F6FA',
+    gap: 10,
   },
-  catalogEmptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+  searchResultImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+  },
+  searchResultInfo: {
+    flex: 1,
+  },
+  searchResultName: {
     color: '#1F2F5F',
-    marginTop: 12,
-  },
-  catalogEmptySubtext: {
     fontSize: 14,
+    fontWeight: '500',
+  },
+  searchResultCategory: {
     color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 1,
+  },
+  searchEmpty: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  searchEmptyTitle: {
+    color: '#1F2F5F',
+    fontSize: 16,
+    fontWeight: '500',
+    marginTop: 8,
+  },
+  searchEmptySubtext: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    textAlign: 'center',
     marginTop: 4,
   },
-  catalogListContent: {
-    padding: 16,
-    gap: 8,
-  },
-  catalogItemCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-    marginBottom: 8,
-  },
-  catalogItemImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  catalogItemInfo: {
-    flex: 1,
-  },
-  catalogItemName: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  catalogItemCategory: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  catalogItemBrand: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  catalogItemDuration: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  catalogItemSelect: {
-    padding: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    maxHeight: height * 0.85,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    color: '#1F2F5F',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  modalSubmit: {
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginTop: 12,
-    marginBottom: 20,
-  },
-  modalSubmitDisabled: {
-    opacity: 0.5,
-  },
-  modalSubmitGradient: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  modalSubmitText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
+  formSection: {
+    paddingTop: 12,
   },
   formGroup: {
     gap: 4,
     marginBottom: 12,
+  },
+  formGroupHalf: {
+    flex: 1,
+  },
+  formRow: {
+    flexDirection: 'row',
+    gap: 12,
   },
   formLabel: {
     color: '#1F2F5F',
@@ -2882,29 +2737,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 2,
   },
-  specRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  specLabel: {
-    color: '#1F2F5F',
-    fontSize: 12,
-    fontWeight: '500',
-    minWidth: 80,
-  },
-  specInput: {
-    flex: 1,
-    backgroundColor: '#F5F7FA',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    color: '#1F2F5F',
-    fontSize: 13,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
   toggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2917,31 +2749,633 @@ const styles = StyleSheet.create({
     color: '#1F2F5F',
     fontSize: 14,
   },
-  catalogPreview: {
+  publishButton: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  publishButtonDisabled: {
+    opacity: 0.5,
+  },
+  publishGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  publishButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  addSpecBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    backgroundColor: '#F8F9FC',
-    borderRadius: 10,
-    marginBottom: 16,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(74,125,255,0.08)',
+    borderRadius: 6,
   },
-  catalogPreviewImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
+  addSpecBtnText: {
+    color: '#4A7DFF',
+    fontSize: 12,
+    fontWeight: '500',
   },
-  catalogPreviewInfo: {
+  specItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F7FA',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  specItemKey: {
+    color: '#1F2F5F',
+    fontSize: 13,
+    fontWeight: '500',
+    marginRight: 4,
+  },
+  specItemValue: {
+    color: '#8A8AAE',
+    fontSize: 13,
     flex: 1,
   },
-  catalogPreviewName: {
+  specItemRemove: {
+    padding: 4,
+  },
+  specEmptyText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    paddingVertical: 4,
+  },
+  tagInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tagInput: {
+    flex: 1,
+  },
+  addTagBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#4A7DFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tagsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  tagChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(74,125,255,0.08)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
+    gap: 4,
+  },
+  tagChipText: {
+    color: '#4A7DFF',
+    fontSize: 12,
+  },
+  tagEmptyText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    paddingVertical: 4,
+  },
+  suggestedTagsScroll: {
+    maxHeight: 36,
+    marginTop: 4,
+  },
+  suggestedTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#F5F7FA',
+    borderRadius: 14,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  suggestedTagText: {
+    color: '#8A8AAE',
+    fontSize: 11,
+  },
+  dropdownWrapper: {
+    position: 'relative',
+    zIndex: 10,
+  },
+  dropdownList: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    maxHeight: 150,
+    zIndex: 20,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  dropdownItem: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F6FA',
+  },
+  dropdownItemText: {
+    color: '#1F2F5F',
+    fontSize: 14,
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    backgroundColor: '#F5F7FA',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 12,
+  },
+  typeOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 6,
+    backgroundColor: 'transparent',
+  },
+  typeOptionActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  typeOptionText: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  typeOptionTextActive: {
+    color: '#1F2F5F',
+    fontWeight: '600',
+  },
+  sceneManagerContainer: {
+    flex: 1,
+    backgroundColor: '#F8F9FC',
+  },
+  sceneManagerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8ECF4',
+  },
+  sceneManagerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+  },
+  sceneManagerContent: {
+    padding: 16,
+  },
+  sceneManagerProduct: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  sceneManagerProductName: {
+    color: '#1F2F5F',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sceneManagerProductPrice: {
+    color: '#4A7DFF',
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  sceneManagerTypeBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(74,125,255,0.08)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  sceneManagerTypeBadgeText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#4A7DFF',
+  },
+  sceneManagerSectionTitle: {
+    color: '#1F2F5F',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  sceneManagerSectionSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  sceneItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  sceneItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  sceneItemIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  sceneItemInfo: {
+    flex: 1,
+  },
+  sceneItemLabel: {
     color: '#1F2F5F',
     fontSize: 14,
     fontWeight: '500',
   },
-  catalogPreviewCategory: {
+  sceneItemDescription: {
+    color: '#8A8AAE',
+    fontSize: 11,
+  },
+  sceneItemBadge: {
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  sceneItemBadgeText: {
+    color: '#4A7DFF',
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  sceneImageContainer: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    aspectRatio: 1.5,
+    backgroundColor: '#F5F7FA',
+  },
+  sceneImage: {
+    width: '100%',
+    height: '100%',
+  },
+  sceneImagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+  },
+  sceneImagePlaceholderText: {
     color: '#8A8AAE',
     fontSize: 12,
   },
+  galleryContainer: {
+    marginBottom: 16,
+  },
+  galleryImageContainer: {
+    flex: 1,
+    margin: 4,
+    position: 'relative',
+  },
+  galleryImage: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 8,
+  },
+  galleryImageRemove: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  galleryEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 30,
+  },
+  galleryEmptyText: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  galleryAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F5F7FA',
+    borderRadius: 10,
+    paddingVertical: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    borderStyle: 'dashed',
+    marginTop: 8,
+  },
+  galleryAddText: {
+    color: '#4A7DFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  saveScenesButton: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginTop: 8,
+    marginBottom: 20,
+  },
+  saveScenesGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  saveScenesButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  settingsContainer: {
+    flex: 1,
+    backgroundColor: '#F8F9FC',
+  },
+  settingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8ECF4',
+  },
+  settingsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+  },
+  settingsSave: {
+    color: '#4A7DFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  settingsContent: {
+    padding: 16,
+  },
+  settingsGroup: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  settingsGroupTitle: {
+    color: '#1F2F5F',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  settingsImagePicker: {
+    alignItems: 'center',
+  },
+  settingsLogo: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#F5F7FA',
+  },
+  settingsImagePlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#F5F7FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsImagePlaceholderText: {
+    color: '#8A8AAE',
+    fontSize: 10,
+    marginTop: 4,
+  },
+  settingsBannerPicker: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  settingsBanner: {
+    width: '100%',
+    height: 120,
+    borderRadius: 8,
+    backgroundColor: '#F5F7FA',
+  },
+  settingsBannerPlaceholder: {
+    width: '100%',
+    height: 120,
+    borderRadius: 8,
+    backgroundColor: '#F5F7FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsBannerPlaceholderText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  settingsField: {
+    marginBottom: 12,
+  },
+  settingsLabel: {
+    color: '#1F2F5F',
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  settingsInput: {
+    backgroundColor: '#F5F7FA',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#1F2F5F',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  settingsTextArea: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+  settingsToggle: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  verificationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  verificationIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verificationContent: {
+    flex: 1,
+  },
+  verificationTitle: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  verificationDesc: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  referralItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  referralIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(74,125,255,0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  referralContent: {
+    flex: 1,
+  },
+  referralTitle: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  referralDesc: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  referralCode: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  referralCodeLabel: {
+    color: '#8A8AAE',
+    fontSize: 12,
+  },
+  referralCodeValue: {
+    color: '#4A7DFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  viewAllBtn: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  viewAllBtnText: {
+    color: '#4A7DFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  specsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  specsModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: width * 0.85,
+  },
+  specsModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  specsModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1F2F5F',
+  },
+  specsModalClose: {
+    padding: 4,
+  },
+  specsModalInput: {
+    backgroundColor: '#F5F7FA',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#1F2F5F',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    marginBottom: 10,
+  },
+  specsModalAdd: {
+    backgroundColor: '#4A7DFF',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  specsModalAddText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
 });
-  // PLUS the new desktop styles below

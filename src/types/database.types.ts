@@ -897,6 +897,7 @@ export type Database = {
           subcategory: string | null
           tags: string[] | null
           updated_at: string | null
+          brand: null;
         }
         Insert: {
           availability?: string | null
@@ -1318,6 +1319,57 @@ export type Database = {
           },
         ]
       }
+      // In your database.types.ts, add this under Tables:
+
+opportunity_scenes: {
+  Row: {
+    id: string;
+    opportunity_id: string;
+    opportunity_type: 'product' | 'service';
+    scene_index: number;
+    scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
+    image_url: string;
+    image_caption: string | null;
+    order_index: number;
+    is_primary: boolean;
+    created_at: string;
+    updated_at: string;
+  };
+  Insert: {
+    id?: string;
+    opportunity_id: string;
+    opportunity_type: 'product' | 'service';
+    scene_index: number;
+    scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
+    image_url: string;
+    image_caption?: string | null;
+    order_index?: number;
+    is_primary?: boolean;
+    created_at?: string;
+    updated_at?: string;
+  };
+  Update: {
+    id?: string;
+    opportunity_id?: string;
+    opportunity_type?: 'product' | 'service';
+    scene_index?: number;
+    scene_type?: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
+    image_url?: string;
+    image_caption?: string | null;
+    order_index?: number;
+    is_primary?: boolean;
+    created_at?: string;
+    updated_at?: string;
+  };
+  Relationships: [
+    {
+      foreignKeyName: "opportunity_scenes_opportunity_id_fkey";
+      columns: ["opportunity_id"];
+      referencedRelation: "shop_products";
+      referencedColumns: ["id"];
+    },
+  ];
+}
       // --- END OF BUSINESS DOCUMENTS TABLE ---
     }
     Views: {

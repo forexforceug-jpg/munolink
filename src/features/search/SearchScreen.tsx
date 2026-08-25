@@ -14,6 +14,7 @@ import {
   Keyboard,
   Alert,
   useWindowDimensions,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -34,16 +35,24 @@ interface SearchResult extends RawOpportunity {
   aiTag?: boolean;
 }
 
+interface SearchIntent {
+  keywords: string[];
+  categories: string[];
+  priceRange: { min: number; max: number } | null;
+  location: string | null;
+  type: 'product' | 'service' | 'all';
+  inStock: boolean;
+  minRating: number;
+}
+
 // --- Sub-components ---
 
-// ✅ Updated: Trending Item - Just the title
 const TrendingItem = React.memo(({ item, onPress }: any) => (
   <TouchableOpacity style={styles.trendingItem} onPress={() => onPress(item.label)}>
     <Text style={styles.trendingLabel}>{item.label}</Text>
   </TouchableOpacity>
 ));
 
-// Suggested Prompt
 const SuggestedPrompt = React.memo(({ item, onPress }: any) => (
   <TouchableOpacity style={styles.suggestedPrompt} onPress={() => onPress(item.label)}>
     <LinearGradient
@@ -59,7 +68,6 @@ const SuggestedPrompt = React.memo(({ item, onPress }: any) => (
   </TouchableOpacity>
 ));
 
-// Recent Search Item
 const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
   <TouchableOpacity style={styles.recentItem} onPress={() => onPress(item.label)}>
     <View style={styles.recentItemLeft}>
@@ -77,6 +85,198 @@ const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
   </TouchableOpacity>
 ));
 
+// ============================================================
+// NATURAL LANGUAGE PARSING (Built into the component)
+// ============================================================
+
+const parseNaturalLanguageQuery = (query: string): SearchIntent => {
+  const cleanQuery = query.trim();
+  
+  const intent: SearchIntent = {
+    keywords: [],
+    categories: [],
+    priceRange: null,
+    location: null,
+    type: 'all',
+    inStock: false,
+    minRating: 0,
+  };
+
+  // Price patterns
+  const underMatch = cleanQuery.match(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
+  if (underMatch) {
+    intent.priceRange = { min: 0, max: parseInt(underMatch[1].replace(/,/g, '')) };
+  }
+  
+  const aboveMatch = cleanQuery.match(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
+  if (aboveMatch && !intent.priceRange) {
+    intent.priceRange = { min: parseInt(aboveMatch[1].replace(/,/g, '')), max: 10000000 };
+  }
+  
+  const betweenMatch = cleanQuery.match(/(?:between|from)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)\s*(?:and|to)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
+  if (betweenMatch && !intent.priceRange) {
+    intent.priceRange = { 
+      min: parseInt(betweenMatch[1].replace(/,/g, '')), 
+      max: parseInt(betweenMatch[2].replace(/,/g, '')) 
+    };
+  }
+
+  // Location
+  const locationMatch = cleanQuery.match(/(?:in|near|around|at)\s+([a-zA-Z\s]+?)(?:\s+for|\s+with|\s+and|$)/i);
+  if (locationMatch) {
+    intent.location = locationMatch[1].trim();
+  }
+
+  // Stock availability
+  if (/(?:in stock|available|instock)/i.test(cleanQuery)) {
+    intent.inStock = true;
+  }
+
+  // Rating
+  const ratingMatch = cleanQuery.match(/(?:rated|rating|stars?)\s*([\d.]+)\s*(?:star|stars?)?/i);
+  if (ratingMatch) {
+    intent.minRating = parseFloat(ratingMatch[1]);
+  }
+
+  // Type detection
+  if (/\b(product|item|goods|merchandise)\b/i.test(cleanQuery)) {
+    intent.type = 'product';
+  } else if (/\b(service|booking|appointment|consultation|repair|cleaning|delivery)\b/i.test(cleanQuery)) {
+    intent.type = 'service';
+  }
+
+  // Extract keywords - remove all the matched patterns
+  let keywordText = cleanQuery;
+  keywordText = keywordText.replace(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
+  keywordText = keywordText.replace(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
+  keywordText = keywordText.replace(/(?:between|from)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+\s*(?:and|to)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
+  keywordText = keywordText.replace(/(?:in|near|around|at)\s+[a-zA-Z\s]+(?:\s+for|\s+with|\s+and|$)/gi, '');
+  keywordText = keywordText.replace(/(?:in stock|available|instock)/gi, '');
+  keywordText = keywordText.replace(/(?:rated|rating|stars?)\s*[\d.]+\s*(?:star|stars?)?/gi, '');
+  
+  // Split into keywords and remove stop words
+  const stopWords = new Set([
+    'i', 'am', 'looking', 'for', 'a', 'an', 'the', 'to', 'from', 'with', 
+    'and', 'or', 'but', 'in', 'on', 'at', 'by', 'for', 'of', 'so', 'than',
+    'that', 'this', 'these', 'those', 'then', 'than', 'very', 'too', 'also',
+    'get', 'want', 'need', 'find', 'search', 'looking', 'can', 'please'
+  ]);
+  
+  intent.keywords = keywordText
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !stopWords.has(w.toLowerCase()));
+
+  // Detect categories from keywords
+  const categoryMap: Record<string, string[]> = {
+    'phone': ['Electronics', 'Phones & Accessories'],
+    'samsung': ['Electronics', 'Phones & Accessories'],
+    'iphone': ['Electronics', 'Phones & Accessories'],
+    'macbook': ['Electronics', 'Computers & Laptops'],
+    'laptop': ['Electronics', 'Computers & Laptops'],
+    'mechanic': ['Automotive', 'Repair & Services'],
+    'car': ['Automotive', 'Vehicles'],
+    'restaurant': ['Food & Dining', 'Restaurants'],
+    'pizza': ['Food & Dining', 'Restaurants'],
+    'hotel': ['Travel & Hospitality', 'Hotels & Lodging'],
+    'room': ['Travel & Hospitality', 'Hotels & Lodging'],
+    'electrician': ['Home Services', 'Repair & Services'],
+    'cleaning': ['Home Services', 'Cleaning Services'],
+    'delivery': ['Shipping & Logistics', 'Delivery Services'],
+  };
+
+  const detectedCategories: string[] = [];
+  for (const keyword of intent.keywords) {
+    const keywordLower = keyword.toLowerCase();
+    for (const [key, categories] of Object.entries(categoryMap)) {
+      if (keywordLower.includes(key) || key.includes(keywordLower)) {
+        detectedCategories.push(...categories);
+      }
+    }
+  }
+  intent.categories = [...new Set(detectedCategories)].slice(0, 3);
+
+  return intent;
+};
+
+// ============================================================
+// GET SIMILAR ITEMS
+// ============================================================
+
+const getSimilarItems = (
+  item: RawOpportunity,
+  allOpportunities: RawOpportunity[]
+): RawOpportunity[] => {
+  const similar: (RawOpportunity & { matchScore: number })[] = [];
+  const itemKeywords = `${item.title || ''} ${item.category || ''} ${item.shopName || ''}`.toLowerCase();
+  
+  for (const other of allOpportunities) {
+    if (other.id === item.id) continue;
+    
+    const otherText = `${other.title || ''} ${other.category || ''} ${other.shopName || ''}`.toLowerCase();
+    let matchScore = 0;
+    
+    // Same category
+    if (other.category && item.category && 
+        other.category.toLowerCase().includes(item.category.toLowerCase())) {
+      matchScore += 3;
+    }
+    
+    // Similar title words
+    const itemWords = new Set(itemKeywords.split(/\s+/));
+    const otherWords = otherText.split(/\s+/);
+    let commonWords = 0;
+    for (const word of otherWords) {
+      if (word.length > 2 && itemWords.has(word)) {
+        commonWords++;
+      }
+    }
+    matchScore += commonWords * 0.5;
+    
+    // Same shop
+    if (other.shopId === item.shopId) {
+      matchScore += 2;
+    }
+    
+    // Same type
+    if (other.type === item.type) {
+      matchScore += 1;
+    }
+    
+    if (matchScore > 1.5) {
+      similar.push({ ...other, matchScore });
+    }
+  }
+  
+  similar.sort((a, b) => b.matchScore - a.matchScore);
+  return similar.slice(0, 15);
+};
+
+// ============================================================
+// MIX RECOMMENDATIONS
+// ============================================================
+
+const mixRecommendations = (items: RawOpportunity[]): RawOpportunity[] => {
+  const products = items.filter(item => item.type === 'product');
+  const services = items.filter(item => item.type === 'service' || item.type === 'event');
+  
+  if (products.length === 0) return services.slice(0, 30);
+  if (services.length === 0) return products.slice(0, 30);
+  
+  const mixed: RawOpportunity[] = [];
+  const maxLen = Math.max(products.length, services.length);
+  
+  for (let i = 0; i < maxLen && mixed.length < 30; i++) {
+    if (i < products.length) {
+      mixed.push(products[i]);
+    }
+    if (i < services.length && mixed.length < 30) {
+      mixed.push(services[i]);
+    }
+  }
+  
+  return mixed;
+};
+
 // --- Main Search Content Component ---
 const SearchContent = ({ navigation }: any) => {
   const { height, width } = useWindowDimensions();
@@ -86,6 +286,8 @@ const SearchContent = ({ navigation }: any) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<{ id: string; label: string; time: string }[]>([]);
   
   const inputRef = useRef<TextInput>(null);
@@ -104,7 +306,51 @@ const SearchContent = ({ navigation }: any) => {
     ]);
   }, []);
 
-  // ✅ Simplified trending searches - just text
+  // Get suggestions as user types
+  useEffect(() => {
+    if (searchQuery.length > 1 && allOpportunities) {
+      const lowerPartial = searchQuery.toLowerCase();
+      const suggestionsSet = new Set<string>();
+      
+      // Get unique categories
+      allOpportunities.forEach((item: RawOpportunity) => {
+        if (item.category && item.category.toLowerCase().includes(lowerPartial)) {
+          suggestionsSet.add(item.category);
+        }
+      });
+      
+      // Get unique shop names
+      allOpportunities.forEach((item: RawOpportunity) => {
+        if (item.shopName && item.shopName.toLowerCase().includes(lowerPartial)) {
+          suggestionsSet.add(item.shopName);
+        }
+      });
+      
+      // Get unique areas
+      allOpportunities.forEach((item: RawOpportunity) => {
+        if (item.area && item.area.toLowerCase().includes(lowerPartial)) {
+          suggestionsSet.add(item.area);
+        }
+      });
+      
+      // Get product names
+      allOpportunities
+        .filter((item: RawOpportunity) => 
+          item.title && item.title.toLowerCase().includes(lowerPartial)
+        )
+        .slice(0, 3)
+        .forEach((item: RawOpportunity) => {
+          if (item.title) suggestionsSet.add(item.title);
+        });
+      
+      setSuggestions([...suggestionsSet].slice(0, 10));
+      setShowSuggestions(true);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  }, [searchQuery, allOpportunities]);
+
   const trendingSearches = [
     { id: '1', label: 'Samsung phones under UGX 2M' },
     { id: '2', label: 'Mechanic available today' },
@@ -123,8 +369,10 @@ const SearchContent = ({ navigation }: any) => {
     { id: '6', icon: '🚚', label: 'Same-day delivery products' },
   ];
 
-  // ✅ Perform search and navigate to results
-  const performSearch = useCallback((query: string) => {
+  // ============================================================
+  // ENHANCED SEARCH WITH NATURAL LANGUAGE UNDERSTANDING
+  // ============================================================
+  const performSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
       Alert.alert('Search', 'Please enter a search term');
       return;
@@ -137,81 +385,238 @@ const SearchContent = ({ navigation }: any) => {
       return;
     }
 
-    console.log(`🔍 Searching for: "${query}" in ${opportunities.length} opportunities`);
+    console.log(`🔍 Searching for: "${query}"`);
 
     setIsLoading(true);
     setIsSearching(true);
 
-    const searchTerm = query.toLowerCase().trim();
-    
-    const results = opportunities.filter((item: RawOpportunity) => {
-      const titleMatch = item.title?.toLowerCase().includes(searchTerm) || false;
-      const shopMatch = item.shopName?.toLowerCase().includes(searchTerm) || false;
-      const categoryMatch = item.category?.toLowerCase().includes(searchTerm) || false;
-      const descriptionMatch = item.description?.toLowerCase().includes(searchTerm) || false;
-      const areaMatch = item.area?.toLowerCase().includes(searchTerm) || false;
-      
-      return titleMatch || shopMatch || categoryMatch || descriptionMatch || areaMatch;
-    });
+    try {
+      // Parse natural language query
+      const intent = parseNaturalLanguageQuery(query);
+      console.log('📊 Intent:', JSON.stringify(intent, null, 2));
 
-    console.log(`✅ Found ${results.length} results for "${query}"`);
+      // Search based on intent
+      let results = opportunities;
 
-    const scoredResults = results.map((item: RawOpportunity) => {
-      let score = 0;
-      const term = searchTerm;
+      // Apply keyword filter
+      if (intent.keywords.length > 0) {
+        results = results.filter((item: RawOpportunity) => {
+          const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''} ${item.area || ''}`.toLowerCase();
+          return intent.keywords.some(kw => searchText.includes(kw.toLowerCase()));
+        });
+      }
+
+      // Apply category filter
+      if (intent.categories.length > 0) {
+        results = results.filter((item: RawOpportunity) => {
+          return intent.categories.some(cat => 
+            item.category?.toLowerCase().includes(cat.toLowerCase())
+          );
+        });
+      }
+
+      // Apply price filter
+      if (intent.priceRange) {
+        results = results.filter((item: RawOpportunity) => {
+          const price = item.price || 0;
+          return price >= intent.priceRange!.min && price <= intent.priceRange!.max;
+        });
+      }
+
+      // Apply location filter
+      if (intent.location) {
+        results = results.filter((item: RawOpportunity) => {
+          return item.area?.toLowerCase().includes(intent.location!.toLowerCase());
+        });
+      }
+
+      // Apply type filter
+      if (intent.type !== 'all') {
+        results = results.filter((item: RawOpportunity) => item.type === intent.type);
+      }
+
+      // Apply stock filter
+      if (intent.inStock) {
+        results = results.filter((item: RawOpportunity) => item.inStock !== false);
+      }
+
+      // Apply rating filter
+      if (intent.minRating > 0) {
+        results = results.filter((item: RawOpportunity) => (item.rating || 0) >= intent.minRating);
+      }
+
+      // Score the results
+      const scoredResults = results.map((item: RawOpportunity) => {
+        let score = 0;
+        const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''} ${item.area || ''}`.toLowerCase();
+        
+        // Title matches are weighted highest
+        if (intent.keywords.some(kw => item.title?.toLowerCase().includes(kw.toLowerCase()))) {
+          score += 20;
+        }
+        
+        // Category matches
+        if (intent.categories.some(cat => item.category?.toLowerCase().includes(cat.toLowerCase()))) {
+          score += 15;
+        }
+        
+        // Description matches
+        if (intent.keywords.some(kw => item.description?.toLowerCase().includes(kw.toLowerCase()))) {
+          score += 10;
+        }
+        
+        // Shop name matches
+        if (intent.keywords.some(kw => item.shopName?.toLowerCase().includes(kw.toLowerCase()))) {
+          score += 8;
+        }
+        
+        // Area matches
+        if (intent.location && item.area?.toLowerCase().includes(intent.location.toLowerCase())) {
+          score += 10;
+        }
+        
+        // Price within range
+        if (intent.priceRange) {
+          const price = item.price || 0;
+          if (price >= intent.priceRange.min && price <= intent.priceRange.max) {
+            score += 5;
+          }
+        }
+        
+        // Rating bonus
+        if (item.rating && item.rating >= 4.0) {
+          score += 5;
+        } else if (item.rating && item.rating >= 3.5) {
+          score += 3;
+        }
+        
+        return { ...item, relevanceScore: score };
+      });
+
+      // Sort by relevance
+      scoredResults.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+
+      console.log(`📊 Found ${scoredResults.length} direct results`);
+
+      // ============================================================
+      // GET RECOMMENDATIONS
+      // ============================================================
+      let recommendations: RawOpportunity[] = [];
+
+      // If we have results, get recommendations based on the top result
+      if (scoredResults.length > 0) {
+        const topResult = scoredResults[0];
+        
+        // Get similar items
+        const similarItems = getSimilarItems(topResult, opportunities);
+        
+        // Filter out items already in results
+        const resultIds = new Set(scoredResults.map(r => r.id));
+        recommendations = similarItems.filter(item => !resultIds.has(item.id));
+        
+        // If we have a user, get personalized recommendations
+        if (user?.id) {
+          const personalized = await recommendationService.getPersonalizedRecommendations(
+            opportunities.filter(item => !resultIds.has(item.id)),
+            user.id
+          );
+          
+          // Merge and deduplicate
+          const combined = [...recommendations, ...personalized];
+          const unique = Array.from(new Map(combined.map((item: RawOpportunity) => [item.id, item])).values());
+          recommendations = unique;
+        }
+      } else {
+        // No results found - get recommendations based on query keywords
+        const relatedItems = opportunities.filter((item: RawOpportunity) => {
+          const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''}`.toLowerCase();
+          return intent.keywords.some(kw => searchText.includes(kw.toLowerCase()));
+        });
+        
+        if (relatedItems.length > 0) {
+          const scoredRelated = relatedItems.map((item: RawOpportunity) => {
+            let score = 0;
+            if (intent.keywords.some(kw => item.title?.toLowerCase().includes(kw.toLowerCase()))) {
+              score += 20;
+            }
+            return { ...item, relevanceScore: score };
+          });
+          scoredRelated.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+          recommendations = scoredRelated.slice(0, 20);
+        } else if (user?.id) {
+          // Fallback to personalized recommendations
+          recommendations = await recommendationService.getPersonalizedRecommendations(
+            opportunities,
+            user.id
+          );
+        }
+      }
+
+      // Ensure we have a mix of products and services in recommendations
+      const mixedRecommendations = mixRecommendations(recommendations);
       
-      if (item.title?.toLowerCase().includes(term)) score += 10;
-      if (item.shopName?.toLowerCase().includes(term)) score += 5;
-      if (item.category?.toLowerCase().includes(term)) score += 3;
-      if (item.description?.toLowerCase().includes(term)) score += 2;
-      if (item.area?.toLowerCase().includes(term)) score += 1;
-      
-      if (item.rating && item.rating > 4.0) score += 2;
-      if (item.inStock) score += 1;
-      
-      return {
+      // Limit recommendations
+      const finalRecommendations = mixedRecommendations.slice(0, 30);
+
+      console.log(`📊 Recommendations: ${finalRecommendations.length} items`);
+
+      // Prepare results with AI tags
+      const taggedResults = scoredResults.map((item: SearchResult, index: number) => ({
         ...item,
-        relevanceScore: score,
-      };
-    });
+        aiTag: index < 3 && (item.relevanceScore || 0) > 10,
+      }));
 
-    scoredResults.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+      // Combine results and recommendations
+      const allResults = [...taggedResults];
+      
+      // Add recommendations if we have them
+      if (finalRecommendations.length > 0) {
+        const resultIds = new Set(allResults.map(r => r.id));
+        const recs = finalRecommendations
+          .filter(r => !resultIds.has(r.id))
+          .map((r, index) => ({
+            ...r,
+            relevanceScore: 0,
+            aiTag: false,
+          }));
+        allResults.push(...recs);
+      }
 
-    const taggedResults = scoredResults.map((item: SearchResult, index: number) => ({
-      ...item,
-      aiTag: index < 3 && item.relevanceScore && item.relevanceScore > 5,
-    }));
+      setIsLoading(false);
+      setIsSearching(false);
 
-    setIsLoading(false);
-    setIsSearching(false);
-
-    // ✅ Navigate to SearchResultsScreen
-    if (taggedResults.length > 0) {
+      // Navigate to results
       navigation.navigate('SearchResults', {
-        results: taggedResults,
+        results: allResults,
         query: query,
         initialIndex: 0,
+        intent: intent,
+        hasResults: scoredResults.length > 0,
+        totalResults: scoredResults.length,
+        recommendationsCount: finalRecommendations.length,
       });
-    } else {
-      Alert.alert('No Results', `No results found for "${query}". Try adjusting your search.`);
-    }
 
-    // Track search
-    if (user?.id) {
-      console.log(`📊 Search tracked: "${query}" - ${taggedResults.length} results`);
+      // Save to recent searches
+      const newRecent = {
+        id: Date.now().toString(),
+        label: query.trim(),
+        time: 'Just now',
+      };
+      setRecentSearches(prev => [newRecent, ...prev.filter(r => r.label !== query.trim())]);
+
+    } catch (error) {
+      console.error('Search error:', error);
+      Alert.alert('Error', 'Failed to perform search. Please try again.');
+      setIsLoading(false);
+      setIsSearching(false);
     }
   }, [allOpportunities, user?.id, navigation]);
 
   const handleSearch = useCallback(() => {
     Keyboard.dismiss();
+    setShowSuggestions(false);
     if (searchQuery.trim()) {
       performSearch(searchQuery);
-      const newRecent = {
-        id: Date.now().toString(),
-        label: searchQuery.trim(),
-        time: 'Just now',
-      };
-      setRecentSearches(prev => [newRecent, ...prev.filter(r => r.label !== searchQuery.trim())]);
     } else {
       Alert.alert('Search', 'Please enter a search term');
     }
@@ -219,11 +624,13 @@ const SearchContent = ({ navigation }: any) => {
 
   const handlePromptPress = useCallback((prompt: string) => {
     setSearchQuery(prompt);
+    setShowSuggestions(false);
     performSearch(prompt);
   }, [performSearch]);
 
   const handleRecentPress = useCallback((query: string) => {
     setSearchQuery(query);
+    setShowSuggestions(false);
     performSearch(query);
   }, [performSearch]);
 
@@ -231,12 +638,19 @@ const SearchContent = ({ navigation }: any) => {
     setRecentSearches(prev => prev.filter(item => item.id !== id));
   }, []);
 
+  const handleSuggestionPress = useCallback((suggestion: string) => {
+    setSearchQuery(suggestion);
+    setShowSuggestions(false);
+    performSearch(suggestion);
+  }, [performSearch]);
+
   const clearSearch = useCallback(() => {
     setSearchQuery('');
+    setSuggestions([]);
+    setShowSuggestions(false);
     inputRef.current?.focus();
   }, []);
 
-  // ✅ Go Back Handler
   const handleGoBack = useCallback(() => {
     navigation.goBack();
   }, [navigation]);
@@ -267,7 +681,6 @@ const SearchContent = ({ navigation }: any) => {
     <View style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-      {/* ✅ Header with Go Back Arrow */}
       <View style={[styles.headerContainer, isDesktop && styles.headerContainerDesktop]}>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -289,6 +702,7 @@ const SearchContent = ({ navigation }: any) => {
             onSubmitEditing={handleSearch}
             returnKeyType="search"
             autoFocus
+            onFocus={() => setShowSuggestions(true)}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={clearSearch}>
@@ -301,6 +715,26 @@ const SearchContent = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
+      {/* Search Suggestions */}
+      {showSuggestions && suggestions.length > 0 && (
+        <View style={styles.suggestionsContainer}>
+          <FlatList
+            data={suggestions}
+            keyExtractor={(item, index) => `suggestion-${index}`}
+            renderItem={({ item }) => (
+              <TouchableOpacity 
+                style={styles.suggestionItem}
+                onPress={() => handleSuggestionPress(item)}
+              >
+                <Ionicons name="search-outline" size={16} color="#8A8AAE" />
+                <Text style={styles.suggestionText}>{item}</Text>
+              </TouchableOpacity>
+            )}
+            style={styles.suggestionsList}
+          />
+        </View>
+      )}
+
       {isLoading && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#4A7DFF" />
@@ -308,13 +742,12 @@ const SearchContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {!isLoading && (
+      {!isLoading && !showSuggestions && (
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ✅ Trending Now - Simplified */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
             <View style={styles.trendingGrid}>
@@ -442,7 +875,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  // ✅ Header with Back Button
   headerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -509,6 +941,38 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
+  suggestionsContainer: {
+    backgroundColor: 'rgba(13, 13, 26, 0.98)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    maxHeight: 250,
+    position: 'absolute',
+    top: 90,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  suggestionsList: {
+    paddingHorizontal: 16,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.03)',
+    gap: 12,
+  },
+  suggestionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    flex: 1,
+  },
   section: {
     marginBottom: 20,
   },
@@ -534,7 +998,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 40,
   },
-  // ✅ Updated Trending Grid - Simpler
   trendingGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
