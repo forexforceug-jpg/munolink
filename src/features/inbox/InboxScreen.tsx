@@ -1,6 +1,6 @@
 // src/features/inbox/InboxScreen.tsx
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,8 +15,10 @@ import {
   TextInput,
   Alert,
   Modal,
-  PanResponder,
   Animated,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,159 +26,50 @@ import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { supabase } from '../../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
-// --- Mock Data ---
-const conversations = [
-  {
-    id: '1',
-    type: 'chat',
-    title: 'TechWorld Kampala',
-    lastMessage: 'Your Samsung S25 is ready for pickup!',
-    time: '2 min ago',
-    unread: 2,
-    avatar: 'TW',
-    status: 'Order Ready',
-    statusColor: '#2ECC71',
-    isVerified: true,
-    messages: [
-      { id: '1', sender: 'them', text: 'Hello! Your Samsung S25 order is being processed.', time: '10:30 AM' },
-      { id: '2', sender: 'me', text: 'Great! When will it be ready?', time: '10:32 AM' },
-      { id: '3', sender: 'them', text: 'Your Samsung S25 is ready for pickup!', time: '10:35 AM' },
-    ],
-  },
-  {
-    id: '2',
-    type: 'chat',
-    title: 'QuickFix Mobile',
-    lastMessage: 'Your phone repair is complete!',
-    time: '1 hour ago',
-    unread: 1,
-    avatar: 'QF',
-    status: 'Completed',
-    statusColor: '#4A7DFF',
-    isVerified: true,
-    messages: [
-      { id: '1', sender: 'them', text: 'Your phone repair is scheduled for today at 2:00 PM.', time: 'Yesterday' },
-      { id: '2', sender: 'me', text: 'Perfect, I\'ll be there.', time: 'Yesterday' },
-      { id: '3', sender: 'them', text: 'Your phone repair is complete!', time: '1 hour ago' },
-    ],
-  },
-  {
-    id: '3',
-    type: 'ai',
-    title: 'Muno AI',
-    lastMessage: '💡 The phone in your wishlist has reduced in price by UGX 50,000.',
-    time: '3 hours ago',
-    unread: 0,
-    avatar: 'AI',
-    status: 'Price Alert',
-    statusColor: '#4A7DFF',
-    isVerified: true,
-    messages: [
-      { id: '1', sender: 'ai', text: '💡 The phone in your wishlist has reduced in price by UGX 50,000.', time: '3 hours ago' },
-      { id: '2', sender: 'ai', text: 'Would you like me to check for better alternatives?', time: '3 hours ago' },
-    ],
-  },
-  {
-    id: '4',
-    type: 'order',
-    title: 'Order #MN-2024-001',
-    lastMessage: '✅ Your order has been delivered. Rate your experience!',
-    time: '5 hours ago',
-    unread: 0,
-    avatar: '📦',
-    status: 'Delivered',
-    statusColor: '#2ECC71',
-    isVerified: false,
-    messages: [
-      { id: '1', sender: 'system', text: '🔄 Your order has been confirmed.', time: '2 days ago' },
-      { id: '2', sender: 'system', text: '📦 Your order has been shipped.', time: '1 day ago' },
-      { id: '3', sender: 'system', text: '✅ Your order has been delivered. Rate your experience!', time: '5 hours ago' },
-    ],
-  },
-  {
-    id: '5',
-    type: 'booking',
-    title: 'Hotel Booking - Jinja Heights',
-    lastMessage: '📅 Reminder: Your check-in is tomorrow at 3:00 PM.',
-    time: '1 day ago',
-    unread: 1,
-    avatar: '🏨',
-    status: 'Upcoming',
-    statusColor: '#F1C40F',
-    isVerified: false,
-    messages: [
-      { id: '1', sender: 'system', text: '✅ Your booking has been confirmed.', time: '3 days ago' },
-      { id: '2', sender: 'system', text: '📅 Reminder: Your check-in is tomorrow at 3:00 PM.', time: '1 day ago' },
-    ],
-  },
-  {
-    id: '6',
-    type: 'payment',
-    title: 'Payment - UGX 2,850,000',
-    lastMessage: '💳 Payment successful. Receipt attached.',
-    time: '2 days ago',
-    unread: 0,
-    avatar: '💳',
-    status: 'Completed',
-    statusColor: '#2ECC71',
-    isVerified: false,
-    messages: [
-      { id: '1', sender: 'system', text: '💳 Payment of UGX 2,850,000 initiated.', time: '2 days ago' },
-      { id: '2', sender: 'system', text: '💳 Payment successful. Receipt attached.', time: '2 days ago' },
-    ],
-  },
-  {
-    id: '7',
-    type: 'support',
-    title: 'Support - Help Center',
-    lastMessage: 'We\'ve received your inquiry and will respond within 24 hours.',
-    time: '3 days ago',
-    unread: 0,
-    avatar: '🎧',
-    status: 'Open',
-    statusColor: '#4A7DFF',
-    isVerified: false,
-    messages: [
-      { id: '1', sender: 'me', text: 'I need help with my order.', time: '3 days ago' },
-      { id: '2', sender: 'them', text: 'We\'ve received your inquiry and will respond within 24 hours.', time: '3 days ago' },
-    ],
-  },
-  {
-    id: '8',
-    type: 'chat',
-    title: 'City Electronics',
-    lastMessage: 'We have the iPhone 16 in stock now!',
-    time: '4 days ago',
-    unread: 0,
-    avatar: 'CE',
-    status: 'Active',
-    statusColor: '#2ECC71',
-    isVerified: true,
-    messages: [
-      { id: '1', sender: 'them', text: 'We have the iPhone 16 in stock now!', time: '4 days ago' },
-      { id: '2', sender: 'me', text: 'Great! I\'ll come check it out.', time: '4 days ago' },
-    ],
-  },
-];
+// --- Types ---
+interface Message {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  text: string;
+  is_read: boolean;
+  created_at: string;
+}
 
-// --- Filter Options ---
-const filterOptions = [
-  { key: 'all', label: 'All' },
-  { key: 'chats', label: 'Chats' },
-  { key: 'orders', label: 'Orders' },
-  { key: 'bookings', label: 'Bookings' },
-  { key: 'payments', label: 'Payments' },
-  { key: 'ai', label: 'AI' },
-  { key: 'support', label: 'Support' },
-  { key: 'unread', label: 'Unread' },
-];
+interface Conversation {
+  id: string;
+  name: string;
+  lastMessage: string;
+  time: string;
+  unread: number;
+  online?: boolean;
+  avatar?: string;
+  isVerified?: boolean;
+  status?: string;
+  statusColor?: string;
+  type?: 'chat' | 'ai' | 'order' | 'booking' | 'payment' | 'support';
+}
+
+// --- Helper Functions ---
+const formatTime = (timestamp: string) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  
+  if (diff < 60000) return 'Just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+  if (diff < 86400000) return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  if (diff < 172800000) return 'Yesterday';
+  if (diff < 604800000) return date.toLocaleDateString('en-US', { weekday: 'short' });
+  return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+};
 
 // --- Sub-components ---
-
-// Conversation Card
 const ConversationCard = ({ item, onPress, onLongPress }: any) => {
   const statusColors: Record<string, string> = {
     'Order Ready': '#2ECC71',
@@ -208,7 +101,7 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => {
         ) : (
           <View style={[styles.avatarCircle, { backgroundColor: item.type === 'chat' ? 'rgba(74, 125, 255, 0.15)' : 'rgba(255,255,255,0.05)' }]}>
             <Text style={[styles.avatarText, item.type !== 'chat' && styles.avatarTextSystem]}>
-              {item.avatar}
+              {item.avatar || item.name?.charAt(0).toUpperCase() || 'U'}
             </Text>
           </View>
         )}
@@ -223,7 +116,7 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => {
         <View style={styles.conversationHeader}>
           <View style={styles.conversationTitleRow}>
             <Text style={styles.conversationTitle} numberOfLines={1}>
-              {item.title}
+              {item.name || item.title}
             </Text>
             {item.isVerified && (
               <View style={styles.verifiedBadge}>
@@ -238,10 +131,12 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => {
           <Text style={[styles.conversationMessage, item.unread > 0 && styles.conversationMessageUnread]} numberOfLines={1}>
             {item.lastMessage}
           </Text>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
-            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-            <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
-          </View>
+          {item.status && (
+            <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
+              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+              <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
+            </View>
+          )}
         </View>
       </View>
     </TouchableOpacity>
@@ -253,7 +148,7 @@ const MessageBubble = ({ message, isMe }: any) => (
   <View style={[styles.messageWrapper, isMe ? styles.messageMeWrapper : styles.messageThemWrapper]}>
     {!isMe && (
       <View style={styles.messageAvatar}>
-        <Text style={styles.messageAvatarText}>AI</Text>
+        <Text style={styles.messageAvatarText}>U</Text>
       </View>
     )}
     <View style={[styles.messageBubble, isMe ? styles.messageMe : styles.messageThem]}>
@@ -314,15 +209,374 @@ const GuestInboxView = ({ navigation }: any) => (
 
 // --- Desktop Inbox Content ---
 const DesktopInboxContent = ({ navigation }: any) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   
   const [activeFilter, setActiveFilter] = useState('all');
-  const [selectedConversation, setSelectedConversation] = useState<any>(null);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [showChat, setShowChat] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
-  const [filteredConversations, setFilteredConversations] = useState(conversations);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
+  
+  const flatListRef = useRef<FlatList>(null);
+  const subscriptionRef = useRef<any>(null);
+  const isMounted = useRef(true);
+
+  // --- Load Conversations ---
+  const loadConversations = useCallback(async () => {
+    if (!user?.id || !isMounted.current) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { data: allMessages, error: msgError } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (msgError) {
+        console.error('Error loading messages:', msgError);
+        setLoading(false);
+        return;
+      }
+
+      if (!allMessages || allMessages.length === 0) {
+        setLoading(false);
+        setConversations([]);
+        setFilteredConversations([]);
+        return;
+      }
+
+      // Group by partner
+      const convoMap = new Map();
+      allMessages.forEach((msg: any) => {
+        const partnerId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+        if (!convoMap.has(partnerId)) {
+          convoMap.set(partnerId, {
+            partnerId,
+            lastMessage: msg.text || '',
+            lastMessageTime: msg.created_at,
+            unreadCount: msg.receiver_id === user.id && !msg.is_read ? 1 : 0,
+          });
+        } else {
+          const existing = convoMap.get(partnerId);
+          if (msg.receiver_id === user.id && !msg.is_read) {
+            existing.unreadCount++;
+          }
+        }
+      });
+
+      // Get partner names
+      const partnerIds = [...convoMap.keys()];
+      let partnerMap: Record<string, string> = {};
+
+      if (partnerIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, full_name')
+          .in('id', partnerIds);
+        
+        if (users) {
+          users.forEach((u: any) => { 
+            partnerMap[u.id] = u.full_name || 'User'; 
+          });
+        }
+
+        // Try to get shop names for partners who are shop owners
+        const { data: shops } = await supabase
+          .from('shops')
+          .select('id, name, owner_id')
+          .in('owner_id', partnerIds);
+        
+        if (shops) {
+          shops.forEach((s: any) => {
+            if (!partnerMap[s.owner_id] || partnerMap[s.owner_id] === 'User') {
+              partnerMap[s.owner_id] = s.name;
+            }
+          });
+        }
+      }
+
+      // Build conversation list
+      const convos: Conversation[] = [];
+      convoMap.forEach((convo: any, partnerId: string) => {
+        const name = partnerMap[partnerId] || 'Unknown User';
+        convos.push({
+          id: partnerId,
+          name: name,
+          lastMessage: convo.lastMessage || 'No messages yet',
+          time: formatTime(convo.lastMessageTime),
+          unread: convo.unreadCount,
+          online: false,
+          avatar: name.charAt(0).toUpperCase(),
+          type: 'chat',
+          isVerified: false,
+        });
+      });
+
+      // Sort by last message time
+      convos.sort((a, b) => {
+        const timeA = convoMap.get(a.id)?.lastMessageTime || '';
+        const timeB = convoMap.get(b.id)?.lastMessageTime || '';
+        return timeB.localeCompare(timeA);
+      });
+
+      if (isMounted.current) {
+        setConversations(convos);
+        setFilteredConversations(convos);
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+      if (isMounted.current) {
+        setLoading(false);
+      }
+    }
+  }, [user?.id]);
+
+  // --- Load Messages for a Conversation ---
+  const loadMessages = useCallback(async (partnerId: string) => {
+    if (!user?.id || !partnerId || !isMounted.current) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (error) {
+        console.error('Error loading messages:', error);
+        return;
+      }
+
+      const filtered = data?.filter((m: any) => 
+        (m.sender_id === user.id && m.receiver_id === partnerId) || 
+        (m.sender_id === partnerId && m.receiver_id === user.id)
+      ) || [];
+
+      if (isMounted.current) {
+        setMessages(filtered.map((m: any) => ({
+          id: m.id,
+          from: m.sender_id === user.id ? 'me' : 'them',
+          text: m.text,
+          time: formatTime(m.created_at),
+          sender_id: m.sender_id,
+          receiver_id: m.receiver_id,
+          is_read: m.is_read,
+        })));
+      }
+
+      // Mark messages as read
+      await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('sender_id', partnerId)
+        .eq('receiver_id', user.id)
+        .eq('is_read', false);
+
+      // Update unread count in conversation list
+      setConversations(prev => 
+        prev.map(c => 
+          c.id === partnerId ? { ...c, unread: 0 } : c
+        )
+      );
+      setFilteredConversations(prev => 
+        prev.map(c => 
+          c.id === partnerId ? { ...c, unread: 0 } : c
+        )
+      );
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }, [user?.id]);
+
+  // --- Send Message ---
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current) return;
+
+    const receiverId = selectedConversation.id;
+    
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: user.id,
+          receiver_id: receiverId,
+          text: newMessage.trim(),
+          is_read: false,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error sending message:', error);
+        Alert.alert('Error', 'Failed to send message. Please try again.');
+        return;
+      }
+
+      if (data && isMounted.current) {
+        setMessages(prev => [...prev, {
+          id: data.id,
+          from: 'me',
+          text: data.text,
+          
+          sender_id: data.sender_id,
+          receiver_id: data.receiver_id,
+          is_read: data.is_read,
+        }]);
+
+        setNewMessage('');
+
+        const messageText = data.text || 'No messages yet';
+        const messageTime = formatTime(data.created_at);
+        
+        setConversations(prev => {
+          const updated = prev.map(c => 
+            c.id === receiverId 
+              ? { ...c, lastMessage: messageText, time: messageTime }
+              : c
+          );
+          return updated.sort((a, b) => {
+            const timeA = a.time === 'Just now' ? Date.now() : 0;
+            const timeB = b.time === 'Just now' ? Date.now() : 0;
+            return timeB - timeA;
+          });
+        });
+
+        setFilteredConversations(prev => {
+          const updated = prev.map(c => 
+            c.id === receiverId 
+              ? { ...c, lastMessage: messageText, time: messageTime }
+              : c
+          );
+          return updated.sort((a, b) => {
+            const timeA = a.time === 'Just now' ? Date.now() : 0;
+            const timeB = b.time === 'Just now' ? Date.now() : 0;
+            return timeB - timeA;
+          });
+        });
+
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      Alert.alert('Error', 'Failed to send message.');
+    }
+  };
+
+  // --- Setup Real-time Subscription ---
+  useEffect(() => {
+    if (!user?.id || !isMounted.current) return;
+
+    const channel = supabase.channel('messages-channel');
+    channel
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `receiver_id=eq.${user.id}`,
+      }, () => {
+        if (isMounted.current) {
+          loadConversations();
+        }
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `sender_id=eq.${user.id}`,
+      }, () => {
+        if (isMounted.current) {
+          // ✅ FIX: Use a safe approach - check if id exists and is a string
+          const chatId = selectedConversation?.id;
+          if (chatId && typeof chatId === 'string') {
+            loadMessages(chatId);
+          }
+          loadConversations();
+        }
+      })
+      .subscribe((status) => {
+        console.log('📡 Subscription status:', status);
+      });
+
+    subscriptionRef.current = channel;
+
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current = null;
+      }
+    };
+  }, [user?.id, selectedConversation, loadConversations, loadMessages]);
+
+  // --- Load data on mount ---
+  useEffect(() => {
+    isMounted.current = true;
+    loadConversations();
+
+    return () => {
+      isMounted.current = false;
+    };
+  }, [loadConversations]);
+
+  // --- Load messages when chat is selected ---
+  useEffect(() => {
+    if (selectedConversation && selectedConversation.id && isMounted.current) {
+      loadMessages(selectedConversation.id);
+    }
+  }, [selectedConversation, loadMessages]);
+
+  // --- Apply filters ---
+  useEffect(() => {
+    let filtered = [...conversations];
+
+    if (searchQuery) {
+      filtered = filtered.filter(c => 
+        c.name?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    if (activeFilter === 'unread') {
+      filtered = filtered.filter(c => c.unread > 0);
+    }
+
+    setFilteredConversations(filtered);
+  }, [searchQuery, activeFilter, conversations]);
+
+  // --- Handle conversation press ---
+  const handleConversationPress = (conversation: Conversation) => {
+    setSelectedConversation(conversation);
+    setShowChat(true);
+    if (conversation.id) {
+      loadMessages(conversation.id);
+    }
+  };
+
+  // --- Handle back from chat ---
+  const handleBack = () => {
+    setSelectedConversation(null);
+    setShowChat(false);
+    setMessages([]);
+    loadConversations();
+  };
+
+  // --- Filter options ---
+  const filterOptions = [
+    { key: 'all', label: 'All' },
+    { key: 'unread', label: 'Unread' },
+  ];
 
   if (!isAuthenticated) {
     return (
@@ -332,111 +586,6 @@ const DesktopInboxContent = ({ navigation }: any) => {
       </View>
     );
   }
-
-  // Filter conversations
-  const applyFilter = (filterKey: string) => {
-    setActiveFilter(filterKey);
-    let filtered = [...conversations];
-
-    switch (filterKey) {
-      case 'chats':
-        filtered = filtered.filter(c => c.type === 'chat');
-        break;
-      case 'orders':
-        filtered = filtered.filter(c => c.type === 'order');
-        break;
-      case 'bookings':
-        filtered = filtered.filter(c => c.type === 'booking');
-        break;
-      case 'payments':
-        filtered = filtered.filter(c => c.type === 'payment');
-        break;
-      case 'ai':
-        filtered = filtered.filter(c => c.type === 'ai');
-        break;
-      case 'support':
-        filtered = filtered.filter(c => c.type === 'support');
-        break;
-      case 'unread':
-        filtered = filtered.filter(c => c.unread > 0);
-        break;
-      default:
-        break;
-    }
-
-    setFilteredConversations(filtered);
-  };
-
-  const handleConversationPress = (conversation: any) => {
-    setSelectedConversation(conversation);
-    setShowChat(true);
-  };
-
-  const handleSendMessage = () => {
-    if (!newMessage.trim()) return;
-
-    const message = {
-      id: Date.now().toString(),
-      sender: 'me',
-      text: newMessage.trim(),
-      time: 'Just now',
-    };
-
-    setSelectedConversation((prev: any) => ({
-      ...prev,
-      messages: [...prev.messages, message],
-    }));
-    setNewMessage('');
-  };
-
-  const handleAISuggestion = (suggestion: string) => {
-    const message = {
-      id: Date.now().toString(),
-      sender: 'me',
-      text: suggestion,
-      time: 'Just now',
-    };
-
-    setSelectedConversation((prev: any) => ({
-      ...prev,
-      messages: [...prev.messages, message],
-    }));
-
-    setTimeout(() => {
-      const aiResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'them',
-        text: `🤖 Let me help you with "${suggestion}". I'll find the best answer for you.`,
-        time: 'Just now',
-      };
-      setSelectedConversation((prev: any) => ({
-        ...prev,
-        messages: [...prev.messages, aiResponse],
-      }));
-    }, 1000);
-  };
-
-  const handleLongPress = (conversation: any) => {
-    Alert.alert(
-      conversation.title,
-      'Choose an action',
-      [
-        { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
-        { text: 'Mute', onPress: () => console.log('Mute') },
-        { text: 'Archive', onPress: () => console.log('Archive') },
-        { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  };
-
-  const renderConversation = ({ item }: any) => (
-    <ConversationCard
-      item={item}
-      onPress={handleConversationPress}
-      onLongPress={handleLongPress}
-    />
-  );
 
   return (
     <View style={styles.desktopContainer}>
@@ -483,7 +632,7 @@ const DesktopInboxContent = ({ navigation }: any) => {
                     styles.filterChip,
                     activeFilter === filter.key && styles.filterChipActive,
                   ]}
-                  onPress={() => applyFilter(filter.key)}
+                  onPress={() => setActiveFilter(filter.key)}
                 >
                   <Text
                     style={[
@@ -504,31 +653,55 @@ const DesktopInboxContent = ({ navigation }: any) => {
           </ScrollView>
 
           {/* Conversations List */}
-          <FlatList
-            data={filteredConversations}
-            renderItem={renderConversation}
-            keyExtractor={(item) => item.id}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.conversationsList}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>💬</Text>
-                <Text style={styles.emptyTitle}>No conversations</Text>
-                <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
-              </View>
-            }
-          />
+          {loading ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#4A7DFF" />
+              <Text style={{ color: '#8A8AAE', marginTop: 10 }}>Loading conversations...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={filteredConversations}
+              renderItem={({ item }) => (
+                <ConversationCard
+                  item={item}
+                  onPress={handleConversationPress}
+                  onLongPress={(convo: Conversation) => {
+                    Alert.alert(
+                      convo.name,
+                      'Choose an action',
+                      [
+                        { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
+                        { text: 'Mute', onPress: () => console.log('Mute') },
+                        { text: 'Archive', onPress: () => console.log('Archive') },
+                        { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
+                        { text: 'Cancel', style: 'cancel' },
+                      ]
+                    );
+                  }}
+                />
+              )}
+              keyExtractor={(item) => item.id}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.conversationsList}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyIcon}>💬</Text>
+                  <Text style={styles.emptyTitle}>No conversations</Text>
+                  <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
+                </View>
+              }
+            />
+          )}
         </View>
 
         {/* Right Column - Chat View */}
         <View style={styles.desktopRightColumn}>
           {selectedConversation ? (
             <View style={styles.desktopChatContainer}>
-              {/* Chat Header */}
               <View style={styles.chatHeader}>
                 <View style={styles.chatHeaderInfo}>
-                  <Text style={styles.chatHeaderTitle}>{selectedConversation.title}</Text>
-                  <Text style={styles.chatHeaderStatus}>{selectedConversation.status}</Text>
+                  <Text style={styles.chatHeaderTitle}>{selectedConversation.name}</Text>
+                  <Text style={styles.chatHeaderStatus}>Online</Text>
                 </View>
                 <View style={styles.chatHeaderRight}>
                   <TouchableOpacity style={styles.chatHeaderIcon}>
@@ -540,21 +713,29 @@ const DesktopInboxContent = ({ navigation }: any) => {
                 </View>
               </View>
 
-              {/* Messages */}
               <FlatList
-                data={selectedConversation.messages}
-                renderItem={({ item }) => (
-                  <MessageBubble message={item} isMe={item.sender === 'me'} />
-                )}
-                keyExtractor={(item) => item.id}
+                ref={flatListRef}
+                data={messages}
+                keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
                 contentContainerStyle={styles.messagesList}
-                inverted={false}
+                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                renderItem={({ item }) => (
+                  <MessageBubble message={item} isMe={item.from === 'me'} />
+                )}
+                ListEmptyComponent={
+                  <View style={styles.emptyChatContainer}>
+                    <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
+                    <Text style={styles.emptyChatTitle}>No messages yet</Text>
+                    <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
+                  </View>
+                }
               />
 
-              {/* AI Suggestions */}
-              <AISuggestions onPress={handleAISuggestion} />
+              <AISuggestions onPress={(suggestion: string) => {
+                setNewMessage(suggestion);
+                setTimeout(() => handleSendMessage(), 100);
+              }} />
 
-              {/* Input */}
               <View style={styles.chatInputContainer}>
                 <TouchableOpacity style={styles.attachButton}>
                   <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
@@ -594,198 +775,343 @@ const DesktopInboxContent = ({ navigation }: any) => {
 
 // --- Mobile Inbox Content ---
 const MobileInboxContent = ({ navigation }: any) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   
   const [activeFilter, setActiveFilter] = useState('all');
-  const [selectedConversation, setSelectedConversation] = useState<any>(null);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [showChat, setShowChat] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
-  const [filteredConversations, setFilteredConversations] = useState(conversations);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
+  
+  const flatListRef = useRef<FlatList>(null);
+  const subscriptionRef = useRef<any>(null);
+  const isMounted = useRef(true);
+
+  // --- Load Conversations ---
+  const loadConversations = useCallback(async () => {
+    if (!user?.id || !isMounted.current) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { data: allMessages, error: msgError } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (msgError) {
+        console.error('Error loading messages:', msgError);
+        setLoading(false);
+        return;
+      }
+
+      if (!allMessages || allMessages.length === 0) {
+        setLoading(false);
+        setConversations([]);
+        setFilteredConversations([]);
+        return;
+      }
+
+      const convoMap = new Map();
+      allMessages.forEach((msg: any) => {
+        const partnerId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+        if (!convoMap.has(partnerId)) {
+          convoMap.set(partnerId, {
+            partnerId,
+            lastMessage: msg.text || '',
+            lastMessageTime: msg.created_at,
+            unreadCount: msg.receiver_id === user.id && !msg.is_read ? 1 : 0,
+          });
+        } else {
+          const existing = convoMap.get(partnerId);
+          if (msg.receiver_id === user.id && !msg.is_read) {
+            existing.unreadCount++;
+          }
+        }
+      });
+
+      const partnerIds = [...convoMap.keys()];
+      let partnerMap: Record<string, string> = {};
+
+      if (partnerIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, full_name')
+          .in('id', partnerIds);
+        
+        if (users) {
+          users.forEach((u: any) => { 
+            partnerMap[u.id] = u.full_name || 'User'; 
+          });
+        }
+
+        const { data: shops } = await supabase
+          .from('shops')
+          .select('id, name, owner_id')
+          .in('owner_id', partnerIds);
+        
+        if (shops) {
+          shops.forEach((s: any) => {
+            if (!partnerMap[s.owner_id] || partnerMap[s.owner_id] === 'User') {
+              partnerMap[s.owner_id] = s.name;
+            }
+          });
+        }
+      }
+
+      const convos: Conversation[] = [];
+      convoMap.forEach((convo: any, partnerId: string) => {
+        const name = partnerMap[partnerId] || 'Unknown User';
+        convos.push({
+          id: partnerId,
+          name: name,
+          lastMessage: convo.lastMessage || 'No messages yet',
+          time: formatTime(convo.lastMessageTime),
+          unread: convo.unreadCount,
+          online: false,
+          avatar: name.charAt(0).toUpperCase(),
+          type: 'chat',
+          isVerified: false,
+        });
+      });
+
+      convos.sort((a, b) => {
+        const timeA = convoMap.get(a.id)?.lastMessageTime || '';
+        const timeB = convoMap.get(b.id)?.lastMessageTime || '';
+        return timeB.localeCompare(timeA);
+      });
+
+      if (isMounted.current) {
+        setConversations(convos);
+        setFilteredConversations(convos);
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+      if (isMounted.current) {
+        setLoading(false);
+      }
+    }
+  }, [user?.id]);
+
+  // --- Load Messages for a Conversation ---
+  const loadMessages = useCallback(async (partnerId: string) => {
+    if (!user?.id || !partnerId || !isMounted.current) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (error) {
+        console.error('Error loading messages:', error);
+        return;
+      }
+
+      const filtered = data?.filter((m: any) => 
+        (m.sender_id === user.id && m.receiver_id === partnerId) || 
+        (m.sender_id === partnerId && m.receiver_id === user.id)
+      ) || [];
+
+      if (isMounted.current) {
+        setMessages(filtered.map((m: any) => ({
+          id: m.id,
+          from: m.sender_id === user.id ? 'me' : 'them',
+          text: m.text,
+          time: formatTime(m.created_at),
+          sender_id: m.sender_id,
+          receiver_id: m.receiver_id,
+          is_read: m.is_read,
+        })));
+      }
+
+      await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('sender_id', partnerId)
+        .eq('receiver_id', user.id)
+        .eq('is_read', false);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }, [user?.id]);
+
+  // --- Send Message ---
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current) return;
+
+    const receiverId = selectedConversation.id;
+    
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: user.id,
+          receiver_id: receiverId,
+          text: newMessage.trim(),
+          is_read: false,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error sending message:', error);
+        Alert.alert('Error', 'Failed to send message. Please try again.');
+        return;
+      }
+
+      if (data && isMounted.current) {
+        setMessages(prev => [...prev, {
+          id: data.id,
+          from: 'me',
+          text: data.text,
+        
+          sender_id: data.sender_id,
+          receiver_id: data.receiver_id,
+          is_read: data.is_read,
+        }]);
+
+        setNewMessage('');
+
+        const messageText = data.text || 'No messages yet';
+        const messageTime = formatTime(data.created_at);
+        
+        setConversations(prev => {
+          const updated = prev.map(c => 
+            c.id === receiverId 
+              ? { ...c, lastMessage: messageText, time: messageTime }
+              : c
+          );
+          return updated.sort((a, b) => {
+            const timeA = a.time === 'Just now' ? Date.now() : 0;
+            const timeB = b.time === 'Just now' ? Date.now() : 0;
+            return timeB - timeA;
+          });
+        });
+
+        setFilteredConversations(prev => {
+          const updated = prev.map(c => 
+            c.id === receiverId 
+              ? { ...c, lastMessage: messageText, time: messageTime }
+              : c
+          );
+          return updated.sort((a, b) => {
+            const timeA = a.time === 'Just now' ? Date.now() : 0;
+            const timeB = b.time === 'Just now' ? Date.now() : 0;
+            return timeB - timeA;
+          });
+        });
+
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      Alert.alert('Error', 'Failed to send message.');
+    }
+  };
+
+  // --- Setup Real-time Subscription ---
+  useEffect(() => {
+    if (!user?.id || !isMounted.current) return;
+
+    const channel = supabase.channel('messages-channel');
+    channel
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `receiver_id=eq.${user.id}`,
+      }, () => {
+        if (isMounted.current) {
+          loadConversations();
+        }
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `sender_id=eq.${user.id}`,
+      }, () => {
+        if (isMounted.current) {
+          // ✅ FIX: Use a safe approach - check if id exists and is a string
+          const chatId = selectedConversation?.id;
+          if (chatId && typeof chatId === 'string') {
+            loadMessages(chatId);
+          }
+          loadConversations();
+        }
+      })
+      .subscribe((status) => {
+        console.log('📡 Subscription status:', status);
+      });
+
+    subscriptionRef.current = channel;
+
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current = null;
+      }
+    };
+  }, [user?.id, selectedConversation, loadConversations, loadMessages]);
+
+  // --- Load data on mount ---
+  useEffect(() => {
+    isMounted.current = true;
+    loadConversations();
+
+    return () => {
+      isMounted.current = false;
+    };
+  }, [loadConversations]);
+
+  // --- Load messages when chat is selected ---
+  useEffect(() => {
+    if (selectedConversation && selectedConversation.id && isMounted.current) {
+      loadMessages(selectedConversation.id);
+    }
+  }, [selectedConversation, loadMessages]);
+
+  // --- Apply filters ---
+  useEffect(() => {
+    let filtered = [...conversations];
+
+    if (searchQuery) {
+      filtered = filtered.filter(c => 
+        c.name?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    if (activeFilter === 'unread') {
+      filtered = filtered.filter(c => c.unread > 0);
+    }
+
+    setFilteredConversations(filtered);
+  }, [searchQuery, activeFilter, conversations]);
+
+  // --- Filter options ---
+  const filterOptions = [
+    { key: 'all', label: 'All' },
+    { key: 'unread', label: 'Unread' },
+  ];
 
   if (!isAuthenticated) {
     return <GuestInboxView navigation={navigation} />;
   }
-
-  // Filter conversations
-  const applyFilter = (filterKey: string) => {
-    setActiveFilter(filterKey);
-    let filtered = [...conversations];
-
-    switch (filterKey) {
-      case 'chats':
-        filtered = filtered.filter(c => c.type === 'chat');
-        break;
-      case 'orders':
-        filtered = filtered.filter(c => c.type === 'order');
-        break;
-      case 'bookings':
-        filtered = filtered.filter(c => c.type === 'booking');
-        break;
-      case 'payments':
-        filtered = filtered.filter(c => c.type === 'payment');
-        break;
-      case 'ai':
-        filtered = filtered.filter(c => c.type === 'ai');
-        break;
-      case 'support':
-        filtered = filtered.filter(c => c.type === 'support');
-        break;
-      case 'unread':
-        filtered = filtered.filter(c => c.unread > 0);
-        break;
-      default:
-        break;
-    }
-
-    setFilteredConversations(filtered);
-  };
-
-  const handleConversationPress = (conversation: any) => {
-    setSelectedConversation(conversation);
-    setShowChat(true);
-  };
-
-  const handleSendMessage = () => {
-    if (!newMessage.trim()) return;
-
-    const message = {
-      id: Date.now().toString(),
-      sender: 'me',
-      text: newMessage.trim(),
-      time: 'Just now',
-    };
-
-    setSelectedConversation((prev: any) => ({
-      ...prev,
-      messages: [...prev.messages, message],
-    }));
-    setNewMessage('');
-  };
-
-  const handleAISuggestion = (suggestion: string) => {
-    const message = {
-      id: Date.now().toString(),
-      sender: 'me',
-      text: suggestion,
-      time: 'Just now',
-    };
-
-    setSelectedConversation((prev: any) => ({
-      ...prev,
-      messages: [...prev.messages, message],
-    }));
-
-    setTimeout(() => {
-      const aiResponse = {
-        id: (Date.now() + 1).toString(),
-        sender: 'them',
-        text: `🤖 Let me help you with "${suggestion}". I'll find the best answer for you.`,
-        time: 'Just now',
-      };
-      setSelectedConversation((prev: any) => ({
-        ...prev,
-        messages: [...prev.messages, aiResponse],
-      }));
-    }, 1000);
-  };
-
-  const handleLongPress = (conversation: any) => {
-    Alert.alert(
-      conversation.title,
-      'Choose an action',
-      [
-        { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
-        { text: 'Mute', onPress: () => console.log('Mute') },
-        { text: 'Archive', onPress: () => console.log('Archive') },
-        { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  };
-
-  const renderConversation = ({ item }: any) => (
-    <ConversationCard
-      item={item}
-      onPress={handleConversationPress}
-      onLongPress={handleLongPress}
-    />
-  );
-
-  // --- Chat View Modal ---
-  const renderChatModal = () => {
-    if (!selectedConversation) return null;
-
-    return (
-      <Modal
-        visible={showChat}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowChat(false)}
-      >
-        <SafeAreaView style={styles.chatContainer}>
-          {/* Chat Header */}
-          <View style={styles.chatHeader}>
-            <TouchableOpacity onPress={() => setShowChat(false)}>
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <View style={styles.chatHeaderInfo}>
-              <Text style={styles.chatHeaderTitle}>{selectedConversation.title}</Text>
-              <Text style={styles.chatHeaderStatus}>{selectedConversation.status}</Text>
-            </View>
-            <View style={styles.chatHeaderRight}>
-              <TouchableOpacity style={styles.chatHeaderIcon}>
-                <Ionicons name="call-outline" size={20} color="#4A7DFF" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.chatHeaderIcon}>
-                <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Messages */}
-          <FlatList
-            data={selectedConversation.messages}
-            renderItem={({ item }) => (
-              <MessageBubble message={item} isMe={item.sender === 'me'} />
-            )}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.messagesList}
-            inverted={false}
-          />
-
-          {/* AI Suggestions */}
-          <AISuggestions onPress={handleAISuggestion} />
-
-          {/* Input */}
-          <View style={styles.chatInputContainer}>
-            <TouchableOpacity style={styles.attachButton}>
-              <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
-            </TouchableOpacity>
-            <TextInput
-              style={styles.chatInput}
-              placeholder="Type a message..."
-              placeholderTextColor="#8A8AAE"
-              value={newMessage}
-              onChangeText={setNewMessage}
-              multiline
-            />
-            <TouchableOpacity style={styles.aiChatButton}>
-              <Ionicons name="sparkles" size={20} color="#4A7DFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-              onPress={handleSendMessage}
-              disabled={!newMessage.trim()}
-            >
-              <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Modal>
-    );
-  };
 
   return (
     <SafeAreaView style={styles.mobileContainer}>
@@ -843,7 +1169,7 @@ const MobileInboxContent = ({ navigation }: any) => {
                   styles.filterChip,
                   activeFilter === filter.key && styles.filterChipActive,
                 ]}
-                onPress={() => applyFilter(filter.key)}
+                onPress={() => setActiveFilter(filter.key)}
               >
                 <Text
                   style={[
@@ -864,7 +1190,12 @@ const MobileInboxContent = ({ navigation }: any) => {
         </ScrollView>
 
         {/* Conversations List */}
-        {filteredConversations.length === 0 ? (
+        {loading ? (
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+            <ActivityIndicator size="large" color="#4A7DFF" />
+            <Text style={{ color: '#8A8AAE', marginTop: 10 }}>Loading conversations...</Text>
+          </View>
+        ) : filteredConversations.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>💬</Text>
             <Text style={styles.emptyTitle}>No conversations</Text>
@@ -873,7 +1204,31 @@ const MobileInboxContent = ({ navigation }: any) => {
         ) : (
           <FlatList
             data={filteredConversations}
-            renderItem={renderConversation}
+            renderItem={({ item }) => (
+              <ConversationCard
+                item={item}
+                onPress={(convo: Conversation) => {
+                  setSelectedConversation(convo);
+                  setShowChat(true);
+                  if (convo.id) {
+                    loadMessages(convo.id);
+                  }
+                }}
+                onLongPress={(convo: Conversation) => {
+                  Alert.alert(
+                    convo.name,
+                    'Choose an action',
+                    [
+                      { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
+                      { text: 'Mute', onPress: () => console.log('Mute') },
+                      { text: 'Archive', onPress: () => console.log('Archive') },
+                      { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
+                      { text: 'Cancel', style: 'cancel' },
+                    ]
+                  );
+                }}
+              />
+            )}
             keyExtractor={(item) => item.id}
             scrollEnabled={false}
             contentContainerStyle={styles.conversationsList}
@@ -884,7 +1239,94 @@ const MobileInboxContent = ({ navigation }: any) => {
       </ScrollView>
 
       {/* Chat Modal */}
-      {renderChatModal()}
+      <Modal
+        visible={showChat}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          setShowChat(false);
+          setSelectedConversation(null);
+          setMessages([]);
+        }}
+      >
+        <SafeAreaView style={styles.chatContainer}>
+          {/* Chat Header */}
+          <View style={styles.chatHeader}>
+            <TouchableOpacity onPress={() => {
+              setShowChat(false);
+              setSelectedConversation(null);
+              setMessages([]);
+              loadConversations();
+            }}>
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <View style={styles.chatHeaderInfo}>
+              <Text style={styles.chatHeaderTitle}>{selectedConversation?.name || 'Chat'}</Text>
+              <Text style={styles.chatHeaderStatus}>Online</Text>
+            </View>
+            <View style={styles.chatHeaderRight}>
+              <TouchableOpacity style={styles.chatHeaderIcon}>
+                <Ionicons name="call-outline" size={20} color="#4A7DFF" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.chatHeaderIcon}>
+                <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.encryptBanner}>
+            <Ionicons name="lock-closed" size={14} color="#F57C00" />
+            <Text style={styles.encryptText}>Messages are end-to-end encrypted</Text>
+          </View>
+
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+            contentContainerStyle={styles.messagesList}
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            renderItem={({ item }) => (
+              <MessageBubble message={item} isMe={item.from === 'me'} />
+            )}
+            ListEmptyComponent={
+              <View style={styles.emptyChatContainer}>
+                <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
+                <Text style={styles.emptyChatTitle}>No messages yet</Text>
+                <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
+              </View>
+            }
+          />
+
+          <AISuggestions onPress={(suggestion: string) => {
+            setNewMessage(suggestion);
+            setTimeout(handleSendMessage, 100);
+          }} />
+
+          <View style={styles.chatInputContainer}>
+            <TouchableOpacity style={styles.attachButton}>
+              <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
+            </TouchableOpacity>
+            <TextInput
+              style={styles.chatInput}
+              placeholder="Type a message..."
+              placeholderTextColor="#8A8AAE"
+              value={newMessage}
+              onChangeText={setNewMessage}
+              multiline
+            />
+            <TouchableOpacity style={styles.aiChatButton}>
+              <Ionicons name="sparkles" size={20} color="#4A7DFF" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+              onPress={handleSendMessage}
+              disabled={!newMessage.trim()}
+            >
+              <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1322,6 +1764,19 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
+  encryptBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF8E1',
+    paddingVertical: 8,
+    gap: 6,
+  },
+  encryptText: {
+    fontSize: 11,
+    color: '#F57C00',
+    fontWeight: '500',
+  },
   messagesList: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -1386,6 +1841,20 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.6)',
   },
   messageTimeThem: {
+    color: '#8A8AAE',
+  },
+  emptyChatContainer: {
+    alignItems: 'center',
+    paddingVertical: 60,
+    gap: 8,
+  },
+  emptyChatTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#8A8AAE',
+  },
+  emptyChatSubtitle: {
+    fontSize: 13,
     color: '#8A8AAE',
   },
 

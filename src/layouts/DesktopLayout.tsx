@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   },
   floatingActionsContainer: {
     position: 'absolute',
-    right: 60,
+    right: 90,
     top: '50%',
     transform: [{ translateY: -150 }],
     zIndex: 9999,

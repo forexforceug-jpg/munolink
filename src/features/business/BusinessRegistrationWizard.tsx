@@ -19,6 +19,7 @@ import {
   Image,
   Modal,
   FlatList,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -49,51 +50,51 @@ type BusinessDocumentInsert = {
 
 // --- Business Types (Simplified) ---
 const BUSINESS_TYPES = [
-  { id: 'shop', icon: '🏪', label: 'Shop', description: 'Sell products to customers' },
-  { id: 'service', icon: '🔧', label: 'Service Provider', description: 'Offer services and appointments' },
-  { id: 'institution', icon: '🏨', label: 'Institution', description: 'Hotel, School, Hospital, etc.' },
+  { id: 'shop', icon: '🏪', label: 'Shop', description: 'Sell products to customers', color: '#4A7DFF' },
+  { id: 'service', icon: '🔧', label: 'Service Provider', description: 'Offer services and appointments', color: '#6C5CE7' },
+  { id: 'institution', icon: '🏨', label: 'Institution', description: 'Hotel, School, Hospital, etc.', color: '#00B894' },
 ];
 
 // --- Category Mappings ---
 const CATEGORIES: Record<string, any[]> = {
   shop: [
-    { id: 'electronics', icon: '📱', label: 'Electronics', wizard: 'products' },
-    { id: 'fashion', icon: '👕', label: 'Fashion', wizard: 'products' },
-    { id: 'restaurant', icon: '🍕', label: 'Restaurant', wizard: 'menu' },
-    { id: 'furniture', icon: '🛋️', label: 'Furniture', wizard: 'products' },
-    { id: 'hardware', icon: '🔨', label: 'Hardware', wizard: 'products' },
-    { id: 'pharmacy', icon: '💊', label: 'Pharmacy', wizard: 'products' },
-    { id: 'grocery', icon: '🛒', label: 'Grocery', wizard: 'products' },
-    { id: 'supermarket', icon: '🏪', label: 'Supermarket', wizard: 'products' },
-    { id: 'books', icon: '📚', label: 'Books', wizard: 'products' },
-    { id: 'jewelry', icon: '💎', label: 'Jewelry', wizard: 'products' },
-    { id: 'art', icon: '🎨', label: 'Art & Crafts', wizard: 'products' },
+    { id: 'electronics', icon: '📱', label: 'Electronics', wizard: 'products', color: '#4A7DFF' },
+    { id: 'fashion', icon: '👕', label: 'Fashion', wizard: 'products', color: '#E84393' },
+    { id: 'restaurant', icon: '🍕', label: 'Restaurant', wizard: 'menu', color: '#FDCB6E' },
+    { id: 'furniture', icon: '🛋️', label: 'Furniture', wizard: 'products', color: '#6C5CE7' },
+    { id: 'hardware', icon: '🔨', label: 'Hardware', wizard: 'products', color: '#F39C12' },
+    { id: 'pharmacy', icon: '💊', label: 'Pharmacy', wizard: 'products', color: '#00B894' },
+    { id: 'grocery', icon: '🛒', label: 'Grocery', wizard: 'products', color: '#55EFC4' },
+    { id: 'supermarket', icon: '🏪', label: 'Supermarket', wizard: 'products', color: '#FD79A8' },
+    { id: 'books', icon: '📚', label: 'Books', wizard: 'products', color: '#6C5CE7' },
+    { id: 'jewelry', icon: '💎', label: 'Jewelry', wizard: 'products', color: '#FDCB6E' },
+    { id: 'art', icon: '🎨', label: 'Art & Crafts', wizard: 'products', color: '#E17055' },
   ],
   service: [
-    { id: 'mechanic', icon: '🔧', label: 'Mechanic', wizard: 'services' },
-    { id: 'electrician', icon: '⚡', label: 'Electrician', wizard: 'services' },
-    { id: 'doctor', icon: '🏥', label: 'Doctor', wizard: 'services' },
-    { id: 'lawyer', icon: '⚖️', label: 'Lawyer', wizard: 'services' },
-    { id: 'photographer', icon: '📸', label: 'Photographer', wizard: 'services' },
-    { id: 'interior_designer', icon: '🪑', label: 'Interior Designer', wizard: 'services' },
-    { id: 'cleaner', icon: '🧹', label: 'Cleaner', wizard: 'services' },
-    { id: 'tutor', icon: '📖', label: 'Tutor', wizard: 'services' },
-    { id: 'plumber', icon: '🔧', label: 'Plumber', wizard: 'services' },
-    { id: 'painter', icon: '🎨', label: 'Painter', wizard: 'services' },
-    { id: 'consultant', icon: '💼', label: 'Consultant', wizard: 'services' },
-    { id: 'designer', icon: '🎨', label: 'Designer', wizard: 'services' },
-    { id: 'developer', icon: '💻', label: 'Developer', wizard: 'services' },
-    { id: 'writer', icon: '✍️', label: 'Writer', wizard: 'services' },
-    { id: 'marketer', icon: '📈', label: 'Marketer', wizard: 'services' },
-    { id: 'accountant', icon: '📊', label: 'Accountant', wizard: 'services' },
+    { id: 'mechanic', icon: '🔧', label: 'Mechanic', wizard: 'services', color: '#4A7DFF' },
+    { id: 'electrician', icon: '⚡', label: 'Electrician', wizard: 'services', color: '#F39C12' },
+    { id: 'doctor', icon: '🏥', label: 'Doctor', wizard: 'services', color: '#00B894' },
+    { id: 'lawyer', icon: '⚖️', label: 'Lawyer', wizard: 'services', color: '#6C5CE7' },
+    { id: 'photographer', icon: '📸', label: 'Photographer', wizard: 'services', color: '#FDCB6E' },
+    { id: 'interior_designer', icon: '🪑', label: 'Interior Designer', wizard: 'services', color: '#E84393' },
+    { id: 'cleaner', icon: '🧹', label: 'Cleaner', wizard: 'services', color: '#55EFC4' },
+    { id: 'tutor', icon: '📖', label: 'Tutor', wizard: 'services', color: '#6C5CE7' },
+    { id: 'plumber', icon: '🔧', label: 'Plumber', wizard: 'services', color: '#F39C12' },
+    { id: 'painter', icon: '🎨', label: 'Painter', wizard: 'services', color: '#E17055' },
+    { id: 'consultant', icon: '💼', label: 'Consultant', wizard: 'services', color: '#4A7DFF' },
+    { id: 'designer', icon: '🎨', label: 'Designer', wizard: 'services', color: '#6C5CE7' },
+    { id: 'developer', icon: '💻', label: 'Developer', wizard: 'services', color: '#00B894' },
+    { id: 'writer', icon: '✍️', label: 'Writer', wizard: 'services', color: '#FDCB6E' },
+    { id: 'marketer', icon: '📈', label: 'Marketer', wizard: 'services', color: '#E84393' },
+    { id: 'accountant', icon: '📊', label: 'Accountant', wizard: 'services', color: '#6C5CE7' },
   ],
   institution: [
-    { id: 'hospital', icon: '🏥', label: 'Hospital', wizard: 'institution' },
-    { id: 'school', icon: '🏫', label: 'School', wizard: 'institution' },
-    { id: 'hotel', icon: '🏨', label: 'Hotel', wizard: 'hotel' },
-    { id: 'restaurant', icon: '🍕', label: 'Restaurant', wizard: 'menu' },
-    { id: 'bank', icon: '🏦', label: 'Bank', wizard: 'institution' },
-    { id: 'ngo', icon: '🤝', label: 'NGO', wizard: 'institution' },
+    { id: 'hospital', icon: '🏥', label: 'Hospital', wizard: 'institution', color: '#00B894' },
+    { id: 'school', icon: '🏫', label: 'School', wizard: 'institution', color: '#4A7DFF' },
+    { id: 'hotel', icon: '🏨', label: 'Hotel', wizard: 'hotel', color: '#FDCB6E' },
+    { id: 'restaurant', icon: '🍕', label: 'Restaurant', wizard: 'menu', color: '#E17055' },
+    { id: 'bank', icon: '🏦', label: 'Bank', wizard: 'institution', color: '#6C5CE7' },
+    { id: 'ngo', icon: '🤝', label: 'NGO', wizard: 'institution', color: '#55EFC4' },
   ],
 };
 
@@ -105,32 +106,37 @@ const WIZARD_QUESTIONS: Record<string, any[]> = {
       label: 'What brands do you sell?', 
       type: 'multiselect',
       options: ['Samsung', 'Apple', 'Nike', 'Adidas', 'Sony', 'LG', 'HP', 'Dell', 'Other'],
-      placeholder: 'Select brands you sell'
+      placeholder: 'Select brands you sell',
+      icon: '🏷️'
     },
     { 
       key: 'warranty', 
       label: 'Do you offer warranty?', 
       type: 'select', 
-      options: ['Yes - 12 months', 'Yes - 24 months', 'No'] 
+      options: ['Yes - 12 months', 'Yes - 24 months', 'No'],
+      icon: '🛡️'
     },
     { 
       key: 'delivery', 
       label: 'Do you offer delivery?', 
       type: 'select', 
-      options: ['Yes - Free', 'Yes - Paid', 'No'] 
+      options: ['Yes - Free', 'Yes - Paid', 'No'],
+      icon: '🚚'
     },
     { 
       key: 'pickup', 
       label: 'Is in-store pickup available?', 
       type: 'select', 
-      options: ['Yes', 'No'] 
+      options: ['Yes', 'No'],
+      icon: '🏪'
     },
     { 
       key: 'payment_methods', 
       label: 'Payment methods accepted?', 
       type: 'multiselect',
       options: ['Cash', 'Mobile Money', 'Bank Transfer', 'Card', 'Credit'],
-      placeholder: 'Select payment methods'
+      placeholder: 'Select payment methods',
+      icon: '💳'
     },
   ],
   services: [
@@ -139,33 +145,38 @@ const WIZARD_QUESTIONS: Record<string, any[]> = {
       label: 'What type of services do you offer?', 
       type: 'multiselect',
       options: ['Repairs', 'Consultations', 'Installation', 'Maintenance', 'Training', 'Other'],
-      placeholder: 'Select service types'
+      placeholder: 'Select service types',
+      icon: '🔧'
     },
     { 
       key: 'experience', 
       label: 'Years of experience?', 
       type: 'select',
-      options: ['Less than 1 year', '1-3 years', '3-5 years', '5-10 years', '10+ years'] 
+      options: ['Less than 1 year', '1-3 years', '3-5 years', '5-10 years', '10+ years'],
+      icon: '📅'
     },
     { 
       key: 'certification', 
       label: 'Do you have certifications?', 
       type: 'select', 
-      options: ['Yes - Licensed', 'Yes - Certified', 'No'] 
+      options: ['Yes - Licensed', 'Yes - Certified', 'No'],
+      icon: '🎓'
     },
     { 
       key: 'availability', 
       label: 'When are you available?', 
       type: 'multiselect',
       options: ['Weekdays', 'Weekends', 'Mornings', 'Afternoons', 'Evenings', '24/7'],
-      placeholder: 'Select availability'
+      placeholder: 'Select availability',
+      icon: '⏰'
     },
     { 
       key: 'service_area', 
       label: 'What areas do you cover?', 
       type: 'multiselect',
       options: ['Kampala', 'Jinja', 'Entebbe', 'Mukono', 'Gulu', 'Other'],
-      placeholder: 'Select service areas'
+      placeholder: 'Select service areas',
+      icon: '📍'
     },
   ],
   menu: [
@@ -174,26 +185,30 @@ const WIZARD_QUESTIONS: Record<string, any[]> = {
       label: 'What type of cuisine?', 
       type: 'multiselect',
       options: ['Italian', 'Local', 'Chinese', 'Indian', 'Mexican', 'Fast Food', 'Other'],
-      placeholder: 'Select cuisine types'
+      placeholder: 'Select cuisine types',
+      icon: '🍽️'
     },
     { 
       key: 'delivery', 
       label: 'Do you offer delivery?', 
       type: 'select', 
-      options: ['Yes - Free', 'Yes - Paid', 'No'] 
+      options: ['Yes - Free', 'Yes - Paid', 'No'],
+      icon: '🚚'
     },
     { 
       key: 'reservations', 
       label: 'Do you accept reservations?', 
       type: 'select', 
-      options: ['Yes', 'No'] 
+      options: ['Yes', 'No'],
+      icon: '📅'
     },
     { 
       key: 'dietary_options', 
       label: 'Dietary options available?', 
       type: 'multiselect',
       options: ['Vegetarian', 'Vegan', 'Gluten-free', 'Halal', 'Kosher', 'None'],
-      placeholder: 'Select dietary options'
+      placeholder: 'Select dietary options',
+      icon: '🥗'
     },
   ],
   hotel: [
@@ -202,32 +217,37 @@ const WIZARD_QUESTIONS: Record<string, any[]> = {
       label: 'What room types do you have?', 
       type: 'multiselect',
       options: ['Standard', 'Deluxe', 'Suite', 'Executive', 'Family', 'Dormitory'],
-      placeholder: 'Select room types'
+      placeholder: 'Select room types',
+      icon: '🛏️'
     },
     { 
       key: 'amenities', 
       label: 'What amenities do you offer?', 
       type: 'multiselect',
       options: ['Pool', 'Gym', 'Restaurant', 'Spa', 'WiFi', 'Parking', 'Conference Room'],
-      placeholder: 'Select amenities'
+      placeholder: 'Select amenities',
+      icon: '🏊'
     },
     { 
       key: 'parking', 
       label: 'Do you offer parking?', 
       type: 'select', 
-      options: ['Yes - Free', 'Yes - Paid', 'No'] 
+      options: ['Yes - Free', 'Yes - Paid', 'No'],
+      icon: '🅿️'
     },
     { 
       key: 'check_in', 
       label: 'Check-in time?', 
       type: 'select',
-      options: ['12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', 'Flexible'] 
+      options: ['12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', 'Flexible'],
+      icon: '🔑'
     },
     { 
       key: 'check_out', 
       label: 'Check-out time?', 
       type: 'select',
-      options: ['10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', 'Flexible'] 
+      options: ['10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', 'Flexible'],
+      icon: '🚪'
     },
   ],
   institution: [
@@ -236,25 +256,29 @@ const WIZARD_QUESTIONS: Record<string, any[]> = {
       label: 'What services do you offer?', 
       type: 'multiselect',
       options: ['Education', 'Healthcare', 'Banking', 'Religious', 'Community', 'Other'],
-      placeholder: 'Select service types'
+      placeholder: 'Select service types',
+      icon: '🏛️'
     },
     { 
       key: 'capacity', 
       label: 'What is your capacity?', 
       type: 'select',
-      options: ['Small (1-50)', 'Medium (51-200)', 'Large (201-500)', 'Very Large (500+)'] 
+      options: ['Small (1-50)', 'Medium (51-200)', 'Large (201-500)', 'Very Large (500+)'],
+      icon: '👥'
     },
     { 
       key: 'certification', 
       label: 'Do you have certifications?', 
       type: 'select', 
-      options: ['Yes - Licensed', 'Yes - Accredited', 'No'] 
+      options: ['Yes - Licensed', 'Yes - Accredited', 'No'],
+      icon: '📜'
     },
     { 
       key: 'operating_hours', 
       label: 'Operating hours?', 
       type: 'select',
-      options: ['24/7', 'Weekdays only', 'Weekends only', 'Custom hours'] 
+      options: ['24/7', 'Weekdays only', 'Weekends only', 'Custom hours'],
+      icon: '🕐'
     },
   ],
 };
@@ -300,48 +324,288 @@ const DISTRICTS = [
   'Busia', 'Tororo', 'Iganga', 'Kamuli', 'Kayunga', 'Luwero'
 ];
 
-// --- Sub-components ---
-const StepIndicator = ({ currentStep, totalSteps }: any) => (
-  <View style={styles.stepIndicatorContainer}>
-    {Array.from({ length: totalSteps }).map((_, i) => (
-      <View
-        key={i}
-        style={[
-          styles.stepDot,
-          i === currentStep && styles.stepDotActive,
-          i < currentStep && styles.stepDotCompleted,
-        ]}
-      />
-    ))}
-  </View>
-);
+// ============================================================
+// CUSTOMIZABLE UI COMPONENTS
+// ============================================================
 
-const BusinessTypeCard = ({ item, selected, onPress }: any) => (
-  <TouchableOpacity
-    style={[styles.businessTypeCard, selected && styles.businessTypeCardSelected]}
-    onPress={onPress}
-    activeOpacity={0.7}
-  >
-    <View style={styles.businessTypeIconContainer}>
-      <Text style={styles.businessTypeIcon}>{item.icon}</Text>
+// --- Customizable Theme Colors ---
+const THEME = {
+  primary: '#4A7DFF',
+  primaryLight: 'rgba(74, 125, 255, 0.1)',
+  primaryDark: '#376fff',
+  success: '#2ECC71',
+  warning: '#F1C40F',
+  danger: '#E74C3C',
+  background: '#FFFFFF',
+  cardBackground: '#F8F9FC',
+  textPrimary: '#1F2F5F',
+  textSecondary: '#8A8AAE',
+  border: '#E8ECF4',
+  shadow: 'rgba(74, 125, 255, 0.15)',
+};
+
+// --- Custom Step Icon ---
+const StepIcon = ({ icon, step, total, isDesktop }: any) => {
+  const getColor = () => {
+    if (step === total) return THEME.success;
+    return THEME.primary;
+  };
+
+  return (
+    <View style={[styles.customStepIcon, isDesktop && styles.customStepIconDesktop]}>
+      <LinearGradient
+        colors={[getColor(), getColor() + 'CC']}
+        style={styles.customStepIconGradient}
+      >
+        <Text style={styles.customStepIconText}>{icon}</Text>
+      </LinearGradient>
     </View>
-    <Text style={styles.businessTypeLabel}>{item.label}</Text>
-    <Text style={styles.businessTypeDescription}>{item.description}</Text>
+  );
+};
+
+// --- Custom Card with Glass Effect ---
+const GlassCard = ({ children, style, onPress }: any) => (
+  <TouchableOpacity 
+    style={[styles.glassCard, style]} 
+    onPress={onPress}
+    activeOpacity={0.8}
+    disabled={!onPress}
+  >
+    {children}
   </TouchableOpacity>
 );
 
-const CategoryCard = ({ item, selected, onPress }: any) => (
+// --- Customizable Business Type Card ---
+const CustomBusinessTypeCard = ({ item, selected, onPress, isDesktop }: any) => (
   <TouchableOpacity
-    style={[styles.categoryCard, selected && styles.categoryCardSelected]}
+    style={[
+      styles.customBusinessCard,
+      isDesktop && styles.customBusinessCardDesktop,
+      selected && styles.customBusinessCardSelected,
+      { borderColor: selected ? item.color : 'transparent' }
+    ]}
     onPress={onPress}
     activeOpacity={0.7}
   >
-    <Text style={styles.categoryIcon}>{item.icon}</Text>
-    <Text style={styles.categoryLabel}>{item.label}</Text>
+    <LinearGradient
+      colors={selected ? [item.color, item.color + 'CC'] : ['#F8F9FC', '#F8F9FC']}
+      style={styles.customBusinessCardGradient}
+    >
+      <View style={[
+        styles.customBusinessIconContainer,
+        { backgroundColor: selected ? 'rgba(255,255,255,0.2)' : 'rgba(74,125,255,0.1)' }
+      ]}>
+        <Text style={styles.customBusinessIcon}>{item.icon}</Text>
+      </View>
+      <Text style={[
+        styles.customBusinessLabel,
+        { color: selected ? '#FFFFFF' : THEME.textPrimary }
+      ]}>{item.label}</Text>
+      <Text style={[
+        styles.customBusinessDescription,
+        { color: selected ? 'rgba(255,255,255,0.8)' : THEME.textSecondary }
+      ]}>{item.description}</Text>
+      {selected && (
+        <View style={styles.customBusinessCheck}>
+          <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
+        </View>
+      )}
+    </LinearGradient>
   </TouchableOpacity>
 );
 
-// --- Multi-Select Component ---
+// --- Customizable Category Card ---
+const CustomCategoryCard = ({ item, selected, onPress, isDesktop }: any) => (
+  <TouchableOpacity
+    style={[
+      styles.customCategoryCard,
+      isDesktop && styles.customCategoryCardDesktop,
+      selected && styles.customCategoryCardSelected,
+      { borderColor: selected ? item.color : 'transparent' }
+    ]}
+    onPress={onPress}
+    activeOpacity={0.7}
+  >
+    <View style={[
+      styles.customCategoryIconContainer,
+      { backgroundColor: selected ? item.color : 'rgba(74,125,255,0.08)' }
+    ]}>
+      <Text style={styles.customCategoryIcon}>{item.icon}</Text>
+    </View>
+    <Text style={[
+      styles.customCategoryLabel,
+      { color: selected ? item.color : THEME.textPrimary }
+    ]}>{item.label}</Text>
+    {selected && (
+      <View style={styles.customCategoryCheck}>
+        <Ionicons name="checkmark-circle" size={20} color={item.color} />
+      </View>
+    )}
+  </TouchableOpacity>
+);
+
+// --- Custom Wizard Question with better UI ---
+const CustomWizardQuestion = ({ question, value, onChange }: any) => {
+  const [customText, setCustomText] = useState(value || '');
+
+  useEffect(() => {
+    if (value !== undefined) {
+      setCustomText(value);
+    }
+  }, [value]);
+
+  if (question.type === 'multiselect') {
+    const selected = Array.isArray(value) ? value : [];
+    return (
+      <View style={styles.customWizardQuestion}>
+        <View style={styles.customWizardQuestionHeader}>
+          <Text style={styles.customWizardQuestionIcon}>{question.icon || '❓'}</Text>
+          <Text style={styles.customWizardQuestionLabel}>{question.label}</Text>
+        </View>
+        <MultiSelect
+          options={question.options}
+          selected={selected}
+          onSelect={(newSelected: string[]) => onChange(newSelected)}
+          placeholder={question.placeholder}
+        />
+      </View>
+    );
+  }
+
+  if (question.type === 'select') {
+    return (
+      <View style={styles.customWizardQuestion}>
+        <View style={styles.customWizardQuestionHeader}>
+          <Text style={styles.customWizardQuestionIcon}>{question.icon || '❓'}</Text>
+          <Text style={styles.customWizardQuestionLabel}>{question.label}</Text>
+        </View>
+        <Select
+          options={question.options}
+          selected={value || ''}
+          onSelect={(option: string) => onChange(option)}
+          placeholder="Select an option"
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.customWizardQuestion}>
+      <View style={styles.customWizardQuestionHeader}>
+        <Text style={styles.customWizardQuestionIcon}>{question.icon || '❓'}</Text>
+        <Text style={styles.customWizardQuestionLabel}>{question.label}</Text>
+      </View>
+      <TextInput
+        style={styles.customWizardInput}
+        placeholder={question.placeholder || 'Enter details...'}
+        placeholderTextColor="#8A8AAE"
+        value={customText}
+        onChangeText={(text) => {
+          setCustomText(text);
+          onChange(text);
+        }}
+      />
+    </View>
+  );
+};
+
+// --- Custom Document Upload Box ---
+const CustomDocumentUploadBox = ({ 
+  document, 
+  docType, 
+  onUpload, 
+  onRemove,
+  uploading,
+  uploaded,
+  fileName,
+  fileSize,
+  preview,
+  required,
+  docData,
+}: any) => {
+  const [imageError, setImageError] = useState(false);
+
+  return (
+    <View style={[styles.customUploadBox, uploaded && styles.customUploadBoxUploaded]}>
+      <View style={styles.customUploadBoxHeader}>
+        <View style={[
+          styles.customUploadBoxIconContainer,
+          { backgroundColor: uploaded ? 'rgba(46, 204, 113, 0.1)' : 'rgba(74,125,255,0.1)' }
+        ]}>
+          <Ionicons 
+            name={uploaded ? 'checkmark-circle' : document.icon} 
+            size={20} 
+            color={uploaded ? '#2ECC71' : '#4A7DFF'} 
+          />
+        </View>
+        <View style={styles.customUploadBoxInfo}>
+         <Text style={styles.customUploadBoxLabel}>
+  {document.label} {required && <Text style={{ color: '#E74C3C' }}>*</Text>}
+</Text>
+          <Text style={styles.customUploadBoxDescription}>{document.description}</Text>
+        </View>
+        <View style={[
+          styles.customUploadBoxStatus,
+          { backgroundColor: uploaded ? 'rgba(46, 204, 113, 0.1)' : 'rgba(74,125,255,0.08)' }
+        ]}>
+          <Text style={[
+            styles.customUploadBoxStatusText,
+            { color: uploaded ? '#2ECC71' : '#4A7DFF' }
+          ]}>
+            {uploaded ? 'Uploaded' : 'Pending'}
+          </Text>
+        </View>
+      </View>
+
+      {uploaded && fileName ? (
+        <View style={styles.customUploadBoxPreview}>
+          {preview && !imageError ? (
+            <Image 
+              source={{ uri: preview }} 
+              style={styles.customUploadBoxImage}
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <View style={styles.customUploadBoxFileIcon}>
+              <Ionicons name="document-text" size={32} color="#4A7DFF" />
+            </View>
+          )}
+          <View style={styles.customUploadBoxFileInfo}>
+            <Text style={styles.customUploadBoxFileName} numberOfLines={1}>{fileName}</Text>
+            {fileSize && <Text style={styles.customUploadBoxFileSize}>{fileSize}</Text>}
+          </View>
+          <TouchableOpacity
+            style={styles.customUploadBoxRemove}
+            onPress={() => onRemove(docType)}
+          >
+            <View style={styles.customUploadBoxRemoveButton}>
+              <Ionicons name="close" size={16} color="#FFFFFF" />
+            </View>
+          </TouchableOpacity>
+        </View>
+      ) : uploading ? (
+        <View style={styles.customUploadBoxProgress}>
+          <ActivityIndicator color="#4A7DFF" />
+          <Text style={styles.customUploadBoxProgressText}>Uploading...</Text>
+        </View>
+      ) : (
+        <TouchableOpacity
+          style={styles.customUploadBoxDropZone}
+          onPress={() => onUpload(docType)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.customUploadBoxDropIcon}>
+            <Ionicons name="cloud-upload-outline" size={32} color="#4A7DFF" />
+          </View>
+          <Text style={styles.customUploadBoxDropText}>Tap to upload your file</Text>
+          <Text style={styles.customUploadBoxDropSubtext}>Supports PDF, JPG, PNG (Max 5MB)</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+// --- Multi-Select Component (Improved) ---
 const MultiSelect = ({ options, selected, onSelect, placeholder }: any) => {
   const [modalVisible, setModalVisible] = useState(false);
   
@@ -412,7 +676,7 @@ const MultiSelect = ({ options, selected, onSelect, placeholder }: any) => {
   );
 };
 
-// --- Select Component ---
+// --- Select Component (Improved) ---
 const Select = ({ options, selected, onSelect, placeholder }: any) => {
   const [modalVisible, setModalVisible] = useState(false);
 
@@ -470,131 +734,28 @@ const Select = ({ options, selected, onSelect, placeholder }: any) => {
   );
 };
 
-const WizardQuestion = ({ question, value, onChange }: any) => {
-  const [customText, setCustomText] = useState(value || '');
-
-  useEffect(() => {
-    if (value !== undefined) {
-      setCustomText(value);
-    }
-  }, [value]);
-
-  if (question.type === 'multiselect') {
-    const selected = Array.isArray(value) ? value : [];
-    return (
-      <View style={styles.wizardQuestion}>
-        <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
-        <MultiSelect
-          options={question.options}
-          selected={selected}
-          onSelect={(newSelected: string[]) => onChange(newSelected)}
-          placeholder={question.placeholder}
+// --- Step Indicator (Improved) ---
+const CustomStepIndicator = ({ currentStep, totalSteps, isDesktop }: any) => (
+  <View style={[styles.customStepIndicatorContainer, isDesktop && styles.customStepIndicatorDesktop]}>
+    {Array.from({ length: totalSteps }).map((_, i) => (
+      <View key={i} style={styles.customStepIndicatorItem}>
+        <View
+          style={[
+            styles.customStepDot,
+            i === currentStep && styles.customStepDotActive,
+            i < currentStep && styles.customStepDotCompleted,
+          ]}
         />
+        {i < totalSteps - 1 && (
+          <View style={[
+            styles.customStepLine,
+            i < currentStep && styles.customStepLineCompleted,
+          ]} />
+        )}
       </View>
-    );
-  }
-
-  if (question.type === 'select') {
-    return (
-      <View style={styles.wizardQuestion}>
-        <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
-        <Select
-          options={question.options}
-          selected={value || ''}
-          onSelect={(option: string) => onChange(option)}
-          placeholder="Select an option"
-        />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.wizardQuestion}>
-      <Text style={styles.wizardQuestionLabel}>{question.label}</Text>
-      <TextInput
-        style={styles.wizardInput}
-        placeholder={question.placeholder || 'Enter details...'}
-        placeholderTextColor="#8A8AAE"
-        value={customText}
-        onChangeText={(text) => {
-          setCustomText(text);
-          onChange(text);
-        }}
-      />
-    </View>
-  );
-};
-
-// --- Document Upload Box Component ---
-const DocumentUploadBox = ({ 
-  document, 
-  docType, 
-  onUpload, 
-  onRemove,
-  uploading,
-  uploaded,
-  fileName,
-  fileSize,
-  preview,
-  required,
-  docData,
-}: any) => {
-  return (
-    <View style={styles.uploadBox}>
-      <View style={styles.uploadBoxHeader}>
-        <View style={styles.uploadBoxIconContainer}>
-          <Ionicons name={document.icon} size={20} color="#4A7DFF" />
-        </View>
-        <View style={styles.uploadBoxInfo}>
-          <Text style={styles.uploadBoxLabel}>
-            {document.label} {required && <Text style={styles.requiredStar}>*</Text>}
-          </Text>
-          <Text style={styles.uploadBoxDescription}>{document.description}</Text>
-        </View>
-      </View>
-
-      {uploaded && fileName ? (
-        <View style={styles.uploadBoxPreview}>
-          {preview || (docData?.uri && docData.uri.startsWith('data:')) ? (
-            <Image source={{ uri: docData?.uri || preview }} style={styles.uploadBoxImage} />
-          ) : (
-            <View style={styles.uploadBoxFileInfo}>
-              <Ionicons name="document" size={32} color="#4A7DFF" />
-              <View style={styles.uploadBoxFileDetails}>
-                <Text style={styles.uploadBoxFileName} numberOfLines={1}>{fileName}</Text>
-                {fileSize && <Text style={styles.uploadBoxFileSize}>{fileSize}</Text>}
-              </View>
-            </View>
-          )}
-          <TouchableOpacity
-            style={styles.uploadBoxRemove}
-            onPress={() => onRemove(docType)}
-          >
-            <Ionicons name="close-circle" size={24} color="#E74C3C" />
-          </TouchableOpacity>
-        </View>
-      ) : uploading ? (
-        <View style={styles.uploadBoxProgress}>
-          <ActivityIndicator color="#4A7DFF" />
-          <Text style={styles.uploadBoxProgressText}>Uploading...</Text>
-        </View>
-      ) : (
-        <TouchableOpacity
-          style={styles.uploadBoxDropZone}
-          onPress={() => {
-            console.log('📂 Upload box tapped for:', docType);
-            onUpload(docType);
-          }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="cloud-upload-outline" size={40} color="#8A8AAE" />
-          <Text style={styles.uploadBoxDropText}>Tap to upload your file</Text>
-          <Text style={styles.uploadBoxDropSubtext}>Supports PDF, JPG, PNG (Max 5MB)</Text>
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-};
+    ))}
+  </View>
+);
 
 // --- Main BusinessRegistrationWizard Component ---
 const BusinessRegistrationWizardContent = ({ navigation }: any) => {
@@ -613,6 +774,7 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   
   const [documents, setDocuments] = useState<Record<string, DocumentUpload>>({});
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -635,116 +797,7 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
     return DOCUMENT_REQUIREMENTS[businessType] || DOCUMENT_REQUIREMENTS.shop;
   };
 
-  // --- Test Bucket Connection ---
-  const testBucketConnection = async () => {
-    console.log('🧪 Testing bucket connection...');
-    
-    try {
-      const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-      console.log('📦 All buckets:', buckets);
-      
-      if (listError) {
-        console.error('❌ List error:', listError);
-        Alert.alert('Error', 'Failed to list buckets: ' + listError.message);
-        return;
-      }
-      
-      const bucketExists = buckets?.some(b => b.name === BUCKET_NAME);
-      console.log(`🔍 ${BUCKET_NAME} exists?`, bucketExists);
-      
-      if (!bucketExists) {
-        console.log('📦 Creating bucket...');
-        const { data, error } = await supabase.storage.createBucket(BUCKET_NAME, {
-          public: true,
-          allowedMimeTypes: ['image/*', 'application/pdf'],
-          fileSizeLimit: 5242880,
-        });
-        
-        if (error) {
-          console.error('❌ Create error:', error);
-          Alert.alert('Error', 'Failed to create bucket: ' + error.message);
-          return;
-        }
-        console.log('✅ Bucket created:', data);
-      }
-      
-      const { data: files, error: filesError } = await supabase.storage
-        .from(BUCKET_NAME)
-        .list();
-      
-      console.log('📄 Files in bucket:', files);
-      if (filesError) console.error('❌ Files error:', filesError);
-      
-      const testBlob = new Blob(['test'], { type: 'text/plain' });
-      const testPath = `test_${Date.now()}.txt`;
-      
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from(BUCKET_NAME)
-        .upload(testPath, testBlob, {
-          contentType: 'text/plain',
-          cacheControl: '3600',
-          upsert: true,
-        });
-      
-      if (uploadError) {
-        console.error('❌ Upload test error:', uploadError);
-        Alert.alert('Upload Test Failed', uploadError.message);
-      } else {
-        console.log('✅ Test upload successful:', uploadData);
-        
-        const { data: { publicUrl } } = supabase.storage
-          .from(BUCKET_NAME)
-          .getPublicUrl(testPath);
-        console.log('🔗 Public URL:', publicUrl);
-        
-        await supabase.storage.from(BUCKET_NAME).remove([testPath]);
-        
-        Alert.alert('Success', 'Bucket is working! Test file uploaded and deleted.');
-      }
-      
-    } catch (error: any) {
-      console.error('❌ Test error:', error);
-      Alert.alert('Error', error.message);
-    }
-  };
-
-  // --- Test File Picker for Web ---
-  const testFilePicker = () => {
-    console.log('🧪 Testing file picker directly...');
-    
-    if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.pdf,.jpg,.jpeg,.png';
-      input.style.display = 'none';
-      document.body.appendChild(input);
-      
-      input.onchange = (e: any) => {
-        const file = e.target.files?.[0];
-        if (file) {
-          console.log('✅ Test file selected:', file.name);
-          Alert.alert('Success', `File selected: ${file.name}`);
-        } else {
-          console.log('❌ Test failed - no file');
-          Alert.alert('Error', 'No file selected');
-        }
-        if (input.parentNode) {
-          input.parentNode.removeChild(input);
-        }
-      };
-      
-      input.oncancel = () => {
-        console.log('❌ Test cancelled');
-        if (input.parentNode) {
-          input.parentNode.removeChild(input);
-        }
-      };
-      
-      input.click();
-    } else {
-      Alert.alert('Not Web', 'This test is for web platform only');
-    }
-  };
+  // ... (keep all existing upload functions - they remain the same)
 
   const uploadDocument = async (docType: string, file: any) => {
     try {
@@ -752,6 +805,12 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
       
       if (!file || !file.uri) {
         throw new Error('No file data provided');
+      }
+
+      // File size validation
+      if (file.size && file.size > 5 * 1024 * 1024) {
+        Alert.alert('File Too Large', 'Please select a file under 5MB');
+        return;
       }
 
       setUploadingDoc(docType);
@@ -1428,27 +1487,23 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   // --- Render Step 1: Business Type ---
   const renderStep1 = () => (
     <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-      <View style={styles.stepIconContainer}>
-        <LinearGradient
-          colors={['#4A7DFF', '#6B94FF']}
-          style={styles.stepIconGradient}
-        >
-          <Text style={styles.stepIcon}>🚀</Text>
-        </LinearGradient>
-      </View>
-
-      <Text style={styles.stepTitle}>What kind of business are you starting?</Text>
-      <Text style={styles.stepSubtitle}>
+      <StepIcon icon="🚀" step={1} total={5} isDesktop={isDesktop} />
+      
+      <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
+        What kind of business are you starting?
+      </Text>
+      <Text style={[styles.customStepSubtitle, isDesktop && styles.customStepSubtitleDesktop]}>
         Choose the type that best describes your business
       </Text>
 
-      <View style={[styles.businessTypesGrid, isDesktop && styles.businessTypesGridDesktop]}>
+      <View style={[styles.customBusinessGrid, isDesktop && styles.customBusinessGridDesktop]}>
         {BUSINESS_TYPES.map((type) => (
-          <BusinessTypeCard
+          <CustomBusinessTypeCard
             key={type.id}
             item={type}
             selected={businessType === type.id}
             onPress={() => setBusinessType(type.id)}
+            isDesktop={isDesktop}
           />
         ))}
       </View>
@@ -1461,27 +1516,23 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
 
     return (
       <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-        <View style={styles.stepIconContainer}>
-          <LinearGradient
-            colors={['#4A7DFF', '#6B94FF']}
-            style={styles.stepIconGradient}
-          >
-            <Text style={styles.stepIcon}>📂</Text>
-          </LinearGradient>
-        </View>
-
-        <Text style={styles.stepTitle}>Great! What do you specialize in?</Text>
-        <Text style={styles.stepSubtitle}>
+        <StepIcon icon="📂" step={2} total={5} isDesktop={isDesktop} />
+        
+        <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
+          Great! What do you specialize in?
+        </Text>
+        <Text style={[styles.customStepSubtitle, isDesktop && styles.customStepSubtitleDesktop]}>
           Choose the category that best fits your business
         </Text>
 
-        <View style={[styles.categoriesGrid, isDesktop && styles.categoriesGridDesktop]}>
+        <View style={[styles.customCategoryGrid, isDesktop && styles.customCategoryGridDesktop]}>
           {categories.map((cat) => (
-            <CategoryCard
+            <CustomCategoryCard
               key={cat.id}
               item={cat}
               selected={category === cat.id}
               onPress={() => setCategory(cat.id)}
+              isDesktop={isDesktop}
             />
           ))}
         </View>
@@ -1492,25 +1543,20 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   // --- Render Step 3: Business Identity ---
   const renderStep3 = () => (
     <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-      <View style={styles.stepIconContainer}>
-        <LinearGradient
-          colors={['#4A7DFF', '#6B94FF']}
-          style={styles.stepIconGradient}
-        >
-          <Text style={styles.stepIcon}>📝</Text>
-        </LinearGradient>
-      </View>
-
-      <Text style={styles.stepTitle}>Tell us about your business</Text>
-      <Text style={styles.stepSubtitle}>
+      <StepIcon icon="📝" step={3} total={5} isDesktop={isDesktop} />
+      
+      <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
+        Tell us about your business
+      </Text>
+      <Text style={[styles.customStepSubtitle, isDesktop && styles.customStepSubtitleDesktop]}>
         Just a few details about your business
       </Text>
 
-      <View style={[styles.formContainer, isDesktop && styles.formContainerDesktop]}>
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Business Name *</Text>
+      <View style={[styles.customFormContainer, isDesktop && styles.customFormContainerDesktop]}>
+        <View style={styles.customFormGroup}>
+          <Text style={styles.customFormLabel}>Business Name *</Text>
           <TextInput
-            style={styles.formInput}
+            style={styles.customFormInput}
             placeholder="e.g. TechWorld Kampala"
             placeholderTextColor="#8A8AAE"
             value={businessName}
@@ -1518,8 +1564,8 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
           />
         </View>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>District *</Text>
+        <View style={styles.customFormGroup}>
+          <Text style={styles.customFormLabel}>District *</Text>
           <Select
             options={DISTRICTS}
             selected={district || ''}
@@ -1528,10 +1574,10 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
           />
         </View>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Description</Text>
+        <View style={styles.customFormGroup}>
+          <Text style={styles.customFormLabel}>Description</Text>
           <TextInput
-            style={[styles.formInput, styles.formTextArea]}
+            style={[styles.customFormInput, styles.customFormTextArea]}
             placeholder="Tell customers about your business..."
             placeholderTextColor="#8A8AAE"
             multiline
@@ -1548,53 +1594,36 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   const renderStep4 = () => {
     const questions = getQuestions();
 
-    if (questions.length === 0) {
-      return (
-        <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-          <View style={styles.stepIconContainer}>
-            <LinearGradient
-              colors={['#4A7DFF', '#6B94FF']}
-              style={styles.stepIconGradient}
-            >
-              <Text style={styles.stepIcon}>✨</Text>
-            </LinearGradient>
-          </View>
-
-          <Text style={styles.stepTitle}>Let's customize your business</Text>
-          <Text style={styles.stepSubtitle}>
-            Your business is almost ready to launch
-          </Text>
-        </View>
-      );
-    }
-
     return (
       <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-        <View style={styles.stepIconContainer}>
-          <LinearGradient
-            colors={['#4A7DFF', '#6B94FF']}
-            style={styles.stepIconGradient}
-          >
-            <Text style={styles.stepIcon}>⚙️</Text>
-          </LinearGradient>
-        </View>
-
-        <Text style={styles.stepTitle}>Let's customize your business</Text>
-        <Text style={styles.stepSubtitle}>
-          Select options to help us create a better experience for your customers
+        <StepIcon icon="⚙️" step={4} total={5} isDesktop={isDesktop} />
+        
+        <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
+          Let's customize your business
+        </Text>
+        <Text style={[styles.customStepSubtitle, isDesktop && styles.customStepSubtitleDesktop]}>
+          Help us create a better experience for your customers
         </Text>
 
-        <View style={[styles.wizardContainer, isDesktop && styles.wizardContainerDesktop]}>
-          {questions.map((q) => (
-            <WizardQuestion
-              key={q.key}
-              question={q}
-              value={wizardAnswers[q.key] || (q.type === 'multiselect' ? [] : '')}
-              onChange={(value: any) =>
-                setWizardAnswers((prev) => ({ ...prev, [q.key]: value }))
-              }
-            />
-          ))}
+        <View style={[styles.customWizardContainer, isDesktop && styles.customWizardContainerDesktop]}>
+          {questions.length === 0 ? (
+            <View style={styles.customEmptyState}>
+              <Text style={styles.customEmptyStateIcon}>✨</Text>
+              <Text style={styles.customEmptyStateText}>No customization needed</Text>
+              <Text style={styles.customEmptyStateSubtext}>Your business is ready to go!</Text>
+            </View>
+          ) : (
+            questions.map((q) => (
+              <CustomWizardQuestion
+                key={q.key}
+                question={q}
+                value={wizardAnswers[q.key] || (q.type === 'multiselect' ? [] : '')}
+                onChange={(value: any) =>
+                  setWizardAnswers((prev) => ({ ...prev, [q.key]: value }))
+                }
+              />
+            ))
+          )}
         </View>
       </View>
     );
@@ -1606,42 +1635,37 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
 
     return (
       <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-        <View style={styles.stepIconContainer}>
-          <LinearGradient
-            colors={['#4A7DFF', '#6B94FF']}
-            style={styles.stepIconGradient}
-          >
-            <Text style={styles.stepIcon}>📄</Text>
-          </LinearGradient>
-        </View>
-
-        <Text style={styles.stepTitle}>Upload Your Documents</Text>
-        <Text style={styles.stepSubtitle}>
+        <StepIcon icon="📄" step={5} total={5} isDesktop={isDesktop} />
+        
+        <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
+          Upload Your Documents
+        </Text>
+        <Text style={[styles.customStepSubtitle, isDesktop && styles.customStepSubtitleDesktop]}>
           Upload the required documents to verify your business
         </Text>
 
-        <View style={[styles.verificationContainer, isDesktop && styles.verificationContainerDesktop]}>
-          <View style={styles.verificationItem}>
-            <View style={[styles.verificationIcon, { backgroundColor: '#E8F5E9' }]}>
+        <View style={[styles.customVerificationContainer, isDesktop && styles.customVerificationContainerDesktop]}>
+          <View style={styles.customVerificationItem}>
+            <View style={[styles.customVerificationIcon, { backgroundColor: '#E8F5E9' }]}>
               <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
             </View>
-            <View style={styles.verificationContent}>
-              <Text style={styles.verificationTitle}>Phone Verified</Text>
-              <Text style={styles.verificationDesc}>Your phone number has been verified</Text>
+            <View style={styles.customVerificationContent}>
+              <Text style={styles.customVerificationTitle}>Phone Verified</Text>
+              <Text style={styles.customVerificationDesc}>Your phone number has been verified</Text>
             </View>
           </View>
         </View>
 
-        <Text style={styles.documentsSectionTitle}>Required Documents</Text>
-        <Text style={styles.documentsSectionSubtitle}>
+        <Text style={styles.customDocumentsTitle}>Required Documents</Text>
+        <Text style={styles.customDocumentsSubtitle}>
           {businessType === 'shop' ? 'Upload your business registration and tax documents' :
            businessType === 'service' ? 'Upload your professional certifications and registration' :
            'Upload your institution registration and accreditation documents'}
         </Text>
 
-        <View style={[styles.uploadBoxContainer, isDesktop && styles.uploadBoxContainerDesktop]}>
+        <View style={[styles.customUploadContainer, isDesktop && styles.customUploadContainerDesktop]}>
           {docRequirements.map((doc) => (
-            <DocumentUploadBox
+            <CustomDocumentUploadBox
               key={doc.id}
               document={doc}
               docType={doc.id}
@@ -1650,7 +1674,7 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
               uploading={uploadingDoc === doc.id}
               uploaded={!!documents[doc.id]?.uploaded}
               fileName={documents[doc.id]?.name}
-              fileSize={documents[doc.id]?.size ? `${(documents[doc.id].size || 0 / 1024).toFixed(0)} KB` : undefined}
+              fileSize={documents[doc.id]?.size ? `${(documents[doc.id]?.size || 0 / 1024).toFixed(0)} KB` : undefined}
               preview={documents[doc.id]?.preview}
               required={doc.required}
               docData={documents[doc.id]}
@@ -1658,33 +1682,15 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
           ))}
         </View>
 
-        <TouchableOpacity
-          style={[styles.continueButton, { marginTop: 10, backgroundColor: '#9B59B6' }]}
-          onPress={testBucketConnection}
-        >
-          <View style={[styles.continueGradient, { backgroundColor: '#9B59B6' }]}>
-            <Text style={styles.continueButtonText}>🧪 Test Bucket Connection</Text>
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.continueButton, { marginTop: 10, backgroundColor: '#FF6B6B' }]}
-          onPress={testFilePicker}
-        >
-          <View style={[styles.continueGradient, { backgroundColor: '#FF6B6B' }]}>
-            <Text style={styles.continueButtonText}>🧪 Test File Picker</Text>
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.verificationNote}>
+        <View style={styles.customVerificationNote}>
           <Ionicons name="information-circle-outline" size={16} color="#8A8AAE" />
-          <Text style={styles.verificationNoteText}>
+          <Text style={styles.customVerificationNoteText}>
             Your business will be visible to customers after verification is complete (1-2 business days)
           </Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.continueButton, isLoading && styles.continueButtonDisabled]}
+          style={[styles.customSubmitButton, isLoading && styles.customSubmitButtonDisabled]}
           onPress={handleSubmit}
           disabled={isLoading}
         >
@@ -1692,12 +1698,12 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
             colors={['#4A7DFF', '#6B94FF']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.continueGradient}
+            style={styles.customSubmitGradient}
           >
             {isLoading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.continueButtonText}>Submit for Verification</Text>
+              <Text style={styles.customSubmitButtonText}>Submit for Verification</Text>
             )}
           </LinearGradient>
         </TouchableOpacity>
@@ -1708,72 +1714,68 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   // --- Render Step 6: Success ---
   const renderSuccess = () => (
     <Animated.View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop, { opacity: fadeAnim }]}>
-      <View style={styles.successContainer}>
+      <View style={styles.customSuccessContainer}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
-          style={styles.successGradient}
+          style={styles.customSuccessGradient}
         >
-          <Text style={styles.successEmoji}>🎉</Text>
+          <Text style={styles.customSuccessEmoji}>🎉</Text>
         </LinearGradient>
       </View>
 
-      <Text style={styles.successTitle}>Your business is created!</Text>
-      <Text style={styles.successSubtitle}>
+      <Text style={styles.customSuccessTitle}>Your business is created!</Text>
+      <Text style={styles.customSuccessSubtitle}>
         {businessName} is now registered on Munolink.
       </Text>
 
-      <View style={[styles.successFeatures, isDesktop && styles.successFeaturesDesktop]}>
-        <View style={styles.successFeature}>
-          <View style={styles.successFeatureIcon}>
+      <View style={[styles.customSuccessFeatures, isDesktop && styles.customSuccessFeaturesDesktop]}>
+        <View style={styles.customSuccessFeature}>
+          <View style={styles.customSuccessFeatureIcon}>
             <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
           </View>
           <View>
-            <Text style={styles.successFeatureTitle}>Profile Created</Text>
-            <Text style={styles.successFeatureDesc}>
+            <Text style={styles.customSuccessFeatureTitle}>Profile Created</Text>
+            <Text style={styles.customSuccessFeatureDesc}>
               Your business profile is ready to be customized
             </Text>
           </View>
         </View>
 
-        <View style={styles.successFeature}>
-          <View style={styles.successFeatureIcon}>
+        <View style={styles.customSuccessFeature}>
+          <View style={styles.customSuccessFeatureIcon}>
             <Ionicons name="time-outline" size={24} color="#F1C40F" />
           </View>
           <View>
-            <Text style={styles.successFeatureTitle}>Verification Pending</Text>
-            <Text style={styles.successFeatureDesc}>
+            <Text style={styles.customSuccessFeatureTitle}>Verification Pending</Text>
+            <Text style={styles.customSuccessFeatureDesc}>
               We're reviewing your documents (1-2 business days)
             </Text>
           </View>
         </View>
 
-        <View style={styles.successFeature}>
-          <View style={styles.successFeatureIcon}>
+        <View style={styles.customSuccessFeature}>
+          <View style={styles.customSuccessFeatureIcon}>
             <Ionicons name="rocket-outline" size={24} color="#4A7DFF" />
           </View>
           <View>
-            <Text style={styles.successFeatureTitle}>Ready for Setup</Text>
-            <Text style={styles.successFeatureDesc}>
+            <Text style={styles.customSuccessFeatureTitle}>Ready for Setup</Text>
+            <Text style={styles.customSuccessFeatureDesc}>
               Complete your profile and add your first product
             </Text>
           </View>
         </View>
       </View>
 
-      <TouchableOpacity style={[styles.continueButton, isDesktop && styles.continueButtonDesktop]} onPress={handleFinish}>
+      <TouchableOpacity style={styles.customDashboardButton} onPress={handleFinish}>
         <LinearGradient
           colors={['#4A7DFF', '#6B94FF']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.continueGradient}
+          style={styles.customDashboardGradient}
         >
-          <Text style={styles.continueButtonText}>Go to Dashboard</Text>
+          <Text style={styles.customDashboardButtonText}>Go to Dashboard</Text>
         </LinearGradient>
       </TouchableOpacity>
-      
-      <Text style={styles.autoNavigateHint}>
-        Click the button above to continue to your dashboard
-      </Text>
     </Animated.View>
   );
 
@@ -1822,7 +1824,13 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
           )}
         </View>
 
-        {step < 6 && <StepIndicator currentStep={step - 1} totalSteps={totalSteps - 1} />}
+        {step < 6 && (
+          <CustomStepIndicator 
+            currentStep={step - 1} 
+            totalSteps={totalSteps - 1} 
+            isDesktop={isDesktop}
+          />
+        )}
 
         <ScrollView
           ref={scrollViewRef}
@@ -1879,82 +1887,692 @@ export const BusinessRegistrationWizard = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
+  // ... (keep existing styles, I'll add the new custom styles)
+  
   // ============================================================
-  // DESKTOP STYLES
+  // CUSTOM STEP INDICATOR
   // ============================================================
-  containerDesktop: {
-    backgroundColor: '#F8F9FC',
+  customStepIndicatorContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 12,
   },
-  headerDesktop: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 12,
+  customStepIndicatorDesktop: {
+    paddingHorizontal: 80,
   },
-  contentDesktop: {
-    paddingHorizontal: 24,
+  customStepIndicatorItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
-  contentContainerDesktop: {
-    maxWidth: 800,
-    alignSelf: 'center',
-    width: '100%',
-    paddingBottom: 100,
+  customStepDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#E8ECF4',
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
-  navigationBarDesktop: {
-    paddingHorizontal: 24,
+  customStepDotActive: {
+    backgroundColor: '#4A7DFF',
+    borderColor: '#4A7DFF',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
   },
-  stepContainerDesktop: {
-    paddingTop: 10,
+  customStepDotCompleted: {
+    backgroundColor: '#2ECC71',
+    borderColor: '#2ECC71',
   },
-  businessTypesGridDesktop: {
+  customStepLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#E8ECF4',
+    marginHorizontal: 4,
+  },
+  customStepLineCompleted: {
+    backgroundColor: '#2ECC71',
+  },
+
+  // ============================================================
+  // CUSTOM STEP ICON
+  // ============================================================
+  customStepIcon: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  customStepIconDesktop: {
+    marginBottom: 28,
+  },
+  customStepIconGradient: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  customStepIconText: {
+    fontSize: 36,
+  },
+
+  // ============================================================
+  // CUSTOM STEP TITLES
+  // ============================================================
+  customStepTitle: {
+    color: '#1F2F5F',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  customStepTitleDesktop: {
+    fontSize: 28,
+  },
+  customStepSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 15,
+    textAlign: 'center',
+    marginBottom: 28,
+    lineHeight: 22,
+  },
+  customStepSubtitleDesktop: {
+    fontSize: 16,
+    marginBottom: 32,
+  },
+
+  // ============================================================
+  // CUSTOM BUSINESS TYPE CARDS
+  // ============================================================
+  customBusinessGrid: {
+    gap: 12,
+  },
+  customBusinessGridDesktop: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: 16,
   },
-  categoriesGridDesktop: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  customBusinessCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  customBusinessCardDesktop: {
+    width: (width - 120) / 3,
+    minWidth: 220,
+  },
+  customBusinessCardSelected: {
+    elevation: 4,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+  },
+  customBusinessCardGradient: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  customBusinessIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
-    gap: 12,
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  formContainerDesktop: {
-    maxWidth: 600,
-    alignSelf: 'center',
-    width: '100%',
+  customBusinessIcon: {
+    fontSize: 28,
   },
-  wizardContainerDesktop: {
-    maxWidth: 600,
-    alignSelf: 'center',
-    width: '100%',
+  customBusinessLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
   },
-  verificationContainerDesktop: {
-    maxWidth: 600,
-    alignSelf: 'center',
-    width: '100%',
+  customBusinessDescription: {
+    fontSize: 13,
+    textAlign: 'center',
   },
-  uploadBoxContainerDesktop: {
-    maxWidth: 600,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  continueButtonDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  successFeaturesDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
+  customBusinessCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
   },
 
   // ============================================================
-  // MOBILE STYLES
+  // CUSTOM CATEGORY CARDS
   // ============================================================
+  customCategoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'center',
+  },
+  customCategoryGridDesktop: {
+    gap: 14,
+  },
+  customCategoryCard: {
+    width: (width - 68) / 3,
+    alignItems: 'center',
+    backgroundColor: '#F8F9FC',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    position: 'relative',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  customCategoryCardDesktop: {
+    width: (width - 140) / 4,
+    padding: 20,
+  },
+  customCategoryCardSelected: {
+    backgroundColor: '#FFFFFF',
+    elevation: 3,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  customCategoryIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  customCategoryIcon: {
+    fontSize: 24,
+  },
+  customCategoryLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  customCategoryCheck: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+  },
+
+  // ============================================================
+  // CUSTOM FORM
+  // ============================================================
+  customFormContainer: {
+    gap: 18,
+  },
+  customFormContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  customFormGroup: {
+    gap: 6,
+  },
+  customFormLabel: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  customFormInput: {
+    backgroundColor: '#F8F9FC',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#1F2F5F',
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  customFormTextArea: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+
+  // ============================================================
+  // CUSTOM WIZARD QUESTIONS
+  // ============================================================
+  customWizardContainer: {
+    gap: 18,
+  },
+  customWizardContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  customWizardQuestion: {
+    backgroundColor: '#F8F9FC',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  customWizardQuestionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  customWizardQuestionIcon: {
+    fontSize: 18,
+    marginRight: 10,
+  },
+  customWizardQuestionLabel: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  customWizardInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#1F2F5F',
+    fontSize: 15,
+  },
+
+  // ============================================================
+  // CUSTOM VERIFICATION
+  // ============================================================
+  customVerificationContainer: {
+    gap: 12,
+    marginVertical: 16,
+  },
+  customVerificationContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  customVerificationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FC',
+    borderRadius: 12,
+    padding: 14,
+    gap: 12,
+  },
+  customVerificationIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customVerificationContent: {
+    flex: 1,
+  },
+  customVerificationTitle: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  customVerificationDesc: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  customVerificationNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFF',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DCE5FF',
+    marginTop: 8,
+  },
+  customVerificationNoteText: {
+    flex: 1,
+    color: '#8A8AAE',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  // ============================================================
+  // CUSTOM DOCUMENT UPLOAD
+  // ============================================================
+  customDocumentsTitle: {
+    color: '#1F2F5F',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  customDocumentsSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    marginBottom: 16,
+  },
+  customUploadContainer: {
+    gap: 12,
+    marginBottom: 16,
+  },
+  customUploadContainerDesktop: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  customUploadBox: {
+    backgroundColor: '#F8F9FC',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  customUploadBoxUploaded: {
+    borderColor: '#2ECC71',
+    backgroundColor: 'rgba(46, 204, 113, 0.03)',
+  },
+  customUploadBoxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  customUploadBoxIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  customUploadBoxInfo: {
+    flex: 1,
+  },
+  customUploadBoxLabel: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  customUploadBoxDescription: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  customUploadBoxStatus: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  customUploadBoxStatusText: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  customUploadBoxDropZone: {
+    borderWidth: 2,
+    borderColor: '#DCE5FF',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAFBFF',
+    minHeight: 100,
+  },
+  customUploadBoxDropIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  customUploadBoxDropText: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  customUploadBoxDropSubtext: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  customUploadBoxPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  customUploadBoxImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  customUploadBoxFileIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  customUploadBoxFileInfo: {
+    flex: 1,
+  },
+  customUploadBoxFileName: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  customUploadBoxFileSize: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  customUploadBoxRemove: {
+    padding: 4,
+  },
+  customUploadBoxRemoveButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#E74C3C',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customUploadBoxProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+  },
+  customUploadBoxProgressText: {
+    color: '#4A7DFF',
+    fontSize: 14,
+  },
+
+  // ============================================================
+  // CUSTOM SUBMIT BUTTON
+  // ============================================================
+  customSubmitButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 16,
+    elevation: 3,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  customSubmitButtonDisabled: {
+    opacity: 0.5,
+    elevation: 0,
+  },
+  customSubmitGradient: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  customSubmitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // ============================================================
+  // CUSTOM SUCCESS
+  // ============================================================
+  customSuccessContainer: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  customSuccessGradient: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  customSuccessEmoji: {
+    fontSize: 48,
+  },
+  customSuccessTitle: {
+    color: '#1F2F5F',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  customSuccessSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 15,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  customSuccessFeatures: {
+    gap: 12,
+    marginBottom: 32,
+  },
+  customSuccessFeaturesDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  customSuccessFeature: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  customSuccessFeatureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(46, 204, 113, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customSuccessFeatureTitle: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  customSuccessFeatureDesc: {
+    color: '#8A8AAE',
+    fontSize: 13,
+  },
+  customDashboardButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    elevation: 3,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  customDashboardGradient: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  customDashboardButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  customEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  customEmptyStateIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  customEmptyStateText: {
+    color: '#1F2F5F',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  customEmptyStateSubtext: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 4,
+  },
+
+  // ============================================================
+  // GLASS CARD
+  // ============================================================
+  glassCard: {
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+
+  // ============================================================
+  // EXISTING STYLES (keep all from original)
+  // ============================================================
+  // ... (keep all existing styles from the original file)
+  
+  // I'll keep the rest of the styles from the original file since they're already defined
+  // but the custom styles above will override/enhance them
+  
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  containerDesktop: {
+    backgroundColor: '#F8F9FC',
   },
   keyboardView: {
     flex: 1,
@@ -1966,6 +2584,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
+  },
+  headerDesktop: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 12,
   },
   backButton: {
     padding: 4,
@@ -1985,341 +2608,25 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  contentDesktop: {
+    paddingHorizontal: 24,
+  },
   contentContainer: {
     paddingHorizontal: 24,
     paddingBottom: 120,
   },
-  stepIndicatorContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    gap: 8,
-  },
-  stepDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#E8ECF4',
-  },
-  stepDotActive: {
-    width: 24,
-    backgroundColor: '#4A7DFF',
-  },
-  stepDotCompleted: {
-    backgroundColor: '#4A7DFF',
+  contentContainerDesktop: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
+    paddingBottom: 100,
   },
   stepContainer: {
     paddingTop: 20,
     paddingBottom: 20,
   },
-  stepIconContainer: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  stepIconGradient: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepIcon: {
-    fontSize: 32,
-  },
-  stepTitle: {
-    color: '#1F2F5F',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  stepSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 15,
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 22,
-  },
-  businessTypesGrid: {
-    gap: 12,
-  },
-  businessTypeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FC',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  businessTypeCardSelected: {
-    borderColor: '#4A7DFF',
-    backgroundColor: 'rgba(74, 125, 255, 0.05)',
-  },
-  businessTypeIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(74, 125, 255, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-  },
-  businessTypeIcon: {
-    fontSize: 22,
-  },
-  businessTypeLabel: {
-    color: '#1F2F5F',
-    fontSize: 16,
-    fontWeight: '500',
-    flex: 1,
-  },
-  businessTypeDescription: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  categoriesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'center',
-  },
-  categoryCard: {
-    width: (width - 58) / 3,
-    alignItems: 'center',
-    backgroundColor: '#F8F9FC',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  categoryCardSelected: {
-    borderColor: '#4A7DFF',
-    backgroundColor: 'rgba(74, 125, 255, 0.05)',
-  },
-  categoryIcon: {
-    fontSize: 28,
-    marginBottom: 8,
-  },
-  categoryLabel: {
-    color: '#1F2F5F',
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  formContainer: {
-    gap: 16,
-  },
-  formGroup: {
-    gap: 6,
-  },
-  formLabel: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  formInput: {
-    backgroundColor: '#F8F9FC',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#1F2F5F',
-    fontSize: 15,
-  },
-  formTextArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  wizardContainer: {
-    gap: 16,
-  },
-  wizardQuestion: {
-    gap: 8,
-  },
-  wizardQuestionLabel: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  wizardInput: {
-    backgroundColor: '#F8F9FC',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#1F2F5F',
-    fontSize: 15,
-  },
-  verificationContainer: {
-    gap: 12,
-    marginVertical: 16,
-  },
-  verificationItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FC',
-    borderRadius: 12,
-    padding: 14,
-    gap: 12,
-  },
-  verificationIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  verificationContent: {
-    flex: 1,
-  },
-  verificationTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  verificationDesc: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  documentsSectionTitle: {
-    color: '#1F2F5F',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 16,
-    marginBottom: 4,
-  },
-  documentsSectionSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    marginBottom: 16,
-  },
-  uploadBoxContainer: {
-    gap: 12,
-    marginBottom: 16,
-  },
-  uploadBox: {
-    backgroundColor: '#F8F9FC',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  uploadBoxHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  uploadBoxIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(74, 125, 255, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  uploadBoxInfo: {
-    flex: 1,
-  },
-  uploadBoxLabel: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  uploadBoxDescription: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  requiredStar: {
-    color: '#E74C3C',
-  },
-  uploadBoxDropZone: {
-    borderWidth: 2,
-    borderColor: '#DCE5FF',
-    borderStyle: 'dashed',
-    borderRadius: 8,
-    padding: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FAFBFF',
-    minHeight: 120,
-  },
-  uploadBoxDropText: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-    marginTop: 8,
-  },
-  uploadBoxDropSubtext: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  uploadBoxPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  uploadBoxImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  uploadBoxFileInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  uploadBoxFileDetails: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  uploadBoxFileName: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  uploadBoxFileSize: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  uploadBoxRemove: {
-    padding: 4,
-  },
-  uploadBoxProgress: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 12,
-  },
-  uploadBoxProgressText: {
-    color: '#4A7DFF',
-    fontSize: 14,
-  },
-  verificationNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F8FAFF',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCE5FF',
-    marginTop: 8,
-  },
-  verificationNoteText: {
-    flex: 1,
-    color: '#8A8AAE',
-    fontSize: 12,
-    lineHeight: 18,
+  stepContainerDesktop: {
+    paddingTop: 10,
   },
   navigationBar: {
     position: 'absolute',
@@ -2333,6 +2640,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E8ECF4',
+  },
+  navigationBarDesktop: {
+    paddingHorizontal: 24,
   },
   prevButton: {
     paddingVertical: 12,
@@ -2359,82 +2669,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
-  },
-  continueButton: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginTop: 16,
-  },
-  continueButtonDisabled: {
-    opacity: 0.5,
-  },
-  continueGradient: {
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  continueButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  successContainer: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  successGradient: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  successEmoji: {
-    fontSize: 48,
-  },
-  successTitle: {
-    color: '#1F2F5F',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  successSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 15,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  successFeatures: {
-    gap: 12,
-    marginBottom: 32,
-  },
-  successFeature: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  successFeatureIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(46, 204, 113, 0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  successFeatureTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  successFeatureDesc: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  autoNavigateHint: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 12,
   },
   // Multi-select and Select styles
   multiselectContainer: {

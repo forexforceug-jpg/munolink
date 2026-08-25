@@ -1,6 +1,6 @@
 // src/features/pay/PayScreen.tsx
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,37 +14,103 @@ import {
   FlatList,
   Dimensions,
   Alert,
+  RefreshControl,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { supabase } from '../../lib/supabase';
+import { useFocusEffect } from '@react-navigation/native';
 
+const supabaseAny = supabase as any;
 const { width, height } = Dimensions.get('window');
 
-// --- Mock Data ---
-const recentTransactions = [
-  { id: '1', type: 'payment', merchant: 'TechWorld Kampala', amount: -2850000, date: '2024-01-15 14:30', status: 'completed', method: 'Wallet' },
-  { id: '2', type: 'topup', merchant: 'MTN Mobile Money', amount: 500000, date: '2024-01-14 09:15', status: 'completed', method: 'MTN' },
-  { id: '3', type: 'payment', merchant: 'Jinja Medical Centre', amount: -150000, date: '2024-01-13 11:45', status: 'pending', method: 'Card' },
-  { id: '4', type: 'refund', merchant: 'TechWorld Kampala', amount: 250000, date: '2024-01-12 16:20', status: 'completed', method: 'Wallet' },
-];
+// --- Types ---
+interface Transaction {
+  id: string;
+  type: 'payment' | 'topup' | 'refund' | 'withdrawal' | 'transfer';
+  merchant: string;
+  amount: number;
+  date: string;
+  status: 'completed' | 'pending' | 'failed';
+  method: string;
+  reference?: string;
+  shop_id?: string;
+}
 
-const paymentMethods = [
-  { id: '1', name: 'MTN Mobile Money', icon: '📱', type: 'mobile_money', default: true },
-  { id: '2', name: 'Airtel Money', icon: '📱', type: 'mobile_money', default: false },
-  { id: '3', name: 'Visa Card •••• 4242', icon: '💳', type: 'card', default: false },
-  { id: '4', name: 'Bank Transfer - Stanbic', icon: '🏦', type: 'bank', default: false },
-];
+interface PaymentMethod {
+  id: string;
+  name: string;
+  icon: string;
+  type: 'mobile_money' | 'card' | 'bank';
+  default: boolean;
+  details?: {
+    phone?: string;
+    last4?: string;
+    bankName?: string;
+    accountNumber?: string;
+  };
+}
 
-const transactionFilters = ['All', 'Payments', 'Top Ups', 'Refunds', 'Withdrawals', 'Transfers'];
+interface CartItem {
+  id: string;
+  title: string;
+  price: number;
+  quantity: number;
+  image?: string;
+  shop_id: string;
+  shop_name: string;
+}
 
-// --- Sub-components ---
+// ============================================================
+// LOADING SKELETON
+// ============================================================
+
+const PayScreenSkeleton = () => (
+  <View style={styles.skeletonContainer}>
+    {/* Balance Card Skeleton */}
+    <View style={styles.skeletonBalanceCard}>
+      <View style={styles.skeletonBalanceLabel} />
+      <View style={styles.skeletonBalanceAmount} />
+      <View style={styles.skeletonBalanceActions}>
+        <View style={styles.skeletonBalanceAction} />
+        <View style={styles.skeletonBalanceAction} />
+        <View style={styles.skeletonBalanceAction} />
+        <View style={styles.skeletonBalanceAction} />
+      </View>
+    </View>
+
+    {/* Payment Methods Skeleton */}
+    <View style={styles.skeletonSection}>
+      <View style={styles.skeletonSectionHeader}>
+        <View style={styles.skeletonSectionTitle} />
+        <View style={styles.skeletonSectionAction} />
+      </View>
+      {[1, 2, 3].map((i) => (
+        <View key={i} style={styles.skeletonPaymentMethod} />
+      ))}
+    </View>
+
+    {/* Quick Actions Skeleton */}
+    <View style={styles.skeletonSection}>
+      <View style={styles.skeletonSectionTitle} />
+      {[1, 2, 3, 4].map((i) => (
+        <View key={i} style={styles.skeletonOptionCard} />
+      ))}
+    </View>
+  </View>
+);
+
+// ============================================================
+// SUB-COMPONENTS
+// ============================================================
 
 // Pay Option Card
-const PayOptionCard = ({ icon, title, description, onPress }: any) => (
+const PayOptionCard = ({ icon, title, description, onPress, badge }: any) => (
   <TouchableOpacity style={styles.optionCard} onPress={onPress}>
     <View style={styles.optionIconContainer}>
       <Text style={styles.optionIcon}>{icon}</Text>
@@ -53,12 +119,17 @@ const PayOptionCard = ({ icon, title, description, onPress }: any) => (
       <Text style={styles.optionTitle}>{title}</Text>
       <Text style={styles.optionDescription}>{description}</Text>
     </View>
+    {badge && (
+      <View style={styles.optionBadge}>
+        <Text style={styles.optionBadgeText}>{badge}</Text>
+      </View>
+    )}
     <Ionicons name="chevron-forward" size={20} color="#8A8AAE" />
   </TouchableOpacity>
 );
 
 // Transaction Item
-const TransactionItem = ({ item }: any) => {
+const TransactionItem = ({ item }: { item: Transaction }) => {
   const isIncoming = item.amount > 0;
   const statusColors = {
     completed: '#2ECC71',
@@ -66,9 +137,17 @@ const TransactionItem = ({ item }: any) => {
     failed: '#E74C3C',
   };
 
+  const statusLabels = {
+    completed: 'Completed',
+    pending: 'Pending',
+    failed: 'Failed',
+  };
+
   return (
     <View style={styles.transactionItem}>
-      <View style={styles.transactionIconContainer}>
+      <View style={[styles.transactionIconContainer, { 
+        backgroundColor: isIncoming ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)' 
+      }]}>
         <Text style={styles.transactionIcon}>
           {isIncoming ? '📥' : '📤'}
         </Text>
@@ -76,13 +155,24 @@ const TransactionItem = ({ item }: any) => {
       <View style={styles.transactionContent}>
         <Text style={styles.transactionMerchant}>{item.merchant}</Text>
         <View style={styles.transactionMeta}>
-          <Text style={styles.transactionDate}>{item.date}</Text>
-          <View style={[styles.transactionStatus, { backgroundColor: statusColors[item.status as keyof typeof statusColors] + '20' }]}>
-            <Text style={[styles.transactionStatusText, { color: statusColors[item.status as keyof typeof statusColors] }]}>
-              {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+          <Text style={styles.transactionDate}>
+            {new Date(item.date).toLocaleDateString('en-UG', { 
+              day: '2-digit', 
+              month: 'short', 
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </Text>
+          <View style={[styles.transactionStatus, { backgroundColor: statusColors[item.status] + '20' }]}>
+            <Text style={[styles.transactionStatusText, { color: statusColors[item.status] }]}>
+              {statusLabels[item.status]}
             </Text>
           </View>
         </View>
+        {item.reference && (
+          <Text style={styles.transactionReference}>Ref: {item.reference}</Text>
+        )}
       </View>
       <Text style={[styles.transactionAmount, { color: isIncoming ? '#2ECC71' : '#E74C3C' }]}>
         {isIncoming ? '+' : ''}{item.amount.toLocaleString()} UGX
@@ -104,6 +194,9 @@ const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
         <View style={styles.defaultBadge}>
           <Text style={styles.defaultBadgeText}>Default</Text>
         </View>
+      )}
+      {method.details?.phone && (
+        <Text style={styles.paymentMethodDetail}>{method.details.phone}</Text>
       )}
     </View>
     <View style={[styles.paymentMethodRadio, isSelected && styles.paymentMethodRadioSelected]} />
@@ -134,79 +227,575 @@ const GuestPayView = ({ navigation }: any) => (
   </View>
 );
 
-// --- Desktop Pay Content ---
-const DesktopPayContent = ({ navigation }: any) => {
-  const { isAuthenticated } = useAuth();
+// ============================================================
+// MAIN PAY SCREEN COMPONENT
+// ============================================================
+
+const PayContent = ({ navigation }: any) => {
+  const { isAuthenticated, user } = useAuth();
+  const { isDesktop } = useBreakpoint();
   
-  const [selectedFilter, setSelectedFilter] = useState('All');
-  const [selectedMethod, setSelectedMethod] = useState('1');
+  // State
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [selectedMethod, setSelectedMethod] = useState<string>('');
   const [amount, setAmount] = useState('');
   const [showAddMoney, setShowAddMoney] = useState(false);
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState('All');
+  
+  // Cart items for checkout
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  
+  // Transaction filters
+  const transactionFilters = ['All', 'Payments', 'Top Ups', 'Refunds', 'Withdrawals'];
 
-  const walletBalance = 1250000;
+  // ============================================================
+  // FETCH FUNCTIONS
+  // ============================================================
 
-  if (!isAuthenticated) {
-    return <GuestPayView navigation={navigation} />;
-  }
+  // Fetch wallet balance
+  const fetchWalletBalance = useCallback(async () => {
+    if (!user?.id) return 0;
 
-  return (
-    <View style={styles.desktopContainer}>
-      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+    try {
+      const { data, error } = await supabaseAny
+        .from('users')
+        .select('wallet_balance')
+        .eq('id', user.id)
+        .single();
+
+      if (error) {
+        console.error('Error fetching wallet balance:', error);
+        return 0;
+      }
+
+      return data?.wallet_balance || 0;
+    } catch (error) {
+      console.error('Error fetching wallet balance:', error);
+      return 0;
+    }
+  }, [user?.id]);
+
+  // Fetch transactions
+  const fetchTransactions = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      const { data, error } = await supabaseAny
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        console.error('Error fetching transactions:', error);
+        return [];
+      }
+
+      if (!data || data.length === 0) {
+        return [];
+      }
+
+      // Transform to Transaction type
+      return data.map((t: any) => ({
+        id: t.id,
+        type: t.type as Transaction['type'],
+        merchant: t.shop_id || 'Munolink',
+        amount: t.amount,
+        date: t.created_at || new Date().toISOString(),
+        status: (t.status as Transaction['status']) || 'completed',
+        method: t.payment_code || 'Wallet',
+        reference: t.reference,
+        shop_id: t.shop_id,
+      }));
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // Fetch payment methods
+  const fetchPaymentMethods = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      // Get user's phone for mobile money
+      const { data: userData, error: userError } = await supabaseAny
+        .from('users')
+        .select('phone_number')
+        .eq('id', user.id)
+        .single();
+
+      if (userError) {
+        console.error('Error fetching user data:', userError);
+        return [];
+      }
+
+      const methods: PaymentMethod[] = [];
+      const phone = userData?.phone_number || '';
+
+      // Add mobile money if phone exists
+      if (phone) {
+        methods.push({
+          id: 'mtn',
+          name: 'MTN Mobile Money',
+          icon: '📱',
+          type: 'mobile_money',
+          default: true,
+          details: { phone: phone },
+        });
+
+        methods.push({
+          id: 'airtel',
+          name: 'Airtel Money',
+          icon: '📱',
+          type: 'mobile_money',
+          default: false,
+          details: { phone: phone },
+        });
+      }
+
+      // Check if user has wallet balance for wallet payment
+      methods.push({
+        id: 'wallet',
+        name: 'Munolink Wallet',
+        icon: '💰',
+        type: 'mobile_money',
+        default: phone ? false : true,
+      });
+
+      return methods;
+    } catch (error) {
+      console.error('Error fetching payment methods:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // Fetch cart items for checkout
+  const fetchCartItems = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      const { data: interactions, error: interactionsError } = await supabaseAny
+        .from('user_interactions')
+        .select('id, item_id, metadata, created_at')
+        .eq('user_id', user.id)
+        .eq('action', 'purchase')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (interactionsError || !interactions || interactions.length === 0) {
+        return [];
+      }
+
+      const itemIds = interactions.map((i: any) => i.item_id);
       
-      <View style={styles.desktopHeader}>
-        <Text style={styles.desktopHeaderTitle}>Pay</Text>
-        <Text style={styles.desktopHeaderSubtitle}>Manage your payments and wallet</Text>
-      </View>
+      const { data: catalogItems, error: catalogError } = await supabaseAny
+        .from('catalog')
+        .select('*')
+        .in('id', itemIds);
 
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.desktopScrollContent}
-      >
-        <View style={styles.desktopGrid}>
-          {/* Left Column */}
-          <View style={styles.desktopLeftColumn}>
-            {/* Balance Card */}
-            <View style={styles.desktopBalanceCard}>
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.balanceGradient}
-              >
-                <Text style={styles.balanceLabel}>Available Balance</Text>
-                <Text style={styles.balanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
-                <View style={styles.balanceActions}>
-                  <TouchableOpacity style={styles.balanceAction} onPress={() => setShowAddMoney(true)}>
-                    <Ionicons name="add-circle-outline" size={20} color="#FFFFFF" />
-                    <Text style={styles.balanceActionText}>Add Money</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.balanceAction} onPress={() => setShowWithdraw(true)}>
-                    <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" />
-                    <Text style={styles.balanceActionText}>Withdraw</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.balanceAction}>
-                    <Ionicons name="swap-horizontal-outline" size={20} color="#FFFFFF" />
-                    <Text style={styles.balanceActionText}>Send</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.balanceAction}>
-                    <Ionicons name="business-outline" size={20} color="#FFFFFF" />
-                    <Text style={styles.balanceActionText}>Bank</Text>
-                  </TouchableOpacity>
+      if (catalogError || !catalogItems) {
+        return [];
+      }
+
+      const items: CartItem[] = [];
+      
+      for (const interaction of interactions) {
+        const item = catalogItems.find((i: any) => i.id === interaction.item_id);
+        if (!item) continue;
+
+        // Get shop info
+        const { data: shopProduct } = await supabaseAny
+          .from('shop_products')
+          .select('shop_id, regular_price')
+          .eq('catalog_id', item.id)
+          .single();
+
+        let shopName = 'Shop';
+        if (shopProduct?.shop_id) {
+          const { data: shop } = await supabaseAny
+            .from('shops')
+            .select('name')
+            .eq('id', shopProduct.shop_id)
+            .single();
+          if (shop) shopName = shop.name;
+        }
+
+        items.push({
+          id: interaction.id,
+          title: item.name || 'Product',
+          price: shopProduct?.regular_price || 0,
+          quantity: interaction.metadata?.quantity || 1,
+          image: item.images?.[0],
+          shop_id: shopProduct?.shop_id || '',
+          shop_name: shopName,
+        });
+      }
+
+      return items;
+    } catch (error) {
+      console.error('Error fetching cart items:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // --- Load All Data ---
+  const loadAllData = useCallback(async () => {
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const [balance, transactionsData, methods, cartData] = await Promise.all([
+        fetchWalletBalance(),
+        fetchTransactions(),
+        fetchPaymentMethods(),
+        fetchCartItems(),
+      ]);
+
+      setWalletBalance(balance);
+      setTransactions(transactionsData);
+      setPaymentMethods(methods);
+      setCartItems(cartData);
+
+      // Set default selected method
+      const defaultMethod = methods.find(m => m.default);
+      if (defaultMethod) {
+        setSelectedMethod(defaultMethod.id);
+      } else if (methods.length > 0) {
+        setSelectedMethod(methods[0].id);
+      }
+    } catch (error) {
+      console.error('Error loading pay data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id, fetchWalletBalance, fetchTransactions, fetchPaymentMethods, fetchCartItems]);
+
+  // Auto-refresh when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated && user?.id) {
+        loadAllData();
+      } else {
+        setLoading(false);
+      }
+      return () => {};
+    }, [isAuthenticated, user?.id, loadAllData])
+  );
+
+  // Initial load
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      loadAllData();
+    } else {
+      setLoading(false);
+    }
+  }, [isAuthenticated, user?.id, loadAllData]);
+
+  // --- Pull to Refresh ---
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadAllData();
+    setRefreshing(false);
+  }, [loadAllData]);
+
+  // ============================================================
+  // CALCULATIONS
+  // ============================================================
+
+  const cartTotals = useMemo(() => {
+    const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const deliveryFee = cartItems.length > 0 ? 15000 : 0;
+    const walletSavings = Math.round(subtotal * 0.05);
+    return { subtotal, deliveryFee, walletSavings, total: subtotal + deliveryFee - walletSavings };
+  }, [cartItems]);
+
+  const { subtotal, deliveryFee, walletSavings, total } = cartTotals;
+
+  // ============================================================
+  // ACTION HANDLERS
+  // ============================================================
+
+  // Handle Add Money
+  const handleAddMoney = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please login to add money');
+      return;
+    }
+
+    const amountNum = parseInt(amount);
+    if (!amountNum || amountNum <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+
+    if (!selectedMethod) {
+      Alert.alert('Error', 'Please select a payment method');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Add Money',
+      `Add UGX ${amountNum.toLocaleString()} to your wallet?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            try {
+              // Call the process_payment function
+              const { data, error } = await supabaseAny
+                .rpc('process_payment', {
+                  p_amount: amountNum,
+                  p_pin: '1234', // In production, this should come from a PIN input
+                  p_shop_id: '',
+                  p_user_id: user.id,
+                });
+
+              if (error) {
+                console.error('Error processing payment:', error);
+                Alert.alert('Error', 'Failed to add money. Please try again.');
+                return;
+              }
+
+              // Update wallet balance
+              const newBalance = walletBalance + amountNum;
+              setWalletBalance(newBalance);
+              
+              // Add to transactions
+              const newTransaction: Transaction = {
+                id: Date.now().toString(),
+                type: 'topup',
+                merchant: 'MTN Mobile Money',
+                amount: amountNum,
+                date: new Date().toISOString(),
+                status: 'completed',
+                method: 'MTN',
+                reference: `TOP-${Date.now()}`,
+              };
+              setTransactions(prev => [newTransaction, ...prev]);
+
+              setAmount('');
+              setShowAddMoney(false);
+              Alert.alert('Success', `UGX ${amountNum.toLocaleString()} added successfully!`);
+            } catch (error) {
+              console.error('Error adding money:', error);
+              Alert.alert('Error', 'Failed to add money. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  }, [amount, selectedMethod, user?.id, walletBalance]);
+
+  // Handle Withdraw
+  const handleWithdraw = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please login to withdraw');
+      return;
+    }
+
+    const amountNum = parseInt(amount);
+    if (!amountNum || amountNum <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+
+    if (amountNum > walletBalance) {
+      Alert.alert('Error', 'Insufficient balance');
+      return;
+    }
+
+    if (!selectedMethod) {
+      Alert.alert('Error', 'Please select a withdrawal method');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Withdrawal',
+      `Withdraw UGX ${amountNum.toLocaleString()} to ${paymentMethods.find(m => m.id === selectedMethod)?.name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            try {
+              // Update wallet balance
+              const newBalance = walletBalance - amountNum;
+              setWalletBalance(newBalance);
+              
+              // Add to transactions
+              const newTransaction: Transaction = {
+                id: Date.now().toString(),
+                type: 'withdrawal',
+                merchant: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Withdrawal',
+                amount: -amountNum,
+                date: new Date().toISOString(),
+                status: 'pending',
+                method: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown',
+                reference: `WTH-${Date.now()}`,
+              };
+              setTransactions(prev => [newTransaction, ...prev]);
+
+              setAmount('');
+              setShowWithdraw(false);
+              Alert.alert('Success', `UGX ${amountNum.toLocaleString()} withdrawal initiated!`);
+            } catch (error) {
+              console.error('Error withdrawing:', error);
+              Alert.alert('Error', 'Failed to withdraw. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  }, [amount, selectedMethod, walletBalance, paymentMethods, user?.id]);
+
+  // Handle Checkout
+  const handleCheckout = useCallback(async () => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please login to checkout');
+      return;
+    }
+
+    if (cartItems.length === 0) {
+      Alert.alert('Error', 'Your cart is empty');
+      return;
+    }
+
+    if (!selectedMethod) {
+      Alert.alert('Error', 'Please select a payment method');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Payment',
+      `Pay UGX ${total.toLocaleString()} for ${cartItems.length} item(s)?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Pay Now',
+          onPress: async () => {
+            try {
+              // Process payment
+              const { data, error } = await supabaseAny
+                .rpc('process_payment', {
+                  p_amount: total,
+                  p_pin: '1234', // In production, this should come from a PIN input
+                  p_shop_id: cartItems[0]?.shop_id || '',
+                  p_user_id: user.id,
+                });
+
+              if (error) {
+                console.error('Error processing payment:', error);
+                Alert.alert('Error', 'Payment failed. Please try again.');
+                return;
+              }
+
+              // Clear cart
+              setCartItems([]);
+              setShowCheckout(false);
+              Alert.alert('Success', 'Payment completed successfully!');
+            } catch (error) {
+              console.error('Error processing payment:', error);
+              Alert.alert('Error', 'Payment failed. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  }, [cartItems, total, selectedMethod, user?.id]);
+
+  // --- Filtered Transactions ---
+  const filteredTransactions = useMemo(() => {
+    if (selectedFilter === 'All') return transactions;
+    return transactions.filter(t => {
+      switch (selectedFilter) {
+        case 'Payments': return t.type === 'payment';
+        case 'Top Ups': return t.type === 'topup';
+        case 'Refunds': return t.type === 'refund';
+        case 'Withdrawals': return t.type === 'withdrawal';
+        default: return true;
+      }
+    });
+  }, [transactions, selectedFilter]);
+
+  // ============================================================
+  // RENDER FUNCTIONS
+  // ============================================================
+
+  // Render Modal - Checkout
+  const renderCheckoutModal = useCallback(() => (
+    <Modal
+      visible={showCheckout}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowCheckout(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowCheckout(false)}>
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Checkout</Text>
+            <TouchableOpacity onPress={() => setShowCheckout(false)}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.checkoutContent}>
+            <View style={styles.checkoutSection}>
+              <Text style={styles.checkoutSectionTitle}>Order Items ({cartItems.length})</Text>
+              {cartItems.map((item) => (
+                <View key={item.id} style={styles.orderItem}>
+                  <View style={styles.orderItemImage}>
+                    {item.image && (
+                      <Image source={{ uri: item.image }} style={styles.orderItemImageActual} />
+                    )}
+                  </View>
+                  <View style={styles.orderItemInfo}>
+                    <Text style={styles.orderItemName}>{item.title}</Text>
+                    <Text style={styles.orderItemShop}>{item.shop_name}</Text>
+                    <Text style={styles.orderItemPrice}>UGX {item.price.toLocaleString()}</Text>
+                  </View>
+                  <Text style={styles.orderItemQty}>x{item.quantity}</Text>
                 </View>
-              </LinearGradient>
+              ))}
             </View>
 
-            {/* Payment Methods */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Payment Methods</Text>
-                <TouchableOpacity>
-                  <Text style={styles.sectionAction}>Manage</Text>
-                </TouchableOpacity>
+            <View style={styles.checkoutSection}>
+              <Text style={styles.checkoutSectionTitle}>Price Summary</Text>
+              <View style={styles.priceRow}>
+                <Text style={styles.priceLabel}>Subtotal</Text>
+                <Text style={styles.priceValue}>UGX {subtotal.toLocaleString()}</Text>
               </View>
+              <View style={styles.priceRow}>
+                <Text style={styles.priceLabel}>Delivery Fee</Text>
+                <Text style={styles.priceValue}>UGX {deliveryFee.toLocaleString()}</Text>
+              </View>
+              <View style={styles.priceRow}>
+                <Text style={styles.priceLabel}>Wallet Savings</Text>
+                <Text style={[styles.priceValue, { color: '#2ECC71' }]}>- UGX {walletSavings.toLocaleString()}</Text>
+              </View>
+              <View style={[styles.priceRow, styles.priceTotal]}>
+                <Text style={styles.priceTotalLabel}>Total</Text>
+                <Text style={styles.priceTotalValue}>UGX {total.toLocaleString()}</Text>
+              </View>
+            </View>
+
+            <View style={styles.checkoutSection}>
+              <Text style={styles.checkoutSectionTitle}>Payment Method</Text>
               {paymentMethods.map((method) => (
                 <PaymentMethodItem 
                   key={method.id} 
@@ -216,100 +805,404 @@ const DesktopPayContent = ({ navigation }: any) => {
                 />
               ))}
             </View>
-          </View>
 
-          {/* Right Column */}
-          <View style={styles.desktopRightColumn}>
-            {/* Quick Actions */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Quick Actions</Text>
-              <PayOptionCard
-                icon="🛒"
-                title="Checkout"
-                description="Pay for items and services"
-                onPress={() => setShowCheckout(true)}
-              />
-              <PayOptionCard
-                icon="📊"
-                title="Transactions"
-                description="View payment history"
-                onPress={() => setShowTransactions(true)}
-              />
-              <PayOptionCard
-                icon="💳"
-                title="Payment Methods"
-                description="Manage cards and accounts"
-                onPress={() => Alert.alert('Payment Methods', 'Manage your payment methods')}
-              />
-              <PayOptionCard
-                icon="📱"
-                title="Mobile Money"
-                description="MTN, Airtel & more"
-                onPress={() => Alert.alert('Mobile Money', 'Manage mobile money accounts')}
-              />
-            </View>
+            <View style={styles.bottomSpacer} />
+          </ScrollView>
 
-            {/* Recent Transactions */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Recent Transactions</Text>
-                <TouchableOpacity onPress={() => setShowTransactions(true)}>
-                  <Text style={styles.sectionAction}>View All</Text>
-                </TouchableOpacity>
-              </View>
-              {recentTransactions.slice(0, 3).map((item) => (
-                <TransactionItem key={item.id} item={item} />
-              ))}
+          <View style={styles.stickyCheckoutBar}>
+            <View style={styles.checkoutTotalPreview}>
+              <Text style={styles.checkoutTotalLabel}>Total</Text>
+              <Text style={styles.checkoutTotalAmount}>UGX {total.toLocaleString()}</Text>
             </View>
+            <TouchableOpacity style={styles.payNowButton} onPress={handleCheckout}>
+              <LinearGradient
+                colors={['#4A7DFF', '#6B94FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.payNowGradient}
+              >
+                <Text style={styles.payNowText}>Pay Now</Text>
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
+      </View>
+    </Modal>
+  ), [showCheckout, cartItems, subtotal, deliveryFee, walletSavings, total, paymentMethods, selectedMethod, handleCheckout]);
 
-      {/* Modals */}
-      {renderModals({ 
-        showCheckout, setShowCheckout, 
-        showTransactions, setShowTransactions,
-        showAddMoney, setShowAddMoney,
-        showWithdraw, setShowWithdraw,
-        selectedMethod, setSelectedMethod,
-        selectedFilter, setSelectedFilter,
-        amount, setAmount,
-        paymentMethods 
-      })}
-    </View>
-  );
-};
+  // Render Modal - Transactions
+  const renderTransactionsModal = useCallback(() => (
+    <Modal
+      visible={showTransactions}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowTransactions(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, styles.transactionsModal]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowTransactions(false)}>
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Transactions</Text>
+            <TouchableOpacity onPress={() => setShowTransactions(false)}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
 
-// --- Mobile Pay Content ---
-const MobilePayContent = ({ navigation }: any) => {
-  const { isAuthenticated } = useAuth();
-  
-  const [selectedFilter, setSelectedFilter] = useState('All');
-  const [selectedMethod, setSelectedMethod] = useState('1');
-  const [amount, setAmount] = useState('');
-  const [showAddMoney, setShowAddMoney] = useState(false);
-  const [showWithdraw, setShowWithdraw] = useState(false);
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [showTransactions, setShowTransactions] = useState(false);
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterContainer}
+            contentContainerStyle={styles.filterContent}
+          >
+            {transactionFilters.map((filter) => (
+              <TouchableOpacity
+                key={filter}
+                style={[
+                  styles.filterChip,
+                  selectedFilter === filter && styles.filterChipActive,
+                ]}
+                onPress={() => setSelectedFilter(filter)}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedFilter === filter && styles.filterChipTextActive,
+                  ]}
+                >
+                  {filter}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
 
-  const walletBalance = 1250000;
+          <FlatList
+            data={filteredTransactions}
+            renderItem={({ item }) => <TransactionItem item={item} />}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.transactionsList}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>📭</Text>
+                <Text style={styles.emptyTitle}>No transactions yet</Text>
+                <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
+              </View>
+            }
+          />
+        </View>
+      </View>
+    </Modal>
+  ), [showTransactions, filteredTransactions, selectedFilter, transactionFilters]);
+
+  // Render Modal - Add Money
+  const renderAddMoneyModal = useCallback(() => (
+    <Modal
+      visible={showAddMoney}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowAddMoney(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, styles.addMoneyModal]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Money</Text>
+            <TouchableOpacity onPress={() => setShowAddMoney(false)}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.addMoneyContent}>
+              <Text style={styles.addMoneyLabel}>Select Amount</Text>
+              <View style={styles.amountOptions}>
+                {[50000, 100000, 250000, 500000, 1000000].map((amt) => (
+                  <TouchableOpacity
+                    key={amt}
+                    style={[styles.amountOption, parseInt(amount) === amt && styles.amountOptionSelected]}
+                    onPress={() => setAmount(amt.toString())}
+                  >
+                    <Text style={[styles.amountOptionText, parseInt(amount) === amt && styles.amountOptionTextSelected]}>
+                      UGX {amt.toLocaleString()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.addMoneyLabel}>Or Enter Amount</Text>
+              <TextInput
+                style={styles.amountInput}
+                placeholder="Enter amount"
+                placeholderTextColor="#8A8AAE"
+                keyboardType="numeric"
+                value={amount}
+                onChangeText={setAmount}
+              />
+
+              <Text style={styles.addMoneyLabel}>Payment Method</Text>
+              {paymentMethods.slice(0, 2).map((method) => (
+                <PaymentMethodItem 
+                  key={method.id} 
+                  method={method} 
+                  isSelected={selectedMethod === method.id}
+                  onSelect={setSelectedMethod}
+                />
+              ))}
+
+              <TouchableOpacity style={styles.fundButton} onPress={handleAddMoney}>
+                <LinearGradient
+                  colors={['#4A7DFF', '#6B94FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.fundGradient}
+                >
+                  <Text style={styles.fundButtonText}>Add Money</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  ), [showAddMoney, amount, paymentMethods, selectedMethod, handleAddMoney]);
+
+  // Render Modal - Withdraw
+  const renderWithdrawModal = useCallback(() => (
+    <Modal
+      visible={showWithdraw}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowWithdraw(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, styles.addMoneyModal]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Withdraw</Text>
+            <TouchableOpacity onPress={() => setShowWithdraw(false)}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.addMoneyContent}>
+              <View style={styles.withdrawBalanceInfo}>
+                <Text style={styles.withdrawBalanceLabel}>Available Balance</Text>
+                <Text style={styles.withdrawBalanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
+              </View>
+
+              <Text style={styles.addMoneyLabel}>Amount to Withdraw</Text>
+              <TextInput
+                style={styles.amountInput}
+                placeholder="Enter amount"
+                placeholderTextColor="#8A8AAE"
+                keyboardType="numeric"
+                value={amount}
+                onChangeText={setAmount}
+              />
+
+              <Text style={styles.addMoneyLabel}>Withdraw To</Text>
+              {paymentMethods.map((method) => (
+                <PaymentMethodItem 
+                  key={method.id} 
+                  method={method} 
+                  isSelected={selectedMethod === method.id}
+                  onSelect={setSelectedMethod}
+                />
+              ))}
+
+              <TouchableOpacity style={styles.fundButton} onPress={handleWithdraw}>
+                <LinearGradient
+                  colors={['#4A7DFF', '#6B94FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.fundGradient}
+                >
+                  <Text style={styles.fundButtonText}>Withdraw</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  ), [showWithdraw, amount, walletBalance, paymentMethods, selectedMethod, handleWithdraw]);
+
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
 
   if (!isAuthenticated) {
     return <GuestPayView navigation={navigation} />;
   }
 
+  if (loading) {
+    return (
+      <View style={[styles.loadingContainer, isDesktop && styles.desktopContainer]}>
+        <PayScreenSkeleton />
+      </View>
+    );
+  }
+
+  // --- Desktop View ---
+  if (isDesktop) {
+    return (
+      <View style={styles.desktopContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+        
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopHeaderTitle}>Pay</Text>
+          <Text style={styles.desktopHeaderSubtitle}>Manage your payments and wallet</Text>
+        </View>
+
+        <ScrollView 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.desktopScrollContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
+          }
+        >
+          <View style={styles.desktopGrid}>
+            {/* Left Column */}
+            <View style={styles.desktopLeftColumn}>
+              {/* Balance Card */}
+              <View style={styles.desktopBalanceCard}>
+                <LinearGradient
+                  colors={['#4A7DFF', '#6B94FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.balanceGradient}
+                >
+                  <Text style={styles.balanceLabel}>Available Balance</Text>
+                  <Text style={styles.balanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
+                  <View style={styles.balanceActions}>
+                    <TouchableOpacity style={styles.balanceAction} onPress={() => setShowAddMoney(true)}>
+                      <Ionicons name="add-circle-outline" size={20} color="#FFFFFF" />
+                      <Text style={styles.balanceActionText}>Add Money</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.balanceAction} onPress={() => setShowWithdraw(true)}>
+                      <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" />
+                      <Text style={styles.balanceActionText}>Withdraw</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.balanceAction} onPress={() => setShowCheckout(true)}>
+                      <Ionicons name="cart-outline" size={20} color="#FFFFFF" />
+                      <Text style={styles.balanceActionText}>Checkout</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.balanceAction} onPress={() => setShowTransactions(true)}>
+                      <Ionicons name="list-outline" size={20} color="#FFFFFF" />
+                      <Text style={styles.balanceActionText}>History</Text>
+                    </TouchableOpacity>
+                  </View>
+                </LinearGradient>
+              </View>
+
+              {/* Payment Methods */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Payment Methods</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.sectionAction}>Manage</Text>
+                  </TouchableOpacity>
+                </View>
+                {paymentMethods.map((method) => (
+                  <PaymentMethodItem 
+                    key={method.id} 
+                    method={method} 
+                    isSelected={selectedMethod === method.id}
+                    onSelect={setSelectedMethod}
+                  />
+                ))}
+              </View>
+            </View>
+
+            {/* Right Column */}
+            <View style={styles.desktopRightColumn}>
+              {/* Quick Actions */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Quick Actions</Text>
+                <PayOptionCard
+                  icon="🛒"
+                  title="Checkout"
+                  description={`Pay for ${cartItems.length} items`}
+                  onPress={() => setShowCheckout(true)}
+                  badge={cartItems.length > 0 ? cartItems.length.toString() : undefined}
+                />
+                <PayOptionCard
+                  icon="📊"
+                  title="Transactions"
+                  description={`${transactions.length} transactions`}
+                  onPress={() => setShowTransactions(true)}
+                />
+                <PayOptionCard
+                  icon="💳"
+                  title="Payment Methods"
+                  description={`${paymentMethods.length} methods available`}
+                  onPress={() => Alert.alert('Payment Methods', 'Manage your payment methods')}
+                />
+                <PayOptionCard
+                  icon="📱"
+                  title="Mobile Money"
+                  description="MTN, Airtel & more"
+                  onPress={() => Alert.alert('Mobile Money', 'Manage mobile money accounts')}
+                />
+              </View>
+
+              {/* Recent Transactions */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Recent Transactions</Text>
+                  <TouchableOpacity onPress={() => setShowTransactions(true)}>
+                    <Text style={styles.sectionAction}>View All</Text>
+                  </TouchableOpacity>
+                </View>
+                {transactions.slice(0, 3).map((item) => (
+                  <TransactionItem key={item.id} item={item} />
+                ))}
+                {transactions.length === 0 && (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyIcon}>📭</Text>
+                    <Text style={styles.emptyTitle}>No transactions</Text>
+                    <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+
+        {/* Modals */}
+        {renderCheckoutModal()}
+        {renderTransactionsModal()}
+        {renderAddMoneyModal()}
+        {renderWithdrawModal()}
+      </View>
+    );
+  }
+
+  // --- Mobile View ---
   return (
     <SafeAreaView style={styles.mobileContainer}>
       <StatusBar barStyle="light-content" />
 
       <View style={styles.mobileHeader}>
         <Text style={styles.mobileHeaderTitle}>Pay</Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerIcon}>
+            <Ionicons name="search-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerIcon}>
+            <Ionicons name="options-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView 
         style={styles.hubContainer}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.hubContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
+        }
       >
         {/* Balance Card */}
         <View style={styles.balanceCard}>
@@ -330,13 +1223,13 @@ const MobilePayContent = ({ navigation }: any) => {
                 <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" />
                 <Text style={styles.balanceActionText}>Withdraw</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.balanceAction}>
-                <Ionicons name="swap-horizontal-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.balanceActionText}>Send</Text>
+              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowCheckout(true)}>
+                <Ionicons name="cart-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.balanceActionText}>Checkout</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.balanceAction}>
-                <Ionicons name="business-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.balanceActionText}>Bank</Text>
+              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowTransactions(true)}>
+                <Ionicons name="list-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.balanceActionText}>History</Text>
               </TouchableOpacity>
             </View>
           </LinearGradient>
@@ -366,19 +1259,20 @@ const MobilePayContent = ({ navigation }: any) => {
           <PayOptionCard
             icon="🛒"
             title="Checkout"
-            description="Pay for items and services"
+            description={`Pay for ${cartItems.length} items`}
             onPress={() => setShowCheckout(true)}
+            badge={cartItems.length > 0 ? cartItems.length.toString() : undefined}
           />
           <PayOptionCard
             icon="📊"
             title="Transactions"
-            description="View payment history"
+            description={`${transactions.length} transactions`}
             onPress={() => setShowTransactions(true)}
           />
           <PayOptionCard
             icon="💳"
             title="Payment Methods"
-            description="Manage cards and accounts"
+            description={`${paymentMethods.length} methods available`}
             onPress={() => Alert.alert('Payment Methods', 'Manage your payment methods')}
           />
           <PayOptionCard
@@ -397,325 +1291,32 @@ const MobilePayContent = ({ navigation }: any) => {
               <Text style={styles.sectionAction}>View All</Text>
             </TouchableOpacity>
           </View>
-          {recentTransactions.slice(0, 3).map((item) => (
+          {transactions.slice(0, 3).map((item) => (
             <TransactionItem key={item.id} item={item} />
           ))}
+          {transactions.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>📭</Text>
+              <Text style={styles.emptyTitle}>No transactions</Text>
+              <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 
       {/* Modals */}
-      {renderModals({ 
-        showCheckout, setShowCheckout, 
-        showTransactions, setShowTransactions,
-        showAddMoney, setShowAddMoney,
-        showWithdraw, setShowWithdraw,
-        selectedMethod, setSelectedMethod,
-        selectedFilter, setSelectedFilter,
-        amount, setAmount,
-        paymentMethods 
-      })}
+      {renderCheckoutModal()}
+      {renderTransactionsModal()}
+      {renderAddMoneyModal()}
+      {renderWithdrawModal()}
     </SafeAreaView>
   );
 };
 
-// --- Modal Renderer ---
-const renderModals = ({ 
-  showCheckout, setShowCheckout, 
-  showTransactions, setShowTransactions,
-  showAddMoney, setShowAddMoney,
-  showWithdraw, setShowWithdraw,
-  selectedMethod, setSelectedMethod,
-  selectedFilter, setSelectedFilter,
-  amount, setAmount,
-  paymentMethods 
-}: any) => (
-  <>
-    {renderCheckoutModal({ showCheckout, setShowCheckout, selectedMethod, setSelectedMethod, paymentMethods })}
-    {renderTransactionsModal({ showTransactions, setShowTransactions, selectedFilter, setSelectedFilter })}
-    {renderAddMoneyModal({ showAddMoney, setShowAddMoney, amount, setAmount })}
-    {renderWithdrawModal({ showWithdraw, setShowWithdraw, selectedMethod, setSelectedMethod, amount, setAmount, paymentMethods })}
-  </>
-);
+// ============================================================
+// EXPORT
+// ============================================================
 
-// --- Modal Components ---
-const renderCheckoutModal = ({ showCheckout, setShowCheckout, selectedMethod, setSelectedMethod, paymentMethods }: any) => (
-  <Modal
-    visible={showCheckout}
-    transparent={true}
-    animationType="slide"
-    onRequestClose={() => setShowCheckout(false)}
-  >
-    <View style={styles.modalOverlay}>
-      <View style={styles.modalContent}>
-        <View style={styles.modalHeader}>
-          <TouchableOpacity onPress={() => setShowCheckout(false)}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={styles.modalTitle}>Checkout</Text>
-          <TouchableOpacity onPress={() => setShowCheckout(false)}>
-            <Ionicons name="close" size={24} color="#8A8AAE" />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.checkoutContent}>
-          <View style={styles.checkoutSection}>
-            <Text style={styles.checkoutSectionTitle}>Delivery Address</Text>
-            <View style={styles.addressCard}>
-              <Text style={styles.addressName}>John Doe</Text>
-              <Text style={styles.addressLine}>123 Main Street, Jinja</Text>
-              <Text style={styles.addressLine}>Central Region, Uganda</Text>
-              <Text style={styles.addressPhone}>+256 700 000 000</Text>
-            </View>
-          </View>
-
-          <View style={styles.checkoutSection}>
-            <Text style={styles.checkoutSectionTitle}>Order Items</Text>
-            <View style={styles.orderItem}>
-              <View style={styles.orderItemImage} />
-              <View style={styles.orderItemInfo}>
-                <Text style={styles.orderItemName}>Samsung Galaxy S25</Text>
-                <Text style={styles.orderItemVariation}>128GB • Phantom Black</Text>
-                <Text style={styles.orderItemPrice}>UGX 2,850,000</Text>
-              </View>
-              <Text style={styles.orderItemQty}>x1</Text>
-            </View>
-            <View style={styles.orderItem}>
-              <View style={styles.orderItemImage} />
-              <View style={styles.orderItemInfo}>
-                <Text style={styles.orderItemName}>Phone Charger Type-C</Text>
-                <Text style={styles.orderItemVariation}>Original Samsung</Text>
-                <Text style={styles.orderItemPrice}>UGX 45,000</Text>
-              </View>
-              <Text style={styles.orderItemQty}>x2</Text>
-            </View>
-          </View>
-
-          <View style={styles.checkoutSection}>
-            <Text style={styles.checkoutSectionTitle}>Price Summary</Text>
-            <View style={styles.priceRow}>
-              <Text style={styles.priceLabel}>Subtotal</Text>
-              <Text style={styles.priceValue}>UGX 2,940,000</Text>
-            </View>
-            <View style={styles.priceRow}>
-              <Text style={styles.priceLabel}>Delivery Fee</Text>
-              <Text style={styles.priceValue}>UGX 15,000</Text>
-            </View>
-            <View style={styles.priceRow}>
-              <Text style={styles.priceLabel}>Wallet Savings</Text>
-              <Text style={[styles.priceValue, { color: '#2ECC71' }]}>- UGX 147,000</Text>
-            </View>
-            <View style={[styles.priceRow, styles.priceTotal]}>
-              <Text style={styles.priceTotalLabel}>Total</Text>
-              <Text style={styles.priceTotalValue}>UGX 2,808,000</Text>
-            </View>
-          </View>
-
-          <View style={styles.checkoutSection}>
-            <Text style={styles.checkoutSectionTitle}>Payment Method</Text>
-            {paymentMethods.map((method: any) => (
-              <PaymentMethodItem 
-                key={method.id} 
-                method={method} 
-                isSelected={selectedMethod === method.id}
-                onSelect={setSelectedMethod}
-              />
-            ))}
-          </View>
-
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
-
-        <View style={styles.stickyCheckoutBar}>
-          <View style={styles.checkoutTotalPreview}>
-            <Text style={styles.checkoutTotalLabel}>Total</Text>
-            <Text style={styles.checkoutTotalAmount}>UGX 2,808,000</Text>
-          </View>
-          <TouchableOpacity style={styles.payNowButton}>
-            <LinearGradient
-              colors={['#4A7DFF', '#6B94FF']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.payNowGradient}
-            >
-              <Text style={styles.payNowText}>Pay Now</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  </Modal>
-);
-
-const renderTransactionsModal = ({ showTransactions, setShowTransactions, selectedFilter, setSelectedFilter }: any) => (
-  <Modal
-    visible={showTransactions}
-    transparent={true}
-    animationType="slide"
-    onRequestClose={() => setShowTransactions(false)}
-  >
-    <View style={styles.modalOverlay}>
-      <View style={styles.modalContent}>
-        <View style={styles.modalHeader}>
-          <TouchableOpacity onPress={() => setShowTransactions(false)}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={styles.modalTitle}>Transactions</Text>
-          <TouchableOpacity onPress={() => setShowTransactions(false)}>
-            <Ionicons name="close" size={24} color="#8A8AAE" />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterContainer}
-          contentContainerStyle={styles.filterContent}
-        >
-          {transactionFilters.map((filter) => (
-            <TouchableOpacity
-              key={filter}
-              style={[
-                styles.filterChip,
-                selectedFilter === filter && styles.filterChipActive,
-              ]}
-              onPress={() => setSelectedFilter(filter)}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  selectedFilter === filter && styles.filterChipTextActive,
-                ]}
-              >
-                {filter}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        <FlatList
-          data={recentTransactions}
-          renderItem={({ item }) => <TransactionItem item={item} />}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.transactionsList}
-          showsVerticalScrollIndicator={false}
-        />
-      </View>
-    </View>
-  </Modal>
-);
-
-const renderAddMoneyModal = ({ showAddMoney, setShowAddMoney, amount, setAmount }: any) => (
-  <Modal
-    visible={showAddMoney}
-    transparent={true}
-    animationType="slide"
-    onRequestClose={() => setShowAddMoney(false)}
-  >
-    <View style={styles.modalOverlay}>
-      <View style={[styles.modalContent, styles.addMoneyModal]}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Add Money</Text>
-          <TouchableOpacity onPress={() => setShowAddMoney(false)}>
-            <Ionicons name="close" size={24} color="#8A8AAE" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.addMoneyContent}>
-          <Text style={styles.addMoneyLabel}>Select Amount</Text>
-          <View style={styles.amountOptions}>
-            {[50000, 100000, 250000, 500000, 1000000].map((amt) => (
-              <TouchableOpacity
-                key={amt}
-                style={[styles.amountOption, parseInt(amount) === amt && styles.amountOptionSelected]}
-                onPress={() => setAmount(amt.toString())}
-              >
-                <Text style={[styles.amountOptionText, parseInt(amount) === amt && styles.amountOptionTextSelected]}>
-                  UGX {amt.toLocaleString()}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Text style={styles.addMoneyLabel}>Or Enter Amount</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="Enter amount"
-            placeholderTextColor="#8A8AAE"
-            keyboardType="numeric"
-            value={amount}
-            onChangeText={setAmount}
-          />
-
-          <TouchableOpacity style={styles.fundButton}>
-            <LinearGradient
-              colors={['#4A7DFF', '#6B94FF']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.fundGradient}
-            >
-              <Text style={styles.fundButtonText}>Add Money</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  </Modal>
-);
-
-const renderWithdrawModal = ({ showWithdraw, setShowWithdraw, selectedMethod, setSelectedMethod, amount, setAmount, paymentMethods }: any) => (
-  <Modal
-    visible={showWithdraw}
-    transparent={true}
-    animationType="slide"
-    onRequestClose={() => setShowWithdraw(false)}
-  >
-    <View style={styles.modalOverlay}>
-      <View style={[styles.modalContent, styles.addMoneyModal]}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Withdraw</Text>
-          <TouchableOpacity onPress={() => setShowWithdraw(false)}>
-            <Ionicons name="close" size={24} color="#8A8AAE" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.addMoneyContent}>
-          <Text style={styles.addMoneyLabel}>Select Destination</Text>
-          {paymentMethods.map((method: any) => (
-            <PaymentMethodItem 
-              key={method.id} 
-              method={method} 
-              isSelected={selectedMethod === method.id}
-              onSelect={setSelectedMethod}
-            />
-          ))}
-
-          <Text style={[styles.addMoneyLabel, { marginTop: 16 }]}>Amount to Withdraw</Text>
-          <TextInput
-            style={styles.amountInput}
-            placeholder="Enter amount"
-            placeholderTextColor="#8A8AAE"
-            keyboardType="numeric"
-            value={amount}
-            onChangeText={setAmount}
-          />
-
-          <TouchableOpacity style={styles.fundButton}>
-            <LinearGradient
-              colors={['#4A7DFF', '#6B94FF']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.fundGradient}
-            >
-              <Text style={styles.fundButtonText}>Withdraw</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  </Modal>
-);
-
-// --- Main PayScreen Component ---
 export const PayScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -727,18 +1328,92 @@ export const PayScreen = ({ navigation }: any) => {
       hideContextPanel={true}
       fullWidth={true}
     >
-      {isDesktop ? (
-        <DesktopPayContent navigation={navigation} />
-      ) : (
-        <MobilePayContent navigation={navigation} />
-      )}
+      <PayContent navigation={navigation} />
     </ResponsiveLayout>
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
   // ============================================================
-  // DESKTOP STYLES - DARK THEME
+  // SKELETON STYLES
+  // ============================================================
+  skeletonContainer: {
+    flex: 1,
+    padding: 16,
+    width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
+  },
+  skeletonBalanceCard: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    height: 160,
+  },
+  skeletonBalanceLabel: {
+    width: 120,
+    height: 14,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  skeletonBalanceAmount: {
+    width: 200,
+    height: 32,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+    marginBottom: 16,
+  },
+  skeletonBalanceActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  skeletonBalanceAction: {
+    width: 80,
+    height: 32,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+  },
+  skeletonSection: {
+    marginBottom: 20,
+  },
+  skeletonSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  skeletonSectionTitle: {
+    width: 120,
+    height: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+  },
+  skeletonSectionAction: {
+    width: 60,
+    height: 14,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+  },
+  skeletonPaymentMethod: {
+    height: 50,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  skeletonOptionCard: {
+    height: 60,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+
+  // ============================================================
+  // DESKTOP STYLES
   // ============================================================
   desktopContainer: {
     flex: 1,
@@ -796,6 +1471,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#1F2F5F',
   },
   mobileHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
@@ -808,10 +1486,26 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
   },
+  headerRight: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  headerIcon: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
 
   // ============================================================
-  // SHARED STYLES - DARK THEME
+  // SHARED STYLES
   // ============================================================
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1F2F5F',
+  },
+
   // Guest Mode
   guestContainer: {
     flex: 1,
@@ -962,6 +1656,18 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
   },
+  optionBadge: {
+    backgroundColor: '#4A7DFF',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginRight: 8,
+  },
+  optionBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 
   // Transaction Item
   transactionItem: {
@@ -976,7 +1682,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -1011,6 +1716,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
   },
+  transactionReference: {
+    color: '#8A8AAE',
+    fontSize: 11,
+    marginTop: 2,
+  },
   transactionAmount: {
     fontSize: 14,
     fontWeight: '600',
@@ -1037,19 +1747,23 @@ const styles = StyleSheet.create({
   },
   paymentMethodContent: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
   },
   paymentMethodName: {
     color: '#FFFFFF',
     fontSize: 14,
+  },
+  paymentMethodDetail: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
   },
   defaultBadge: {
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
+    alignSelf: 'flex-start',
+    marginTop: 2,
   },
   defaultBadgeText: {
     color: '#4A7DFF',
@@ -1082,6 +1796,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 20,
   },
+  transactionsModal: {
+    height: height * 0.9,
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1110,25 +1827,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 8,
   },
-  addressCard: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 10,
-    padding: 12,
-  },
-  addressName: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  addressLine: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  addressPhone: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    marginTop: 4,
-  },
   orderItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1143,6 +1841,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: 'rgba(255,255,255,0.05)',
     marginRight: 10,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  orderItemImageActual: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 8,
   },
   orderItemInfo: {
     flex: 1,
@@ -1152,7 +1858,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  orderItemVariation: {
+  orderItemShop: {
     color: '#8A8AAE',
     fontSize: 12,
   },
@@ -1270,10 +1976,11 @@ const styles = StyleSheet.create({
 
   // Add Money / Withdraw
   addMoneyModal: {
-    height: height * 0.7,
+    height: height * 0.75,
   },
   addMoneyContent: {
     paddingTop: 8,
+    paddingBottom: 20,
   },
   addMoneyLabel: {
     color: '#FFFFFF',
@@ -1316,6 +2023,7 @@ const styles = StyleSheet.create({
   },
   fundButton: {
     width: '100%',
+    marginTop: 8,
   },
   fundGradient: {
     paddingVertical: 14,
@@ -1326,5 +2034,45 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // Withdraw
+  withdrawBalanceInfo: {
+    backgroundColor: 'rgba(74, 125, 255, 0.1)',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(74, 125, 255, 0.2)',
+  },
+  withdrawBalanceLabel: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  withdrawBalanceAmount: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+
+  // Empty State
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  emptyIcon: {
+    fontSize: 40,
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  emptySubtext: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    marginTop: 4,
   },
 });

@@ -14,13 +14,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated,
+  useWindowDimensions,
 } from 'react-native';
 import { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { Opportunity } from '../../../services/feed.service';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const { width, height } = Dimensions.get('window');
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface AIBottomSheetProps {
   bottomSheetRef?: React.RefObject<BottomSheetModal | null>;
@@ -52,6 +53,9 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
   isDesktopView = false,
   visible = false,
 }) => {
+  const { width, height } = useWindowDimensions();
+  const isLargeScreen = width >= 768;
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -95,15 +99,24 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
     };
   }, [isLoading]);
 
-  // Quick suggestion chips
-  const suggestions: Suggestion[] = [
-    { icon: '⚖️', text: 'Compare similar', query: 'Compare this with similar products' },
-    { icon: '💰', text: 'Is it a good deal?', query: 'Is this a good deal?' },
-    { icon: '📋', text: 'Features', query: 'Tell me about the features' },
-    { icon: '⭐', text: 'Customer reviews', query: 'What do customers say?' },
-    { icon: '🚚', text: 'Delivery info', query: 'Tell me about delivery' },
-    { icon: '🛡️', text: 'Warranty', query: 'What warranty is offered?' },
-  ];
+  // Quick suggestion chips - responsive count
+  const getSuggestions = (): Suggestion[] => {
+    const allSuggestions: Suggestion[] = [
+      { icon: '⚖️', text: 'Compare similar', query: 'Compare this with similar products' },
+      { icon: '💰', text: 'Good deal?', query: 'Is this a good deal?' },
+      { icon: '📋', text: 'Features', query: 'Tell me about the features' },
+      { icon: '⭐', text: 'Reviews', query: 'What do customers say?' },
+      { icon: '🚚', text: 'Delivery', query: 'Tell me about delivery' },
+      { icon: '🛡️', text: 'Warranty', query: 'What warranty is offered?' },
+    ];
+    
+    // Show fewer suggestions on small screens
+    if (width < 380) return allSuggestions.slice(0, 3);
+    if (width < 500) return allSuggestions.slice(0, 4);
+    return allSuggestions;
+  };
+
+  const suggestions = getSuggestions();
 
   // Get AI response based on query
   const generateAIResponse = (query: string, opp: Opportunity): string => {
@@ -126,10 +139,10 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         `This ${category} is priced at ${currency} ${price.toLocaleString()}.\n\n` +
         `**Key Features:**\n${Object.entries(specs).map(([key, val]) => `• ${key}: ${val}`).join('\n') || '• No specifications listed'}\n\n` +
         `**Market Comparison:**\n` +
-        `• Similar products in this category typically range between ${currency} ${Math.round(price * 0.7).toLocaleString()} and ${currency} ${Math.round(price * 1.3).toLocaleString()}\n` +
+        `• Similar products typically range between ${currency} ${Math.round(price * 0.7).toLocaleString()} and ${currency} ${Math.round(price * 1.3).toLocaleString()}\n` +
         `• ${shopName} has a ${rating > 0 ? `${rating.toFixed(1)}⭐ rating` : 'good reputation'}\n` +
         `• Located in ${area}\n\n` +
-        `💡 **Verdict:** This product offers ${rating > 4.0 ? 'excellent' : 'good'} value for money.`;
+        `💡 **Verdict:** ${rating > 4.0 ? 'Excellent' : 'Good'} value for money.`;
     }
 
     // Good deal / Worth it
@@ -140,7 +153,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         `**Location:** ${area}\n` +
         `**Availability:** ${inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
         `**Value Score:** ${rating > 4.0 ? '🟢 Excellent' : rating > 3.0 ? '🟡 Good' : '🟠 Average'}\n\n` +
-        `💡 **Recommendation:** ${rating > 4.0 ? 'This is a great deal! Highly recommended based on seller reputation.' : rating > 3.0 ? 'This is a solid option at this price point.' : 'Consider comparing with other options before purchasing.'}`;
+        `💡 **Recommendation:** ${rating > 4.0 ? 'This is a great deal! Highly recommended.' : rating > 3.0 ? 'This is a solid option.' : 'Consider comparing with other options.'}`;
     }
 
     // Features / Specifications
@@ -166,7 +179,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         `**Seller Reputation:**\n` +
         `• ${shopName} has been rated by ${reviewCount > 0 ? reviewCount : 'no'} customers\n` +
         `• ${rating > 4.0 ? '✅ Highly trusted seller' : rating > 3.0 ? '✅ Reliable seller' : '⚠️ Consider reviewing feedback'}\n\n` +
-        `💡 **Tip:** Click the "Reviews" button to see detailed customer feedback and photos!`;
+        `💡 **Tip:** Click the "Reviews" button to see detailed customer feedback!`;
     }
 
     // Delivery / Shipping
@@ -179,7 +192,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         `**Shipping Options:**\n` +
         `• Standard delivery available\n` +
         `• Express delivery (contact seller)\n\n` +
-        `💡 Contact ${shopName} for specific delivery fees and scheduling.`;
+        `💡 Contact ${shopName} for specific delivery fees.`;
     }
 
     // Warranty / Guarantee
@@ -190,8 +203,8 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         `• ${shopName} ${rating > 4.0 ? 'premium' : 'standard'} seller guarantee\n\n` +
         `**Returns Policy:**\n` +
         `• ${rating > 4.0 ? '30-day' : '14-day'} return window\n` +
-        `• Condition: Must be in original packaging\n\n` +
-        `💡 Ask ${shopName} for specific warranty terms and conditions.`;
+        `• Must be in original packaging\n\n` +
+        `💡 Ask ${shopName} for specific warranty terms.`;
     }
 
     // Price / Cost
@@ -253,7 +266,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
       baseMessage += `\n\n${contextHint}`;
     }
     
-    baseMessage += `\n\n💡 **Try asking:**\n• "Compare this with similar products"\n• "Is this a good deal?"\n• "Tell me about the features"\n• "What do customers say?"`;
+    baseMessage += `\n\n💡 **Try asking:**\n• "Compare similar"\n• "Is this a good deal?"\n• "Tell me about features"\n• "What do customers say?"`;
     
     return baseMessage;
   };
@@ -505,9 +518,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
               end={{ x: 1, y: 1 }}
               style={styles.desktopSendGradient}
             >
-              <Text style={styles.desktopSendButtonText}>
-                <Ionicons name="send" size={18} color="#FFFFFF" />
-              </Text>
+              <Ionicons name="send" size={18} color="#FFFFFF" />
             </LinearGradient>
           </TouchableOpacity>
         </View>
@@ -518,6 +529,8 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
   // ============================================================
   // MOBILE VIEW - Use Modal with BottomSheet
   // ============================================================
+  const modalHeight = height * (isLargeScreen ? 0.7 : 0.8);
+
   return (
     <Modal
       visible={visible}
@@ -530,7 +543,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <TouchableOpacity style={styles.mobileBackdrop} onPress={onClose} activeOpacity={1} />
-        <View style={styles.mobileModalContent}>
+        <View style={[styles.mobileModalContent, { height: modalHeight }]}>
           {/* Drag Indicator */}
           <View style={styles.mobileDragIndicatorContainer}>
             <View style={styles.mobileDragIndicator} />
@@ -604,7 +617,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
                 )}
               </ScrollView>
 
-              {/* Suggestions */}
+              {/* Suggestions - Responsive */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -868,9 +881,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  desktopSendButtonText: {
-    color: '#FFFFFF',
-  },
 
   // ============================================================
   // MOBILE STYLES
@@ -887,7 +897,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A2A4F',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: height * 0.75,
     paddingHorizontal: 16,
     paddingBottom: 8,
   },

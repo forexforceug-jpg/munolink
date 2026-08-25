@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TabNavigator } from './TabNavigator';
 import { ShopProfileScreen } from '../features/shop/ShopProfileScreen';
 import { SearchScreen } from '../features/search/SearchScreen';
+import { SearchResultsScreen } from '../features/search/SearchResultsScreen';
 import { JoinScreen } from '../features/auth/JoinScreen';
 import { SignInScreen } from '../features/auth/SignInScreen';
 import { BusinessRegistrationWizard } from '../features/business/BusinessRegistrationWizard';
@@ -19,6 +20,11 @@ export type RootStackParamList = {
   SignIn: undefined;
   ShopProfile: { shopId: string; shopName?: string };
   Search: undefined;
+  SearchResults: {
+    results: any[];
+    query: string;
+    initialIndex?: number;
+  };
   Explore: undefined;
   BusinessRegistration: undefined;
   BusinessDashboard: undefined;
@@ -49,8 +55,15 @@ export const RootNavigator = () => {
       
       {/* Business Screens */}
       <Stack.Screen name="ShopProfile" component={ShopProfileScreen} />
+      
+      {/* Search Screens */}
       <Stack.Screen name="Search" component={SearchScreen} />
+      <Stack.Screen name="SearchResults" component={SearchResultsScreen} />
+      
+      {/* Explore */}
       <Stack.Screen name="Explore" component={ExploreScreen} />
+      
+      {/* Business Registration */}
       <Stack.Screen name="BusinessRegistration" component={BusinessRegistrationWizard} />
       <Stack.Screen name="BusinessDashboard" component={BusinessDashboardScreen} />
     </Stack.Navigator>

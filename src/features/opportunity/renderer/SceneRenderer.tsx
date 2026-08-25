@@ -9,6 +9,7 @@ import {
   TouchableOpacity, 
   Dimensions,
   PanResponder,
+  Platform,
 } from 'react-native';
 import { Scene } from '../types/Scene';
 import { HeroScene } from '../scenes/HeroScene';
@@ -20,13 +21,36 @@ import { Ionicons } from '@expo/vector-icons';
 
 const { width: screenWidth } = Dimensions.get('window');
 
+// ============================================================
+// TYPES
+// ============================================================
+
+export type NavigationSource = 'autoplay' | 'swipe' | 'tap' | 'arrow';
+
+export interface SceneViewEvent {
+  sceneIndex: number;
+  sceneType: string;
+  timeSpent: number;
+  source?: NavigationSource;
+}
+
+export interface BehavioralEvent {
+  type: 'scene_view' | 'scene_navigation' | 'opportunity_open' | 'opportunity_close' | 'gallery_interaction' | 'action_trigger';
+  sceneIndex?: number;
+  sceneType?: string;
+  timeSpent?: number;
+  source?: NavigationSource;
+  action?: string;
+}
+
 interface Props {
   scenes: Scene[];
-  onSceneChange?: (index: number) => void;
+  onSceneChange?: (index: number, source?: NavigationSource) => void;
   onPrimaryAction?: () => void;
   onShare?: () => void;
   onSave?: () => void;
   onShowMore?: () => void;
+  onBehavioralEvent?: (event: BehavioralEvent) => void;
   width?: number;
   height?: number;
   autoPlay?: boolean;
@@ -40,7 +64,15 @@ interface Props {
   area?: string | null;
   inStock?: boolean;
   currency?: string;
+  type?: 'product' | 'service' | 'event';
+  providerName?: string;  // ✅ Provider name for services
+  providerId?: string;
+  providerType?: 'individual' | 'institution';
 }
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
 
 export function SceneRenderer({ 
   scenes, 
@@ -49,6 +81,7 @@ export function SceneRenderer({
   onShare,
   onSave,
   onShowMore,
+  onBehavioralEvent,
   width = screenWidth, 
   height = 600,
   autoPlay = false,
@@ -62,106 +95,227 @@ export function SceneRenderer({
   area = null,
   inStock = true,
   currency = 'UGX',
+  type = 'product',
+  providerName = '',  // ✅ Provider name prop
+  providerId = '',
+  providerType = 'individual',
 }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progressAnim] = useState(new Animated.Value(0));
-  const [autoPlayTimer, setAutoPlayTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  
+  const autoPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sceneStartTimeRef = useRef<number>(Date.now());
+  const opportunityOpenTimeRef = useRef<number>(Date.now());
+  const isFirstSceneViewRef = useRef<boolean>(true);
   
   const flatListRef = useRef<any>(null);
 
-  const currentScene = scenes[currentIndex] || scenes[0];
+  // Safe check for empty scenes
+  if (!scenes || scenes.length === 0) {
+    return (
+      <View style={[styles.container, { width, height, justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={{ color: '#FFFFFF' }}>No scenes available</Text>
+      </View>
+    );
+  }
 
+  const currentScene = scenes[currentIndex] || scenes[0];
   const bottomPosition = isDesktop ? 30 : 100;
+
+  // ✅ Check if this is a service
+  const isService = type === 'service' || type === 'event';
+  
+  // ✅ Determine the display name with proper fallbacks
+  let displayName = shopName || 'Shop';
+  
+  if (isService) {
+    // For services: use providerName if available, then shopName, then fallback
+    displayName = providerName || shopName || 'Service Provider';
+  } else {
+    // For products: use shopName
+    displayName = shopName || 'Shop';
+  }
+  
+  // ✅ Availability text - different for products vs services
+  const availabilityText = isService 
+    ? (inStock ? 'Available' : 'Unavailable')
+    : (inStock ? 'In Stock' : 'Check Availability');
+  
+  const availabilityStyle = isService
+    ? (inStock ? styles.available : styles.unavailable)
+    : (inStock ? styles.inStock : styles.outOfStock);
+
+  // ✅ Debug log to verify provider name is passed
+  if (__DEV__ && isService) {
+    console.log(`📱 Service: "${title}" - Provider: "${providerName || 'undefined'}" - Display: "${displayName}"`);
+  }
+
+  // ============================================================
+  // BEHAVIORAL EVENT EMITTER
+  // ============================================================
+  
+  const emitBehavioralEvent = useCallback((event: BehavioralEvent) => {
+    if (onBehavioralEvent) {
+      onBehavioralEvent(event);
+    }
+    if (__DEV__) {
+      console.log('📊 Behavioral Event:', event);
+    }
+  }, [onBehavioralEvent]);
+
+  // ============================================================
+  // SCENE VIEW TRACKING
+  // ============================================================
+  
+  const trackSceneView = useCallback((index: number, source: NavigationSource = 'autoplay') => {
+    const scene = scenes[index];
+    if (!scene) return;
+    
+    const timeSpent = Date.now() - sceneStartTimeRef.current;
+    const event: BehavioralEvent = {
+      type: 'scene_view',
+      sceneIndex: index,
+      sceneType: scene.type || 'unknown',
+      timeSpent: timeSpent,
+      source: source,
+    };
+    
+    emitBehavioralEvent(event);
+    sceneStartTimeRef.current = Date.now();
+  }, [scenes, emitBehavioralEvent]);
+
+  // ============================================================
+  // OPPORTUNITY OPEN/CLOSE TRACKING
+  // ============================================================
+  
+  useEffect(() => {
+    const openEvent: BehavioralEvent = {
+      type: 'opportunity_open',
+      sceneIndex: 0,
+      sceneType: scenes[0]?.type || 'unknown',
+      source: 'tap',
+    };
+    emitBehavioralEvent(openEvent);
+    opportunityOpenTimeRef.current = Date.now();
+    sceneStartTimeRef.current = Date.now();
+    isFirstSceneViewRef.current = true;
+    
+    return () => {
+      const totalTimeSpent = Date.now() - opportunityOpenTimeRef.current;
+      const closeEvent: BehavioralEvent = {
+        type: 'opportunity_close',
+        timeSpent: totalTimeSpent,
+      };
+      emitBehavioralEvent(closeEvent);
+      
+      if (autoPlayTimerRef.current) {
+        clearTimeout(autoPlayTimerRef.current);
+        autoPlayTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // ============================================================
+  // NAVIGATION FUNCTIONS
+  // ============================================================
+  
+  const goToNextScene = useCallback((source: NavigationSource = 'autoplay') => {
+    if (scenes.length === 0) return;
+    trackSceneView(currentIndex, source);
+    const nextIndex = (currentIndex + 1) % scenes.length;
+    setCurrentIndex(nextIndex);
+    onSceneChange?.(nextIndex, source);
+    progressAnim.setValue(0);
+  }, [currentIndex, scenes.length, onSceneChange, trackSceneView, progressAnim]);
+
+  const goToPreviousScene = useCallback((source: NavigationSource = 'tap') => {
+    if (scenes.length === 0) return;
+    trackSceneView(currentIndex, source);
+    const prevIndex = (currentIndex - 1 + scenes.length) % scenes.length;
+    setCurrentIndex(prevIndex);
+    onSceneChange?.(prevIndex, source);
+    progressAnim.setValue(0);
+  }, [currentIndex, scenes.length, onSceneChange, trackSceneView, progressAnim]);
+
+  const goToScene = useCallback((index: number, source: NavigationSource = 'tap') => {
+    if (scenes.length === 0) return;
+    if (index === currentIndex) return;
+    trackSceneView(currentIndex, source);
+    setCurrentIndex(index);
+    onSceneChange?.(index, source);
+    progressAnim.setValue(0);
+  }, [currentIndex, scenes.length, onSceneChange, trackSceneView, progressAnim]);
+
+  // ============================================================
+  // TAP NAVIGATION
+  // ============================================================
+  
+  const handleTap = useCallback((event: any) => {
+    if (scenes.length <= 1) return;
+    const tapX = event.nativeEvent.locationX;
+    const containerWidth = width || screenWidth;
+    const tapThreshold = containerWidth * 0.3;
+    if (tapX < tapThreshold) {
+      if (currentIndex > 0) {
+        goToPreviousScene('tap');
+      }
+    } else if (tapX > containerWidth - tapThreshold) {
+      if (currentIndex < scenes.length - 1) {
+        goToNextScene('tap');
+      }
+    }
+  }, [currentIndex, scenes.length, width, goToPreviousScene, goToNextScene]);
+
+  // ============================================================
+  // AUTOPLAY LOGIC
+  // ============================================================
+  
+  const startAutoplay = useCallback(() => {
+    if (autoPlayTimerRef.current) {
+      clearTimeout(autoPlayTimerRef.current);
+      autoPlayTimerRef.current = null;
+    }
+    if (autoPlay && scenes.length > 1 && !isDragging) {
+      autoPlayTimerRef.current = setTimeout(() => {
+        goToNextScene('autoplay');
+      }, autoPlayInterval);
+    }
+  }, [autoPlay, scenes.length, isDragging, autoPlayInterval, goToNextScene]);
+
+  const stopAutoplay = useCallback(() => {
+    if (autoPlayTimerRef.current) {
+      clearTimeout(autoPlayTimerRef.current);
+      autoPlayTimerRef.current = null;
+    }
+  }, []);
+
+  // ============================================================
+  // EFFECTS
+  // ============================================================
+  
+  useEffect(() => {
+    if (autoPlay && scenes.length > 1) {
+      startAutoplay();
+    } else {
+      stopAutoplay();
+    }
+    return () => {
+      stopAutoplay();
+    };
+  }, [autoPlay, scenes.length, currentIndex, isDragging, startAutoplay, stopAutoplay]);
 
   useEffect(() => {
     setCurrentIndex(0);
     progressAnim.setValue(0);
-    if (autoPlayTimer) {
-      clearTimeout(autoPlayTimer);
-      setAutoPlayTimer(null);
-    }
-    onSceneChange?.(0);
-  }, [scenes, resetKey]);
-
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (_, gestureState) => {
-      return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
-    },
-    onPanResponderGrant: () => {
-      setIsDragging(true);
-      if (autoPlayTimer) {
-        clearTimeout(autoPlayTimer);
-        setAutoPlayTimer(null);
-      }
-    },
-    onPanResponderRelease: (_, gestureState) => {
-      setIsDragging(false);
-      const threshold = 50;
-      
-      if (gestureState.dx < -threshold && currentIndex < scenes.length - 1) {
-        goToNextScene();
-      } else if (gestureState.dx > threshold && currentIndex > 0) {
-        goToPreviousScene();
-      } else {
-        resumeAutoPlay();
-      }
-    },
-    onPanResponderTerminate: () => {
-      setIsDragging(false);
-      resumeAutoPlay();
-    },
-  });
-
-  const goToNextScene = useCallback(() => {
-    const nextIndex = (currentIndex + 1) % scenes.length;
-    setCurrentIndex(nextIndex);
-    onSceneChange?.(nextIndex);
-  }, [currentIndex, scenes.length, onSceneChange]);
-
-  const goToPreviousScene = useCallback(() => {
-    const prevIndex = (currentIndex - 1 + scenes.length) % scenes.length;
-    setCurrentIndex(prevIndex);
-    onSceneChange?.(prevIndex);
-  }, [currentIndex, scenes.length, onSceneChange]);
-
-  const goToScene = useCallback((index: number) => {
-    setCurrentIndex(index);
-    onSceneChange?.(index);
-  }, [onSceneChange]);
-
-  const resumeAutoPlay = useCallback(() => {
-    if (autoPlay && scenes.length > 1 && !autoPlayTimer) {
-      const timer = setTimeout(() => {
-        goToNextScene();
-      }, autoPlayInterval);
-      setAutoPlayTimer(timer);
-    }
-  }, [autoPlay, scenes.length, autoPlayInterval, goToNextScene, autoPlayTimer]);
-
-  useEffect(() => {
-    if (autoPlayTimer) {
-      clearTimeout(autoPlayTimer);
-      setAutoPlayTimer(null);
-    }
-
+    stopAutoplay();
+    onSceneChange?.(0, 'tap');
+    sceneStartTimeRef.current = Date.now();
+    isFirstSceneViewRef.current = true;
     if (autoPlay && scenes.length > 1) {
-      const timer = setTimeout(() => {
-        if (!isDragging) {
-          goToNextScene();
-        }
-      }, autoPlayInterval);
-      setAutoPlayTimer(timer);
+      startAutoplay();
     }
-
-    return () => {
-      if (autoPlayTimer) {
-        clearTimeout(autoPlayTimer);
-        setAutoPlayTimer(null);
-      }
-    };
-  }, [currentIndex, autoPlay, scenes.length, autoPlayInterval, goToNextScene, isDragging]);
+  }, [resetKey, scenes]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -171,8 +325,42 @@ export function SceneRenderer({
     }).start(() => {
       progressAnim.setValue(0);
     });
-  }, [currentIndex, autoPlayInterval]);
+  }, [currentIndex, autoPlayInterval, progressAnim]);
 
+  // ============================================================
+  // PAN RESPONDER (SWIPE)
+  // ============================================================
+  
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, gestureState) => {
+      return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+    },
+    onPanResponderGrant: () => {
+      setIsDragging(true);
+      stopAutoplay();
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      setIsDragging(false);
+      const threshold = 50;
+      if (gestureState.dx < -threshold && currentIndex < scenes.length - 1) {
+        goToNextScene('swipe');
+      } else if (gestureState.dx > threshold && currentIndex > 0) {
+        goToPreviousScene('swipe');
+      } else {
+        startAutoplay();
+      }
+    },
+    onPanResponderTerminate: () => {
+      setIsDragging(false);
+      startAutoplay();
+    },
+  });
+
+  // ============================================================
+  // RENDER SCENE
+  // ============================================================
+  
   const renderScene = () => {
     if (!currentScene) return null;
     
@@ -189,9 +377,36 @@ export function SceneRenderer({
         return (
           <ActionScene 
             scene={currentScene} 
-            onPrimaryAction={onPrimaryAction}
-            onShare={onShare}
-            onSave={onSave}
+            onPrimaryAction={() => {
+              const actionEvent: BehavioralEvent = {
+                type: 'action_trigger',
+                action: 'primary',
+                sceneIndex: currentIndex,
+                sceneType: currentScene.type,
+              };
+              emitBehavioralEvent(actionEvent);
+              onPrimaryAction?.();
+            }}
+            onShare={() => {
+              const actionEvent: BehavioralEvent = {
+                type: 'action_trigger',
+                action: 'share',
+                sceneIndex: currentIndex,
+                sceneType: currentScene.type,
+              };
+              emitBehavioralEvent(actionEvent);
+              onShare?.();
+            }}
+            onSave={() => {
+              const actionEvent: BehavioralEvent = {
+                type: 'action_trigger',
+                action: 'save',
+                sceneIndex: currentIndex,
+                sceneType: currentScene.type,
+              };
+              emitBehavioralEvent(actionEvent);
+              onSave?.();
+            }}
             width={width} 
             height={height} 
           />
@@ -201,15 +416,47 @@ export function SceneRenderer({
     }
   };
 
+  // ============================================================
+  // RENDER
+  // ============================================================
+  
+  const showNavArrows = isDesktop && Platform.OS === 'web';
+
   return (
     <View 
       style={[styles.container, { width, height }]}
       {...panResponder.panHandlers}
     >
+      {scenes.length > 1 && (
+        <View style={styles.tapContainer}>
+          <TouchableOpacity 
+            style={[styles.tapArea, styles.tapLeft]}
+            onPress={() => {
+              if (currentIndex > 0) {
+                goToPreviousScene('tap');
+              }
+            }}
+            activeOpacity={0.3}
+            accessible={false}
+          />
+          <TouchableOpacity 
+            style={[styles.tapArea, styles.tapRight]}
+            onPress={() => {
+              if (currentIndex < scenes.length - 1) {
+                goToNextScene('tap');
+              }
+            }}
+            activeOpacity={0.3}
+            accessible={false}
+          />
+        </View>
+      )}
+
       <View style={styles.sceneWrapper}>
         {renderScene()}
       </View>
 
+      {/* Bottom Container - Dots + Info */}
       <View style={[styles.bottomContainer, { bottom: bottomPosition }]}>
         <View style={styles.dotsContainer}>
           {scenes.map((_, index) => (
@@ -217,12 +464,9 @@ export function SceneRenderer({
               key={index}
               style={styles.dotWrapper}
               onPress={() => {
-                goToScene(index);
-                if (autoPlayTimer) {
-                  clearTimeout(autoPlayTimer);
-                  setAutoPlayTimer(null);
-                  resumeAutoPlay();
-                }
+                goToScene(index, 'tap');
+                stopAutoplay();
+                startAutoplay();
               }}
               activeOpacity={0.8}
             >
@@ -256,7 +500,8 @@ export function SceneRenderer({
           </Text>
 
           <View style={styles.metaRow}>
-            <Text style={styles.shopName}>{shopName}</Text>
+            {/* ✅ Show provider name for services, shop name for products */}
+            <Text style={styles.shopName}>{displayName}</Text>
             
             {rating !== null && rating !== undefined && rating > 0 && (
               <>
@@ -273,35 +518,30 @@ export function SceneRenderer({
             )}
             
             <Text style={styles.dotSeparator}>•</Text>
-            <Text style={[styles.availability, inStock ? styles.inStock : styles.outOfStock]}>
-              {inStock ? 'In Stock' : 'Check Availability'}
+            <Text style={[styles.availability, availabilityStyle]}>
+              {availabilityText}
             </Text>
           </View>
 
-          <TouchableOpacity onPress={onShowMore} activeOpacity={0.7}>
+          <TouchableOpacity 
+            onPress={() => {
+              const showMoreEvent: BehavioralEvent = {
+                type: 'action_trigger',
+                action: 'show_more',
+                sceneIndex: currentIndex,
+                sceneType: currentScene.type,
+              };
+              emitBehavioralEvent(showMoreEvent);
+              onShowMore?.();
+            }} 
+            activeOpacity={0.7}
+          >
             <Text style={styles.seeMoreText}>See more ›</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      <View style={styles.navigationArrows}>
-        <TouchableOpacity
-          style={[styles.arrowButton, styles.leftArrow]}
-          onPress={goToPreviousScene}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-back" size={28} color="rgba(255,255,255,0.7)" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.arrowButton, styles.rightArrow]}
-          onPress={goToNextScene}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-forward" size={28} color="rgba(255,255,255,0.7)" />
-        </TouchableOpacity>
-      </View>
-
+      {/* Scene Counter */}
       <View style={styles.sceneCounter}>
         <Text style={styles.sceneCounterText}>
           {currentIndex + 1} / {scenes.length}
@@ -310,6 +550,10 @@ export function SceneRenderer({
     </View>
   );
 }
+
+// ============================================================
+// STYLES
+// ============================================================
 
 const styles = StyleSheet.create({
   container: {
@@ -321,6 +565,21 @@ const styles = StyleSheet.create({
   sceneWrapper: {
     flex: 1,
   },
+  tapContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    zIndex: 10,
+  },
+  tapArea: {
+    flex: 1,
+    height: '100%',
+  },
+  tapLeft: {},
+  tapRight: {},
   bottomContainer: {
     position: 'absolute',
     left: 0,
@@ -414,6 +673,12 @@ const styles = StyleSheet.create({
   outOfStock: {
     color: '#E74C3C',
   },
+  available: {
+    color: '#2ECC71',
+  },
+  unavailable: {
+    color: '#E74C3C',
+  },
   seeMoreText: {
     color: '#FFFFFF',
     marginTop: 6,
@@ -422,36 +687,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.7)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
-  },
-  navigationArrows: {
-    position: 'absolute',
-    top: -240,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    zIndex: 15,
-    pointerEvents: 'box-none',
-  },
-  arrowButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    pointerEvents: 'auto',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  leftArrow: {
-    marginRight: 'auto',
-  },
-  rightArrow: {
-    marginLeft: 'auto',
   },
   sceneCounter: {
     position: 'absolute',

@@ -1,3 +1,5 @@
+// src/features/feed/components/SimpleDetailsModal.tsx
+
 import React from 'react';
 import {
   View,
@@ -20,7 +22,7 @@ interface SimpleDetailsModalProps {
   opportunity: Opportunity | null;
   onClose: () => void;
   isDesktopView?: boolean;
-  panelWidth?: number;  // ← NEW
+  panelWidth?: number;
 }
 
 export const SimpleDetailsModal: React.FC<SimpleDetailsModalProps> = ({
@@ -166,16 +168,23 @@ export const SimpleDetailsModal: React.FC<SimpleDetailsModalProps> = ({
   }
 
   // ============================================================
-  // MOBILE VIEW - Use Modal
+  // MOBILE VIEW - Transparent Glass Modal
   // ============================================================
   return (
     <Modal
       visible={visible}
       transparent={true}
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
+        {/* Transparent Glass Background */}
+        <TouchableOpacity 
+          style={styles.modalBackground} 
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        
         <View style={styles.modalContent}>
           {/* Drag Indicator */}
           <View style={styles.dragContainer}>
@@ -184,7 +193,7 @@ export const SimpleDetailsModal: React.FC<SimpleDetailsModalProps> = ({
 
           {/* Close Button */}
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Ionicons name="close" size={24} color="#8A8AAE" />
+            <Ionicons name="close" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
           <ScrollView
@@ -343,38 +352,52 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255,255,255,0.05)',
   },
   // ============================================================
-  // MOBILE STYLES (Modal)
+  // MOBILE STYLES - Transparent Glass (React Native compatible)
   // ============================================================
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'flex-end',
   },
+  modalBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   modalContent: {
-    backgroundColor: '#1A2A4F',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: height * 0.85,
+    backgroundColor: 'rgba(26, 42, 79, 0.92)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: height * 0.82,
     paddingHorizontal: 16,
     paddingBottom: 0,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 24,
+    elevation: 20,
   },
   dragContainer: {
     alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 4,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   dragBar: {
-    width: 36,
+    width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
   closeBtn: {
     position: 'absolute',
-    top: 12,
+    top: 10,
     right: 16,
     zIndex: 10,
-    padding: 4,
+    padding: 8,
   },
   // ============================================================
   // SHARED STYLES
@@ -390,8 +413,10 @@ const styles = StyleSheet.create({
   headerImage: {
     width: 80,
     height: 80,
-    borderRadius: 10,
+    borderRadius: 12,
     marginRight: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
   headerInfo: {
     flex: 1,
@@ -416,16 +441,18 @@ const styles = StyleSheet.create({
   providerSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 12,
     padding: 10,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.04)',
   },
   providerAvatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(74, 125, 255, 0.2)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
@@ -444,7 +471,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   providerDetail: {
-    color: '#8A8AAE',
+    color: 'rgba(255,255,255,0.5)',
     fontSize: 12,
     marginTop: 2,
   },
@@ -457,16 +484,16 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.04)',
     marginRight: 6,
   },
   chipLabel: {
-    color: '#8A8AAE',
+    color: 'rgba(255,255,255,0.4)',
     fontSize: 10,
     marginRight: 4,
   },
@@ -485,7 +512,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   sectionText: {
-    color: '#8A8AAE',
+    color: 'rgba(255,255,255,0.6)',
     fontSize: 13,
     lineHeight: 20,
   },
@@ -497,7 +524,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.03)',
   },
   specLabel: {
-    color: '#8A8AAE',
+    color: 'rgba(255,255,255,0.4)',
     fontSize: 12,
     textTransform: 'capitalize',
   },
@@ -520,16 +547,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(26, 42, 79, 0.95)',
     paddingHorizontal: 12,
     paddingTop: 10,
-    paddingBottom: 20,
+    paddingBottom: 24,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
+    borderTopColor: 'rgba(255,255,255,0.04)',
   },
   actionBtn: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.03)',
   },
   actionBtnText: {
     color: '#4A7DFF',

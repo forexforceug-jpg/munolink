@@ -9,6 +9,9 @@ export interface Opportunity {
   id: string;
   title: string;
   shopName: string;
+  savedCount?: number;
+  shareCount?: number;
+  distance?: number;
   shopId: string;
   price: number;
   currency: string;
@@ -21,15 +24,20 @@ export interface Opportunity {
   reviewCount: number | null;
   area: string | null;
   inStock: boolean;
-  distance?: string;
   category: string | null;
   type: 'product' | 'service' | 'event';
   createdAt?: string;
-  // Service-specific
   duration?: string | null;
   duration_minutes?: number | null;
-  // Product-specific
+  latitude?: number | null;
+  longitude?: number | null;
+  shopLatitude?: number | null;
+  shopLongitude?: number | null;
+  shopLogo?: string | null;
   brand?: string | null;
+  providerId?: string;
+  providerName?: string;
+  providerType?: 'individual' | 'institution';
 }
 
 // ============================================================
@@ -100,6 +108,8 @@ const MOCK_OPPORTUNITIES: Opportunity[] = [
     category: 'services',
     type: 'service',
     createdAt: new Date().toISOString(),
+    providerName: 'QuickFix Mobile',
+    providerType: 'individual',
   },
 ];
 
@@ -179,6 +189,9 @@ export const feedService = {
               type: 'product',
               createdAt: sp.created_at || new Date().toISOString(),
               brand: catalog.brand || null,
+              shopLatitude: shop.latitude || null,
+              shopLongitude: shop.longitude || null,
+              shopLogo: shop.logo_url || null,
             });
           }
         }
@@ -186,9 +199,10 @@ export const feedService = {
       }
 
       // ============================================================
-      // PART 2: FETCH SERVICES
+      // PART 2: FETCH SERVICES - FIXED WITHOUT TYPE RELATION
       // ============================================================
 
+      // ✅ Step 1: Get provider services
       const { data: providerServices, error: providerServicesError } = await supabase
         .from('provider_services')
         .select('*')
@@ -201,86 +215,111 @@ export const feedService = {
       } else if (providerServices && providerServices.length > 0) {
         console.log(`✅ Found ${providerServices.length} provider services`);
 
-        const serviceCatalogIds = filterNonNull(providerServices.map(ps => ps.service_id));
+        // ✅ Step 2: Get all service catalog items from the provider services
+        const serviceIds = filterNonNull(providerServices.map(ps => ps.service_id));
+        
         let serviceCatalogItems: any[] = [];
-        if (serviceCatalogIds.length > 0) {
+        if (serviceIds.length > 0) {
           const { data, error } = await supabase
             .from('service_catalog')
             .select('*')
-            .in('id', serviceCatalogIds);
-          if (!error && data) serviceCatalogItems = data;
+            .in('id', serviceIds);
+          if (!error && data) {
+            serviceCatalogItems = data;
+            console.log(`📚 Found ${serviceCatalogItems.length} service catalog items`);
+          } else {
+            console.error('❌ Error fetching service catalog:', error);
+          }
         }
 
-        // Get institutions
+        // ✅ Step 3: Get users for provider services
+        const userIds = filterNonNull(providerServices.map(ps => ps.user_id));
+        let users: any[] = [];
+        if (userIds.length > 0) {
+          const { data, error } = await supabase
+            .from('users')
+            .select('id, full_name, phone_number')
+            .in('id', userIds);
+          if (!error && data) users = data;
+        }
+
+        // ✅ Step 4: Get institutions for provider services
         const institutionIds = filterNonNull(providerServices.map(ps => ps.institution_id));
         let institutions: any[] = [];
         if (institutionIds.length > 0) {
           const { data, error } = await supabase
             .from('institutions')
-            .select('*')
+            .select('id, name, area, city, rating, review_count')
             .in('id', institutionIds);
           if (!error && data) institutions = data;
         }
 
-        // Get individual providers
-        const userIds = filterNonNull(providerServices.map(ps => ps.user_id));
-        let individualProviders: any[] = [];
-        if (userIds.length > 0) {
-          const { data, error } = await supabase
-            .from('individual_providers')
-            .select('*')
-            .in('id', userIds);
-          if (!error && data) individualProviders = data;
-        }
-
+        // ✅ Step 5: Build service opportunities
         for (const ps of providerServices) {
+          // Find the service catalog item
           const service = serviceCatalogItems.find(s => s.id === ps.service_id);
-          if (!service) continue;
+          if (!service) {
+            console.warn(`⚠️ No service catalog found for service_id: ${ps.service_id}`);
+            continue;
+          }
 
           let providerName = 'Service Provider';
+          let providerId = ps.user_id || ps.institution_id || 'unknown';
+          let providerType: 'individual' | 'institution' = 'individual';
           let providerRating = null;
           let providerReviewCount = null;
           let providerArea = null;
 
+          // Check if linked to institution
           if (ps.institution_id) {
             const inst = institutions.find(i => i.id === ps.institution_id);
             if (inst) {
               providerName = inst.name || 'Institution';
+              providerType = 'institution';
               providerRating = inst.rating;
               providerReviewCount = inst.review_count;
               providerArea = inst.area || inst.city;
+              console.log(`🏢 Institution service: ${service.name} by ${providerName}`);
             }
-          } else if (ps.user_id) {
-            const prov = individualProviders.find(i => i.id === ps.user_id);
-            if (prov) {
-              providerName = prov.full_name || prov.display_name || 'Service Provider';
-              providerRating = prov.rating;
-              providerReviewCount = prov.review_count;
-              providerArea = prov.city || prov.address;
+          } 
+          // Check if linked to user
+          else if (ps.user_id) {
+            const user = users.find(u => u.id === ps.user_id);
+            if (user) {
+              providerName = user.full_name || 'Service Provider';
+              providerType = 'individual';
+              console.log(`👤 User service: ${service.name} by ${providerName}`);
+            } else {
+              console.warn(`⚠️ No user found for user_id: ${ps.user_id}`);
             }
           }
 
           const serviceImages = service.images || [];
+          const serviceSpecs = service.specifications || {};
+
           serviceOpportunities.push({
             id: service.id,
             title: service.name || 'Service',
             shopName: providerName,
-            shopId: ps.user_id || ps.institution_id || 'unknown',
+            shopId: providerId,
             price: ps.price || 0,
             currency: 'UGX',
             imageUrl: serviceImages[0] || getPlaceholderImage(service.category, service.name),
             catalogImages: serviceImages,
             description: service.description || '',
-            specifications: service.specifications || {},
+            specifications: serviceSpecs,
             rating: providerRating || null,
             reviewCount: providerReviewCount || null,
             area: providerArea || null,
-            inStock: true,
+            inStock: ps.is_active || false,
             category: service.category || null,
             type: 'service',
             createdAt: ps.created_at || new Date().toISOString(),
             duration: service.duration || null,
             duration_minutes: service.duration_minutes || null,
+            providerId: providerId,
+            providerName: providerName,
+            providerType: providerType,
           });
         }
         console.log(`🔧 Found ${serviceOpportunities.length} services`);
@@ -290,10 +329,7 @@ export const feedService = {
       // PART 3: COMBINE AND RETURN
       // ============================================================
 
-      // Combine and shuffle to mix products and services
       const allOpportunities = [...productOpportunities, ...serviceOpportunities];
-      
-      // Shuffle for variety (mix products and services)
       const shuffled = shuffleArray(allOpportunities);
 
       if (shuffled.length === 0) {

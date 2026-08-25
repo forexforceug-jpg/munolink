@@ -41,6 +41,14 @@ import { mapItemType } from '../../utils/typeHelpers';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
 import { locationService } from '../../services/location.service';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  withSequence,
+  Easing,
+} from 'react-native-reanimated';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -56,10 +64,174 @@ const FEATURED_COUNT = 14;
 const GUEST_PROMPT_THRESHOLD = 3;
 const VIEWABILITY_CONFIG: ViewabilityConfig = {
   itemVisiblePercentThreshold: 50,
-  minimumViewTime: 100,
+  minimumViewTime: 300, // ✅ Increased to prevent rapid firing
 };
 
-// --- Main FeedScreen Component ---
+// ============================================================
+// 🎨 LOADING SKELETON COMPONENTS (Inline)
+// ============================================================
+
+// Shimmer Animation Hook
+const useShimmer = () => {
+  const shimmer = useSharedValue(0);
+  
+  useEffect(() => {
+    shimmer.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 800, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0, { duration: 800, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+  }, []);
+  
+  return shimmer;
+};
+
+// Skeleton Card Component
+const FeedSkeletonCard: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false }) => {
+  const shimmer = useShimmer();
+  
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: 0.3 + (shimmer.value * 0.4),
+  }));
+
+  const cardWidth = isDesktop ? 420 : screenWidth;
+  const cardHeight = isDesktop ? screenHeight : screenHeight;
+
+  return (
+    <View style={[styles.skeletonCard, { width: cardWidth, height: cardHeight }]}>
+      {/* Background */}
+      <View style={styles.skeletonBackground} />
+      
+      {/* Shimmer Overlay */}
+      <Animated.View style={[styles.skeletonShimmerOverlay, animatedStyle]}>
+        <LinearGradient
+          colors={[
+            'rgba(255,255,255,0)',
+            'rgba(255,255,255,0.05)',
+            'rgba(255,255,255,0)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.skeletonShimmerGradient}
+        />
+      </Animated.View>
+
+      {/* Content Placeholders */}
+      <View style={styles.skeletonContent}>
+        {/* Image Placeholder */}
+        <View style={styles.skeletonImage}>
+          <View style={styles.skeletonImageShimmer} />
+        </View>
+
+        {/* Title Placeholder */}
+        <View style={styles.skeletonTitleContainer}>
+          <View style={styles.skeletonTitle} />
+          <View style={[styles.skeletonTitle, { width: '60%' }]} />
+        </View>
+
+        {/* Price & Rating Placeholder */}
+        <View style={styles.skeletonPriceContainer}>
+          <View style={[styles.skeletonPrice, { width: 120 }]} />
+          <View style={[styles.skeletonRating, { width: 80 }]} />
+        </View>
+
+        {/* Shop Info Placeholder */}
+        <View style={styles.skeletonShopContainer}>
+          <View style={styles.skeletonShopIcon} />
+          <View style={[styles.skeletonShopName, { width: 100 }]} />
+        </View>
+
+        {/* Bottom Action Buttons Placeholder */}
+        <View style={styles.skeletonActionContainer}>
+          <View style={styles.skeletonActionButton} />
+          <View style={styles.skeletonActionButton} />
+          <View style={styles.skeletonActionButton} />
+        </View>
+      </View>
+
+      {/* Floating Action Rail Placeholder */}
+      <View style={[styles.skeletonRail, isDesktop && styles.skeletonRailDesktop]}>
+        <View style={styles.skeletonRailButton} />
+        <View style={styles.skeletonRailButton} />
+        <View style={styles.skeletonRailButton} />
+        <View style={styles.skeletonRailButton} />
+        <View style={styles.skeletonRailButton} />
+      </View>
+
+      {/* Desktop Navigation Arrows Placeholder */}
+      {isDesktop && (
+        <View style={styles.skeletonNavArrows}>
+          <View style={styles.skeletonNavArrow} />
+          <View style={styles.skeletonNavArrow} />
+        </View>
+      )}
+    </View>
+  );
+};
+
+// Main Feed Skeleton
+const FeedSkeleton: React.FC<{ count?: number; isDesktop?: boolean }> = ({ 
+  count = 1, 
+  isDesktop = false 
+}) => {
+  return (
+    <View style={styles.skeletonContainer}>
+      {Array.from({ length: count }).map((_, index) => (
+        <FeedSkeletonCard key={`skeleton-${index}`} isDesktop={isDesktop} />
+      ))}
+    </View>
+  );
+};
+
+// List Skeleton (with Top Bar)
+const FeedListSkeleton: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false }) => {
+  const shimmer = useShimmer();
+  
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: 0.3 + (shimmer.value * 0.4),
+  }));
+
+  // Don't show top bar on desktop (ResponsiveLayout handles it)
+  if (isDesktop) {
+    return <FeedSkeleton isDesktop={true} />;
+  }
+
+  return (
+    <View style={styles.skeletonListContainer}>
+      {/* Top Bar Skeleton */}
+      <View style={styles.skeletonTopBar}>
+        <View style={styles.skeletonLogo} />
+        <View style={styles.skeletonLocation} />
+        <View style={styles.skeletonSearch} />
+      </View>
+
+      {/* Shimmer on Top Bar */}
+      <Animated.View style={[styles.skeletonTopBarShimmer, animatedStyle]}>
+        <LinearGradient
+          colors={[
+            'rgba(255,255,255,0)',
+            'rgba(255,255,255,0.05)',
+            'rgba(255,255,255,0)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.skeletonShimmerGradient}
+        />
+      </Animated.View>
+
+      {/* Main Content Skeleton */}
+      <FeedSkeletonCard isDesktop={false} />
+    </View>
+  );
+};
+
+// ============================================================
+// MAIN FEED SCREEN COMPONENT
+// ============================================================
+
 export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
@@ -72,6 +244,9 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   // Location state
   const [userLocation, setUserLocation] = useState<string>('Detecting...');
   const [isLocationLoading, setIsLocationLoading] = useState(true);
+
+  // Track saved items per opportunity
+  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
 
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [selectedProductTitle, setSelectedProductTitle] = useState<string>('');
@@ -87,6 +262,9 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const [contextPanelView, setContextPanelView] = useState<'details' | 'reviews' | 'directions' | null>(null);
   const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false);
   const [hasAppliedRecommendations, setHasAppliedRecommendations] = useState(false);
+
+  // ✅ Track if we've already tracked the current view to prevent duplicates
+  const trackedViewRef = useRef<string>('');
 
   const {
     opportunities,
@@ -159,6 +337,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   // Reset recommendation flag when data changes
   useEffect(() => {
     setHasAppliedRecommendations(false);
+    trackedViewRef.current = ''; // Reset tracked view when data changes
   }, [data]);
 
   // Cleanup on unmount
@@ -182,12 +361,13 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
 
             if (result.length > 0) {
               for (const item of result.slice(0, 3)) {
-                await recommendationService.trackInteraction(
+                // ✅ Silent tracking - don't await to avoid blocking
+                recommendationService.trackInteraction(
                   user.id,
                   item.id,
                   'view',
                   mapItemType(item.type)
-                );
+                ).catch(() => {});
               }
             }
           } else {
@@ -210,11 +390,15 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     }
   }, [data, user?.id, isApplyingRecommendations, hasAppliedRecommendations, setOpportunities]);
 
-  // --- Track View ---
+  // --- Track View - Only track when opportunity changes ---
   const trackOpportunityView = useCallback(
     async (opportunity: RawOpportunity) => {
+      // ✅ Skip if already tracked this opportunity
+      if (trackedViewRef.current === opportunity.id) return;
+      
       if (user?.id) {
         try {
+          trackedViewRef.current = opportunity.id;
           await recommendationService.trackInteraction(
             user.id,
             opportunity.id,
@@ -239,7 +423,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     }
   }, [swipeCount, isAuthenticated, isGuest]);
 
-  // --- Viewable Items Handler ---
+  // --- Viewable Items Handler - Fixed to prevent duplicate tracking ---
   const viewableItemsChangedRef = useRef<((info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => void) | null>(null);
 
   useEffect(() => {
@@ -251,7 +435,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       const index = firstItem.index;
       
       if (index === null || index === undefined) return;
-      if (index === currentIndex || index < 0 || index >= uniqueOpportunities.length) return;
+      if (index === currentIndex) return; // ✅ Skip if same index
+      if (index < 0 || index >= uniqueOpportunities.length) return;
 
       setCurrentIndex(index);
 
@@ -394,18 +579,23 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         return;
       }
       if (user?.id && isLoved) {
+        setSavedItemsMap(prev => ({
+          ...prev,
+          [opportunity.id]: true
+        }));
+        // ✅ Silent tracking
         recommendationService.trackInteraction(
           user.id,
           opportunity.id,
           'save',
           mapItemType(opportunity.type)
-        );
+        ).catch(() => {});
       }
-      console.log(isLoved ? '❤️ Added to wishlist:' : '❤️ Removed from wishlist:', opportunity.title);
     },
     [isAuthenticated, navigation, user?.id]
   );
 
+  // Updated Save Handler
   const handleSavePress = useCallback(
     (opportunity: RawOpportunity) => {
       if (!isAuthenticated) {
@@ -419,18 +609,30 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         );
         return;
       }
+      
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      
+      const currentSaved = savedItemsMap[opportunity.id] || false;
+      const newSaved = !currentSaved;
+      
+      setSavedItemsMap(prev => ({
+        ...prev,
+        [opportunity.id]: newSaved
+      }));
+      
       if (user?.id) {
+        // ✅ Silent tracking
         recommendationService.trackInteraction(
           user.id,
           opportunity.id,
-          'save',
+          newSaved ? 'save' : 'unsave',
           mapItemType(opportunity.type)
-        );
+        ).catch(() => {});
       }
-      console.log('🔖 Saved:', opportunity.title);
+      
+      console.log(newSaved ? '🔖 Saved:' : '🔖 Unsaved:', opportunity.title);
     },
-    [isAuthenticated, navigation, user?.id]
+    [isAuthenticated, navigation, user?.id, savedItemsMap]
   );
 
   const handleFollowPress = useCallback(
@@ -466,12 +668,13 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
 
     if (isService) {
       if (user?.id) {
+        // ✅ Silent tracking
         recommendationService.trackInteraction(
           user.id,
           currentOpportunity.id,
           'booking',
           mapItemType(currentOpportunity.type)
-        );
+        ).catch(() => {});
       }
       Alert.alert(
         '📅 Booking Request',
@@ -488,12 +691,13 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       );
     } else {
       if (user?.id) {
+        // ✅ Silent tracking
         recommendationService.trackInteraction(
           user.id,
           currentOpportunity.id,
           'purchase',
           mapItemType(currentOpportunity.type)
-        );
+        ).catch(() => {});
       }
       Alert.alert(
         '🛒 Added to Cart',
@@ -564,104 +768,120 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     );
   }, [isDesktop, currentIndex, uniqueOpportunities.length, goToPrevious, goToNext]);
 
-  const renderItem = useCallback(
-    ({ item }: { item: RawOpportunity }) => {
-      const cardWidth = isDesktop ? 420 : width;
-      const cardHeight = isDesktop ? height : height;
+ // src/features/feed/FeedScreen.tsx
 
-      const normalizedOpportunity = OpportunityFormatter.format(item);
-      const engine = new SceneEngine(normalizedOpportunity);
-      const scenes = engine.compose();
+const renderItem = useCallback(
+  ({ item }: { item: RawOpportunity }) => {
+    const cardWidth = isDesktop ? 420 : width;
+    const cardHeight = isDesktop ? height : height;
 
-      return (
-        <View
-          style={{
-            height: isDesktop ? height : height,
-            paddingVertical: 0,
-            alignItems: 'center',
-            justifyContent: 'center',
+    const normalizedOpportunity = OpportunityFormatter.format(item);
+    const engine = new SceneEngine(normalizedOpportunity);
+    const scenes = engine.compose();
+
+    const isSaved = savedItemsMap[item.id] || false;
+    
+    // ✅ Determine if this is a service
+    const isService = item.type === 'service' || item.type === 'event';
+    
+    // ✅ For services, use provider name from the item
+    // Convert null to undefined to match the expected type
+    const providerName = isService 
+      ? (item.providerName || item.shopName || undefined)
+      : undefined;
+
+    return (
+      <View
+        style={{
+          height: isDesktop ? height : height,
+          paddingVertical: 0,
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        }}
+      >
+        <SceneRenderer
+          key={item.id}
+          scenes={scenes}
+          title={item.title}
+          price={item.price}
+          shopName={item.shopName}
+          rating={item.rating ?? undefined}
+          area={item.area ?? undefined}
+          inStock={item.inStock}
+          currency={item.currency || 'UGX'}
+          isDesktop={isDesktop}
+          // ✅ Pass type and provider name (converted to undefined instead of null)
+          type={item.type || 'product'}
+          providerName={providerName}
+          onPrimaryAction={() => {
+            navigation.navigate('ShopProfile', {
+              shopId: item.shopId,
+              shopName: item.shopName,
+            });
           }}
-        >
-          <SceneRenderer
-            key={item.id}
-            scenes={scenes}
-            title={item.title}
-            price={item.price}
-            shopName={item.shopName}
-            rating={item.rating ?? undefined}
-            area={item.area ?? undefined}
-            inStock={item.inStock}
-            currency={item.currency || 'UGX'}
-            isDesktop={isDesktop}
-            onPrimaryAction={() => {
+          onShare={() => {
+            handleSharePress(item);
+          }}
+          onSave={() => {
+            handleSavePress(item);
+          }}
+          onShowMore={() => {
+            handleShowMorePress(item);
+          }}
+          onSceneChange={(index) => {
+            if (__DEV__) {
+              console.log('Scene changed to:', index);
+            }
+          }}
+          width={cardWidth}
+          height={cardHeight}
+          autoPlay={false}
+          autoPlayInterval={9000}
+          resetKey={item.id}
+        />
+
+        {/* Each item has its own FloatingActionRail */}
+        <View style={styles.actionRailWrapper}>
+          <FloatingActionRail
+            key={`rail-${item.id}`}
+            opportunity={item}
+            onShopPress={(shopId) => {
               navigation.navigate('ShopProfile', {
-                shopId: item.shopId,
+                shopId,
                 shopName: item.shopName,
               });
             }}
-            onShare={() => {
-              handleSharePress(item);
-            }}
-            onSave={() => {
-              handleSavePress(item);
-            }}
-            onShowMore={() => {
-              handleShowMorePress(item);
-            }}
-            onSceneChange={(index) => {
-              console.log('Scene changed to:', index);
-            }}
-            width={cardWidth}
-            height={cardHeight}
-            autoPlay={false}
-            autoPlayInterval={9000}
-            resetKey={item.id}
+            onReviewsPress={(productId) => handleReviewsPress(productId, item.title)}
+            onDirectionsPress={handleDirectionsPress}
+            onSharePress={handleSharePress}
+            onAIPress={handleAIPress}
+            onSavePress={handleSavePress}
+            isSaved={isSaved}
+            savedCount={item.savedCount || 0}
+            shareCount={item.shareCount || 0}
+            reviewCount={item.reviewCount || 0}
+            distance={item.distance || 0}
+            shopLogo={item.shopLogo || null}
           />
         </View>
-      );
-    },
-    [
-      isDesktop,
-      width,
-      height,
-      navigation,
-      handleSharePress,
-      handleSavePress,
-      handleShowMorePress,
-    ]
-  );
-
-  const renderFloatingActions = useCallback(() => {
-    const currentOpportunity = uniqueOpportunities[currentIndex];
-    if (!currentOpportunity) return null;
-
-    return (
-      <FloatingActionRail
-        opportunity={currentOpportunity}
-        onShopPress={(shopId) => {
-          navigation.navigate('ShopProfile', {
-            shopId,
-            shopName: currentOpportunity.shopName,
-          });
-        }}
-        onReviewsPress={(productId) => handleReviewsPress(productId, currentOpportunity.title)}
-        onDirectionsPress={handleDirectionsPress}
-        onSharePress={handleSharePress}
-        onAIPress={handleAIPress}
-        onSavePress={handleSavePress}
-      />
+      </View>
     );
-  }, [
-    uniqueOpportunities,
-    currentIndex,
+  },
+  [
+    isDesktop,
+    width,
+    height,
     navigation,
-    handleReviewsPress,
     handleSharePress,
     handleSavePress,
-    handleAIPress,
+    handleShowMorePress,
+    handleReviewsPress,
     handleDirectionsPress,
-  ]);
-
+    handleAIPress,
+    savedItemsMap,
+  ]
+);
   const renderActionButton = useCallback(() => {
     if (!currentOpportunity) return null;
 
@@ -690,14 +910,27 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     );
   }, [currentOpportunity, handleAddToCart]);
 
-  // --- Loading States ---
+  // --- Loading States with Skeleton ---
   if (isLoading || queryLoading || isApplyingRecommendations) {
+    // If applying recommendations, show a simple loading state
+    if (isApplyingRecommendations) {
+      return (
+        <View style={[styles.centered, { height }]}>
+          <ActivityIndicator size="large" color="#4A7DFF" />
+          <Text style={[styles.loadingText, { fontSize: width < 380 ? 14 : 16 }]}>
+            Personalizing your feed...
+          </Text>
+        </View>
+      );
+    }
+
+    // Show beautiful skeleton loading
     return (
-      <View style={[styles.centered, { height }]}>
-        <ActivityIndicator size="large" color="#4A7DFF" />
-        <Text style={[styles.loadingText, { fontSize: width < 380 ? 14 : 16 }]}>
-          {isApplyingRecommendations ? 'Personalizing your feed...' : 'Loading opportunities...'}
-        </Text>
+      <View style={[styles.container, { height }]}>
+        <SafeAreaView style={{ flex: 1 }}>
+          <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+          <FeedListSkeleton isDesktop={isDesktop} />
+        </SafeAreaView>
       </View>
     );
   }
@@ -729,7 +962,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       onNavigate={(route) => {
         (navigation as any).navigate(route);
       }}
-      floatingActions={renderFloatingActions()}
       desktopNavArrows={renderDesktopNavArrows()}
       selectedOpportunity={uniqueOpportunities[currentIndex] || null}
       onReviewsPress={handleReviewsPress}
@@ -775,7 +1007,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
               >
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
-                    <Image source={require('../../../assets/logo.png')} style={styles.logoImage} resizeMode="contain" />
+                    <Image 
+                      source={require('../../../assets/logo.png')} 
+                      style={styles.logoImage} 
+                      resizeMode="contain" // ✅ Fixed: resizeMode as prop
+                    />
                   </TouchableOpacity>
 
                   <TouchableOpacity style={styles.locationContainer}>
@@ -820,7 +1056,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
               maxToRenderPerBatch={isDesktop ? 3 : 1}
               windowSize={isDesktop ? 5 : 2}
               onScrollToIndexFailed={() => {}}
-              scrollEventThrottle={16}
+              scrollEventThrottle={32} // ✅ Reduced for better performance
               style={{ flex: 1, backgroundColor: '#0D0D1A' }}
             />
 
@@ -885,6 +1121,10 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -918,7 +1158,6 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 130,
     height: 70,
-    resizeMode: 'contain',
   },
   locationContainer: {
     flexDirection: 'row',
@@ -993,6 +1232,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
   },
+  actionRailWrapper: {
+    position: 'absolute',
+    right: 16,
+    top: '50%',
+    transform: [{ translateY: -150 }],
+    zIndex: 50,
+  },
   buttonWrapper: {
     position: 'absolute',
     bottom: 220,
@@ -1008,10 +1254,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     width: 'auto',
     maxWidth: 160,
-    shadowColor: '#4A7DFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
+    // ✅ Fixed: Use boxShadow instead of shadow* props
+    boxShadow: '0 4px 10px rgba(74, 125, 255, 0.25)',
     elevation: 6,
   },
   actionButtonGradient: {
@@ -1027,5 +1271,178 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.3,
+  },
+
+  // ============================================================
+  // 🎨 SKELETON STYLES
+  // ============================================================
+  skeletonContainer: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+  },
+  skeletonCard: {
+    position: 'relative',
+    backgroundColor: '#0D0D1A',
+    overflow: 'hidden',
+  },
+  skeletonBackground: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#1A1A2E',
+  },
+  skeletonShimmerOverlay: {
+    ...StyleSheet.absoluteFill,
+  },
+  skeletonShimmerGradient: {
+    width: '100%',
+    height: '100%',
+  },
+  skeletonContent: {
+    flex: 1,
+    padding: 20,
+    justifyContent: 'center',
+  },
+  skeletonImage: {
+    width: '100%',
+    height: 200,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  skeletonImageShimmer: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  skeletonTitleContainer: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  skeletonTitle: {
+    height: 24,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+    width: '80%',
+  },
+  skeletonPriceContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  skeletonPrice: {
+    height: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+  },
+  skeletonRating: {
+    height: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+  },
+  skeletonShopContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  skeletonShopIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  skeletonShopName: {
+    height: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 4,
+  },
+  skeletonActionContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  skeletonActionButton: {
+    flex: 1,
+    height: 40,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 8,
+  },
+  skeletonRail: {
+    position: 'absolute',
+    right: 16,
+    top: '50%',
+    transform: [{ translateY: -150 }],
+    gap: 10,
+    alignItems: 'center',
+  },
+  skeletonRailDesktop: {
+    right: 24,
+    gap: 16,
+  },
+  skeletonRailButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  skeletonNavArrows: {
+    position: 'absolute',
+    right: 20,
+    bottom: 40,
+    gap: 12,
+    alignItems: 'center',
+  },
+  skeletonNavArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  skeletonListContainer: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+  },
+  skeletonTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 40,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(13, 13, 26, 0.95)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
+  skeletonTopBarShimmer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 80,
+    zIndex: 21,
+  },
+  skeletonLogo: {
+    width: 130,
+    height: 40,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 4,
+  },
+  skeletonLocation: {
+    width: 120,
+    height: 30,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+  },
+  skeletonSearch: {
+    width: 36,
+    height: 36,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 20,
   },
 });
