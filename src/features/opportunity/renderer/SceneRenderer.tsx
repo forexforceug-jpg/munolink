@@ -536,7 +536,7 @@ export function SceneRenderer({
             }} 
             activeOpacity={0.7}
           >
-            <Text style={styles.seeMoreText}>See more ›</Text>
+            <Text style={styles.seeMoreText}>See Details ›</Text>
           </TouchableOpacity>
         </View>
       </View>

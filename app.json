@@ -18,14 +18,49 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1F2F5F"
       },
-      "package": "com.munolink.app"
+      "package": "com.munolink.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Munolink to access your photos to upload products and services."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Munolink to access your location to find nearby businesses."
+        }
+      ],
+      "expo-splash-screen"
+    ],
+    "updates": {
+      "url": "https://u.expo.dev/66c0b4ea-66a4-4ad2-ac43-656091693882",
+      "fallbackToCacheTimeout": 0,
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "codeSigning": {
+        "certificateSecret": null
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "extra": {
       "eas": {
-        "projectId": "91ced7cf-a62a-4ec2-8508-5d422e703c54"
+        "projectId": "66c0b4ea-66a4-4ad2-ac43-656091693882"
       }
     }
   }

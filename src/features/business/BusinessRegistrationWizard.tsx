@@ -33,7 +33,14 @@ import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 const { width, height } = Dimensions.get('window');
-
+// At the top of BusinessRegistrationWizardContent
+const [phone, setPhone] = useState('');
+const [address, setAddress] = useState('');
+const [email, setEmail] = useState('');
+const [website, setWebsite] = useState('');
+const [firstName, setFirstName] = useState('');
+const [lastName, setLastName] = useState('');
+const [price, setPrice] = useState('');
 // --- Types ---
 type BusinessDocumentInsert = {
   business_id: string | null;
@@ -1286,78 +1293,81 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     }
   };
+// src/features/business/BusinessRegistrationWizard.tsx
+// --- Handle Submit ---
+const handleSubmit = async () => {
+  console.log('🚀 Starting business registration...');
+  
+  const userId = user?.id;
+  const userPhone = user?.phone || '';
+  
+  if (!userId) {
+    console.error('❌ No user ID available');
+    Alert.alert(
+      'Sign in required', 
+      'Please sign in first.',
+      [{ text: 'OK', onPress: () => navigation.navigate('SignIn') }]
+    );
+    return;
+  }
 
-  const handleSubmit = async () => {
-    console.log('🚀 Starting business registration...');
-    
-    const userId = user?.id;
-    const userPhone = user?.phone || '';
-    
-    if (!userId) {
-      console.error('❌ No user ID available');
-      Alert.alert(
-        'Sign in required', 
-        'Please sign in first.',
-        [{ text: 'OK', onPress: () => navigation.navigate('SignIn') }]
-      );
-      return;
-    }
+  const docRequirements = getDocumentRequirements();
+  const requiredDocs = docRequirements.filter(doc => doc.required);
+  const missingDocs = requiredDocs.filter(doc => !documents[doc.id]?.uploaded);
 
-    const docRequirements = getDocumentRequirements();
-    const requiredDocs = docRequirements.filter(doc => doc.required);
-    const missingDocs = requiredDocs.filter(doc => !documents[doc.id]?.uploaded);
+  if (missingDocs.length > 0) {
+    Alert.alert(
+      'Documents Required',
+      `Please upload: ${missingDocs.map(d => d.label).join(', ')}`,
+      [{ text: 'OK' }]
+    );
+    return;
+  }
 
-    console.log('📄 Required docs:', requiredDocs.map(d => d.id));
-    console.log('📄 Uploaded docs:', Object.keys(documents).filter(key => documents[key]?.uploaded));
-    console.log('📄 Missing docs:', missingDocs.map(d => d.id));
+  if (!businessType || !category) {
+    Alert.alert('Missing information', 'Please select a business type and category.');
+    return;
+  }
 
-    if (missingDocs.length > 0) {
-      Alert.alert(
-        'Documents Required',
-        `Please upload: ${missingDocs.map(d => d.label).join(', ')}`,
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+  setIsLoading(true);
 
-    if (!businessType || !category) {
-      Alert.alert('Missing information', 'Please select a business type and category.');
-      return;
-    }
+  try {
+    console.log('📝 Creating business for user:', userId);
 
-    setIsLoading(true);
+    // Ensure user exists
+    const { data: userById } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
 
-    try {
-      console.log('📝 Creating business for user:', userId);
-
-      const { data: userById } = await supabase
+    if (!userById) {
+      const { error: createUserError } = await supabase
         .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
+        .insert({
+          id: userId,
+          phone_number: userPhone || '',
+          full_name: user?.name || 'Munolink Member',
+          role: businessType === 'shop' ? 'shop_owner' : 
+                businessType === 'service' ? 'service_provider' : 
+                'institution_representative',
+          wallet_balance: 0,
+          lifetime_savings: 0,
+          kyc_verified: false,
+        });
 
-      if (!userById) {
-        console.log('📝 Creating user in users table...');
-        const { error: createUserError } = await supabase
-          .from('users')
-          .insert({
-            id: userId,
-            phone_number: userPhone || '',
-            full_name: user?.name || 'Munolink Member',
-            role: 'user',
-            wallet_balance: 0,
-            lifetime_savings: 0,
-            kyc_verified: false,
-          });
+      if (createUserError) throw createUserError;
+      console.log('✅ User created in users table');
+    }
 
-        if (createUserError) {
-          console.error('❌ Error creating user:', createUserError);
-          throw createUserError;
-        }
-        console.log('✅ User created in users table');
-      }
+    let businessId: string | null = null;
 
-      console.log('📝 Creating shop...');
+    // ============================================================
+    // SAVE TO RESPECTIVE TABLES
+    // ============================================================
+
+    if (businessType === 'shop') {
+      // ✅ Save to SHOPS table
       const { data: shopData, error: shopError } = await supabase
         .from('shops')
         .insert({
@@ -1366,7 +1376,7 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
           area: district || null,
           description: businessDescription.trim() || null,
           category: category,
-          business_type: businessType,
+          business_type: 'shop',
           business_settings: wizardAnswers as any,
           is_active: false,
           is_verified: false,
@@ -1376,103 +1386,167 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
         .select('id')
         .single();
 
-      if (shopError) {
-        console.error('❌ SHOP INSERT ERROR:', shopError);
-        throw shopError;
-      }
-
-      const businessId = shopData.id;
-      setShopId(businessId);
+      if (shopError) throw shopError;
+      businessId = shopData.id;
       console.log('✅ Shop created with ID:', businessId);
 
-      console.log('📝 Updating documents with business ID...');
-      const documentEntries = Object.entries(documents);
-      for (const [docType, docData] of documentEntries) {
-        if (docData.uploaded && docData.uri && docData.document_id) {
-          const { error: updateDocError } = await supabase
-            .from('business_documents')
-            .update({ business_id: businessId })
-            .eq('id', docData.document_id)
-            .eq('uploaded_by', userId);
-
-          if (updateDocError) {
-            console.error('Error updating document:', updateDocError);
-          } else {
-            console.log(`✅ Updated document ${docType} with business ID`);
-          }
-        }
-      }
-
-      console.log('📝 Creating verification request...');
-      const { error: verificationError } = await supabase
-        .from('verification_requests')
+    } else if (businessType === 'service') {
+      // ✅ Save to SERVICE_CATALOG + PROVIDER_SERVICES
+      
+      // Step 1: Create service catalog entry
+      const { data: serviceCatalog, error: catalogError } = await supabase
+        .from('service_catalog')
         .insert({
-          business_id: businessId,
-          requested_by: userId,
-          status: 'pending',
-          verification_type: 'business_verification',
-        });
+          name: businessName.trim(),
+          category: category,
+          description: businessDescription.trim() || null,
+          specifications: wizardAnswers as any,
+          is_active: true,
+        })
+        .select('id')
+        .single();
 
-      if (verificationError) {
-        console.error('❌ VERIFICATION INSERT ERROR:', verificationError);
-        throw verificationError;
-      }
+      if (catalogError) throw catalogError;
+      console.log('✅ Service catalog created with ID:', serviceCatalog.id);
 
-      console.log('✅ Verification request created');
+      // Step 2: Create provider service entry
+      const { data: providerService, error: providerError } = await supabase
+        .from('provider_services')
+        .insert({
+          user_id: userId,
+          service_id: serviceCatalog.id,
+          price: 0,
+          is_active: false,
+        })
+        .select('id')
+        .single();
 
-      const docCache: Record<string, any> = {};
-      for (const [docType, docData] of documentEntries) {
-        if (docData.uploaded && docData.document_id) {
-          docCache[docType] = {
-            document_id: docData.document_id,
-            uploaded_at: new Date().toISOString()
-          };
+      if (providerError) throw providerError;
+      businessId = providerService.id;
+      console.log('✅ Provider service created with ID:', businessId);
+
+    } else if (businessType === 'institution') {
+      // ✅ Save to INSTITUTIONS table
+      const { data: institutionData, error: institutionError } = await supabase
+        .from('institutions')
+        .insert({
+          name: businessName.trim(),
+          area: district || null,
+          description: businessDescription.trim() || null,
+          type: category,
+          city: district || null,
+          is_open: true,
+          is_verified: false,
+          rating: 0,
+          review_count: 0,
+          created_by: userId,
+          working_hours: wizardAnswers as any,
+        })
+        .select('id')
+        .single();
+
+      if (institutionError) throw institutionError;
+      businessId = institutionData.id;
+      console.log('✅ Institution created with ID:', businessId);
+    }
+
+    if (!businessId) {
+      throw new Error('Failed to create business record');
+    }
+
+    // ============================================================
+    // UPDATE DOCUMENTS WITH CORRECT BUSINESS ID
+    // ============================================================
+    console.log('📝 Updating documents with business ID...');
+    
+    const documentEntries = Object.entries(documents);
+    for (const [docType, docData] of documentEntries) {
+      if (docData.uploaded && docData.document_id) {
+        const updateData: any = {};
+        
+        // ✅ Set the correct foreign key based on business type
+        if (businessType === 'shop') {
+          updateData.business_id = businessId;
+        } else if (businessType === 'service') {
+          updateData.service_id = businessId;
+        } else if (businessType === 'institution') {
+          updateData.institution_id = businessId;
+        }
+        updateData.owner_type = businessType;
+
+        const { error: updateDocError } = await supabase
+          .from('business_documents')
+          .update(updateData)
+          .eq('id', docData.document_id)
+          .eq('uploaded_by', userId);
+
+        if (updateDocError) {
+          console.error(`Error updating document ${docType}:`, updateDocError);
+        } else {
+          console.log(`✅ Updated document ${docType} with business ID`);
         }
       }
-
-      await AsyncStorage.setItem(`documents_${businessId}`, JSON.stringify(docCache));
-
-      console.log('✅ Document cache saved to AsyncStorage');
-
-      const userRole = businessType === 'shop' ? 'shop_owner' : 
-                       businessType === 'service' ? 'service_provider' : 
-                       'institution_representative';
-      
-      console.log('📝 Updating user role to:', userRole);
-      const { error: updateRoleError } = await supabase
-        .from('users')
-        .update({ role: userRole })
-        .eq('id', userId);
-
-      if (updateRoleError) {
-        console.error('❌ Error updating user role:', updateRoleError);
-        throw updateRoleError;
-      }
-
-      console.log('✅ User role updated successfully!');
-      console.log('🎉 Registration complete!');
-
-      setStep(6);
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: false,
-      }).start();
-
-    } catch (error: any) {
-      console.error('❌ REGISTRATION ERROR:', error);
-      
-      let errorMessage = error?.message || 'An unexpected error occurred. Please try again.';
-      
-      if (error?.code === '23505') {
-        errorMessage = 'A user with this phone number already exists. Please sign in instead.';
-      }
-      
-      Alert.alert('Registration Failed', errorMessage, [{ text: 'OK' }]);
-    } finally {
-      setIsLoading(false);
     }
-  };
+
+    // ============================================================
+    // CREATE VERIFICATION REQUEST
+    // ============================================================
+    console.log('📝 Creating verification request...');
+    
+    const verificationData: any = {
+      requested_by: userId,
+      status: 'pending',
+      verification_type: 'business_verification',
+      owner_type: businessType,
+    };
+
+    // ✅ Set the correct foreign key based on business type
+    if (businessType === 'shop') {
+      verificationData.business_id = businessId;
+    } else if (businessType === 'service') {
+      verificationData.service_id = businessId;
+    } else if (businessType === 'institution') {
+      verificationData.institution_id = businessId;
+    }
+
+    const { error: verificationError } = await supabase
+      .from('verification_requests')
+      .insert(verificationData);
+
+    if (verificationError) {
+      console.error('❌ Verification insert error:', verificationError);
+    } else {
+      console.log('✅ Verification request created');
+    }
+
+    // ============================================================
+    // UPDATE USER ROLE
+    // ============================================================
+    const userRole = businessType === 'shop' ? 'shop_owner' : 
+                     businessType === 'service' ? 'service_provider' : 
+                     'institution_representative';
+    
+    await supabase
+      .from('users')
+      .update({ role: userRole })
+      .eq('id', userId);
+
+    console.log('✅ Registration complete!');
+
+    setStep(6);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 600,
+      useNativeDriver: false,
+    }).start();
+
+  } catch (error: any) {
+    console.error('❌ REGISTRATION ERROR:', error);
+    Alert.alert('Registration Failed', error.message || 'An unexpected error occurred.', [{ text: 'OK' }]);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleFinish = () => {
     console.log('👆 Navigating to dashboard...');
@@ -1541,29 +1615,150 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
   };
 
   // --- Render Step 3: Business Identity ---
-  const renderStep3 = () => (
+const renderStep3 = () => {
+  // Add new state variables at the top of the component
+  // const [phone, setPhone] = useState('');
+  // const [address, setAddress] = useState('');
+  // const [email, setEmail] = useState('');
+  // const [website, setWebsite] = useState('');
+  // const [firstName, setFirstName] = useState('');
+  // const [lastName, setLastName] = useState('');
+
+  const isIndividual = businessType === 'individual';
+  const isShop = businessType === 'shop';
+  const isService = businessType === 'service';
+  const isInstitution = businessType === 'institution';
+
+  return (
     <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
       <StepIcon icon="📝" step={3} total={5} isDesktop={isDesktop} />
       
       <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
-        Tell us about your business
+        {isIndividual ? 'Tell us about yourself' : 'Tell us about your business'}
       </Text>
       <Text style={[styles.customStepSubtitle, isDesktop && styles.customStepSubtitleDesktop]}>
-        Just a few details about your business
+        {isIndividual 
+          ? 'Just a few details about you as a service provider' 
+          : 'Just a few details about your business'}
       </Text>
 
       <View style={[styles.customFormContainer, isDesktop && styles.customFormContainerDesktop]}>
+
+        {/* ============================================================
+            INDIVIDUAL PROVIDERS - First & Last Name
+            ============================================================ */}
+        {isIndividual && (
+          <View style={styles.customFormRow}>
+            <View style={[styles.customFormGroup, styles.customFormGroupHalf]}>
+              <Text style={styles.customFormLabel}>First Name *</Text>
+              <TextInput
+                style={styles.customFormInput}
+                placeholder="e.g. Alex"
+                placeholderTextColor="#8A8AAE"
+                value={firstName}
+                onChangeText={setFirstName}
+              />
+            </View>
+            <View style={[styles.customFormGroup, styles.customFormGroupHalf]}>
+              <Text style={styles.customFormLabel}>Last Name *</Text>
+              <TextInput
+                style={styles.customFormInput}
+                placeholder="e.g. Mukasa"
+                placeholderTextColor="#8A8AAE"
+                value={lastName}
+                onChangeText={setLastName}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* ============================================================
+            DISPLAY NAME - All Business Types
+            ============================================================ */}
         <View style={styles.customFormGroup}>
-          <Text style={styles.customFormLabel}>Business Name *</Text>
+          <Text style={styles.customFormLabel}>
+            {isIndividual ? 'Display Name *' : 'Business Name *'}
+          </Text>
           <TextInput
             style={styles.customFormInput}
-            placeholder="e.g. TechWorld Kampala"
+            placeholder={isIndividual 
+              ? "e.g. Alex Mukasa - Electrician" 
+              : "e.g. TechWorld Kampala"}
             placeholderTextColor="#8A8AAE"
             value={businessName}
             onChangeText={setBusinessName}
           />
         </View>
 
+        {/* ============================================================
+            PHONE NUMBER - All Business Types
+            ============================================================ */}
+        <View style={styles.customFormGroup}>
+          <Text style={styles.customFormLabel}>Phone Number {!isIndividual && '(Optional)'}</Text>
+          <TextInput
+            style={styles.customFormInput}
+            placeholder="+256 700 000 000"
+            placeholderTextColor="#8A8AAE"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={setPhone}
+          />
+        </View>
+
+        {/* ============================================================
+            EMAIL - Service & Institution & Individual
+            ============================================================ */}
+        {(isService || isInstitution || isIndividual) && (
+          <View style={styles.customFormGroup}>
+            <Text style={styles.customFormLabel}>
+              Email {isIndividual ? '*' : '(Optional)'}
+            </Text>
+            <TextInput
+              style={styles.customFormInput}
+              placeholder="info@yourbusiness.com"
+              placeholderTextColor="#8A8AAE"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
+            />
+          </View>
+        )}
+
+        {/* ============================================================
+            WEBSITE - Institutions Only
+            ============================================================ */}
+        {isInstitution && (
+          <View style={styles.customFormGroup}>
+            <Text style={styles.customFormLabel}>Website (Optional)</Text>
+            <TextInput
+              style={styles.customFormInput}
+              placeholder="https://yourwebsite.com"
+              placeholderTextColor="#8A8AAE"
+              autoCapitalize="none"
+              value={website}
+              onChangeText={setWebsite}
+            />
+          </View>
+        )}
+
+        {/* ============================================================
+            ADDRESS - All Business Types
+            ============================================================ */}
+        <View style={styles.customFormGroup}>
+          <Text style={styles.customFormLabel}>Address (Optional)</Text>
+          <TextInput
+            style={styles.customFormInput}
+            placeholder="e.g. 123 Main Street, Jinja"
+            placeholderTextColor="#8A8AAE"
+            value={address}
+            onChangeText={setAddress}
+          />
+        </View>
+
+        {/* ============================================================
+            DISTRICT - All Business Types (Already exists)
+            ============================================================ */}
         <View style={styles.customFormGroup}>
           <Text style={styles.customFormLabel}>District *</Text>
           <Select
@@ -1574,11 +1769,16 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
           />
         </View>
 
+        {/* ============================================================
+            DESCRIPTION - All Business Types (Already exists)
+            ============================================================ */}
         <View style={styles.customFormGroup}>
-          <Text style={styles.customFormLabel}>Description</Text>
+          <Text style={styles.customFormLabel}>Description (Optional)</Text>
           <TextInput
             style={[styles.customFormInput, styles.customFormTextArea]}
-            placeholder="Tell customers about your business..."
+            placeholder={isIndividual 
+              ? "Tell customers about your skills and experience..." 
+              : "Tell customers about your business..."}
             placeholderTextColor="#8A8AAE"
             multiline
             numberOfLines={3}
@@ -1586,10 +1786,28 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
             onChangeText={setBusinessDescription}
           />
         </View>
+
+        {/* ============================================================
+            PRICE - Service Providers Only
+            ============================================================ */}
+        {isService && (
+          <View style={styles.customFormGroup}>
+            <Text style={styles.customFormLabel}>Starting Price (UGX) *</Text>
+            <TextInput
+              style={styles.customFormInput}
+              placeholder="e.g. 50000"
+              placeholderTextColor="#8A8AAE"
+              keyboardType="numeric"
+              value={price}
+              onChangeText={setPrice}
+            />
+          </View>
+        )}
+
       </View>
     </View>
   );
-
+};
   // --- Render Step 4: Category-Specific Questions ---
   const renderStep4 = () => {
     const questions = getQuestions();
@@ -2233,6 +2451,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
+  customFormRow: {
+  flexDirection: 'row',
+  gap: 12,
+},
+customFormGroupHalf: {
+  flex: 1,
+},
   customVerificationNote: {
     flexDirection: 'row',
     alignItems: 'center',

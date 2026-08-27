@@ -6,13 +6,23 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "development"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ffbjvrwkvnwocuyapajo.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_ufEz20LhJXOkvNUBfWT-GQ_ZK-e75fo",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "969656385948-dglltajhj5lrgifm62s9np2uol53p9qn.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "969656385948-dglltajhj5lrgifm62s9np2uol53p9qn.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "969656385948-dglltajhj5lrgifm62s9np2uol53p9qn.apps.googleusercontent.com"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "production"
     }
   },
   "submit": {

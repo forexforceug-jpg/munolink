@@ -937,6 +937,50 @@ export type Database = {
         }
         Relationships: []
       }
+      search_history: {
+        Row: {
+          id: string;
+          user_id: string;
+          query: string;
+          results_count: number | null;
+          intent: Json | null;
+          filters_applied: Json | null;
+          clicked_item_id: string | null;
+          clicked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          query: string;
+          results_count?: number | null;
+          intent?: Json | null;
+          filters_applied?: Json | null;
+          clicked_item_id?: string | null;
+          clicked_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          query?: string;
+          results_count?: number | null;
+          intent?: Json | null;
+          filters_applied?: Json | null;
+          clicked_item_id?: string | null;
+          clicked_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "search_history_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+    
       shop_products: {
         Row: {
           catalog_id: string

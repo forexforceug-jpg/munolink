@@ -15,6 +15,7 @@ import {
   Alert,
   useWindowDimensions,
   FlatList,
+  SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +25,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { feedService, Opportunity as RawOpportunity } from '../../services/feed.service';
 import { recommendationService } from '../../services/recommendation.service';
+import { supabase } from '../../lib/supabase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 
@@ -86,7 +88,7 @@ const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
 ));
 
 // ============================================================
-// NATURAL LANGUAGE PARSING (Built into the component)
+// NATURAL LANGUAGE PARSING
 // ============================================================
 
 const parseNaturalLanguageQuery = (query: string): SearchIntent => {
@@ -145,7 +147,7 @@ const parseNaturalLanguageQuery = (query: string): SearchIntent => {
     intent.type = 'service';
   }
 
-  // Extract keywords - remove all the matched patterns
+  // Extract keywords
   let keywordText = cleanQuery;
   keywordText = keywordText.replace(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
   keywordText = keywordText.replace(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
@@ -154,7 +156,6 @@ const parseNaturalLanguageQuery = (query: string): SearchIntent => {
   keywordText = keywordText.replace(/(?:in stock|available|instock)/gi, '');
   keywordText = keywordText.replace(/(?:rated|rating|stars?)\s*[\d.]+\s*(?:star|stars?)?/gi, '');
   
-  // Split into keywords and remove stop words
   const stopWords = new Set([
     'i', 'am', 'looking', 'for', 'a', 'an', 'the', 'to', 'from', 'with', 
     'and', 'or', 'but', 'in', 'on', 'at', 'by', 'for', 'of', 'so', 'than',
@@ -166,7 +167,7 @@ const parseNaturalLanguageQuery = (query: string): SearchIntent => {
     .split(/\s+/)
     .filter(w => w.length > 1 && !stopWords.has(w.toLowerCase()));
 
-  // Detect categories from keywords
+  // Detect categories
   const categoryMap: Record<string, string[]> = {
     'phone': ['Electronics', 'Phones & Accessories'],
     'samsung': ['Electronics', 'Phones & Accessories'],
@@ -215,13 +216,11 @@ const getSimilarItems = (
     const otherText = `${other.title || ''} ${other.category || ''} ${other.shopName || ''}`.toLowerCase();
     let matchScore = 0;
     
-    // Same category
     if (other.category && item.category && 
         other.category.toLowerCase().includes(item.category.toLowerCase())) {
       matchScore += 3;
     }
     
-    // Similar title words
     const itemWords = new Set(itemKeywords.split(/\s+/));
     const otherWords = otherText.split(/\s+/);
     let commonWords = 0;
@@ -232,12 +231,10 @@ const getSimilarItems = (
     }
     matchScore += commonWords * 0.5;
     
-    // Same shop
     if (other.shopId === item.shopId) {
       matchScore += 2;
     }
     
-    // Same type
     if (other.type === item.type) {
       matchScore += 1;
     }
@@ -289,8 +286,11 @@ const SearchContent = ({ navigation }: any) => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<{ id: string; label: string; time: string }[]>([]);
+  const [popularSearches, setPopularSearches] = useState<{ id: string; label: string }[]>([]);
+  const [isLoadingPopular, setIsLoadingPopular] = useState(false);
   
   const inputRef = useRef<TextInput>(null);
+  const searchContainerRef = useRef<View>(null);
 
   const { data: allOpportunities, isLoading: queryLoading, error: queryError, refetch } = useQuery({
     queryKey: ['opportunities'],
@@ -298,13 +298,191 @@ const SearchContent = ({ navigation }: any) => {
     staleTime: 5 * 60 * 1000,
   });
 
-  useEffect(() => {
-    setRecentSearches([
-      { id: '1', label: 'Samsung phones', time: '2 hours ago' },
-      { id: '2', label: 'Mechanic Jinja', time: 'Yesterday' },
-      { id: '3', label: 'Best restaurants', time: '2 days ago' },
-    ]);
+  // ============================================================
+  // SEARCH HISTORY FUNCTIONS (Direct Supabase calls)
+  // ============================================================
+
+  // Track search in database
+  const trackSearch = useCallback(async (
+    query: string,
+    resultsCount: number,
+    intent: SearchIntent,
+    filtersApplied: any
+  ) => {
+    if (!user?.id) return;
+    
+    try {
+      const { error } = await supabase
+        .from('search_history')
+        .insert({
+          user_id: user.id,
+          query: query.trim(),
+          results_count: resultsCount,
+          intent: intent as any,
+          filters_applied: filtersApplied || {},
+        });
+        
+      if (error) {
+        console.error('Error tracking search:', error);
+      }
+    } catch (error) {
+      console.error('Error tracking search:', error);
+    }
+  }, [user?.id]);
+
+  // Load recent searches from database
+  const loadRecentSearches = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('search_history')
+        .select('id, query, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (error) {
+        console.error('Error loading recent searches:', error);
+        setRecentSearches([]);
+        return;
+      }
+
+      const formatted = data.map((s: any) => ({
+        id: s.id,
+        label: s.query,
+        time: s.created_at ? timeAgo(new Date(s.created_at)) : 'Just now',
+      }));
+      setRecentSearches(formatted);
+    } catch (error) {
+      console.error('Error loading recent searches:', error);
+      setRecentSearches([]);
+    }
+  }, [user?.id]);
+
+  // Load popular searches from database
+  const loadPopularSearches = useCallback(async () => {
+    setIsLoadingPopular(true);
+    try {
+      // Get all searches and count manually
+      const { data, error } = await supabase
+        .from('search_history')
+        .select('query')
+        .limit(100);
+
+      if (error) {
+        console.error('Error loading popular searches:', error);
+        setPopularSearches(getDefaultPopularSearches());
+        setIsLoadingPopular(false);
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        setPopularSearches(getDefaultPopularSearches());
+        setIsLoadingPopular(false);
+        return;
+      }
+
+      // Count occurrences
+      const countMap: Record<string, number> = {};
+      data.forEach((item: any) => {
+        const query = item.query;
+        countMap[query] = (countMap[query] || 0) + 1;
+      });
+
+      const sorted = Object.entries(countMap)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([query]) => query);
+
+      const formatted = sorted.map((query: string, index: number) => ({
+        id: `popular-${index}`,
+        label: query,
+      }));
+      
+      setPopularSearches(formatted.length > 0 ? formatted : getDefaultPopularSearches());
+    } catch (error) {
+      console.error('Error loading popular searches:', error);
+      setPopularSearches(getDefaultPopularSearches());
+    } finally {
+      setIsLoadingPopular(false);
+    }
   }, []);
+
+  // Default popular searches fallback
+  const getDefaultPopularSearches = () => [
+    { id: '1', label: 'Samsung phones under UGX 2M' },
+    { id: '2', label: 'Mechanic available today' },
+    { id: '3', label: 'Pizza delivery near me' },
+    { id: '4', label: 'Hotel rooms tonight' },
+    { id: '5', label: 'iPhone 16 deals' },
+    { id: '6', label: 'Electrician in Jinja' },
+  ];
+
+  // Delete a single search
+  const deleteSearch = useCallback(async (searchId: string) => {
+    if (!user?.id) return;
+    
+    try {
+      const { error } = await supabase
+        .from('search_history')
+        .delete()
+        .eq('id', searchId)
+        .eq('user_id', user.id);
+        
+      if (error) {
+        console.error('Error deleting search:', error);
+      }
+    } catch (error) {
+      console.error('Error deleting search:', error);
+    }
+  }, [user?.id]);
+
+  // Clear all search history
+  const clearAllSearches = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      const { error } = await supabase
+        .from('search_history')
+        .delete()
+        .eq('user_id', user.id);
+        
+      if (error) {
+        console.error('Error clearing search history:', error);
+      }
+    } catch (error) {
+      console.error('Error clearing search history:', error);
+    }
+  }, [user?.id]);
+
+  // Load data on mount
+  useEffect(() => {
+    loadRecentSearches();
+    loadPopularSearches();
+  }, [loadRecentSearches, loadPopularSearches]);
+
+  // Helper function for time ago
+  const timeAgo = (date: Date): string => {
+    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+    
+    let interval = seconds / 31536000;
+    if (interval > 1) return Math.floor(interval) + ' years ago';
+    
+    interval = seconds / 2592000;
+    if (interval > 1) return Math.floor(interval) + ' months ago';
+    
+    interval = seconds / 86400;
+    if (interval > 1) return Math.floor(interval) + ' days ago';
+    
+    interval = seconds / 3600;
+    if (interval > 1) return Math.floor(interval) + ' hours ago';
+    
+    interval = seconds / 60;
+    if (interval > 1) return Math.floor(interval) + ' minutes ago';
+    
+    return 'Just now';
+  };
 
   // Get suggestions as user types
   useEffect(() => {
@@ -312,28 +490,24 @@ const SearchContent = ({ navigation }: any) => {
       const lowerPartial = searchQuery.toLowerCase();
       const suggestionsSet = new Set<string>();
       
-      // Get unique categories
       allOpportunities.forEach((item: RawOpportunity) => {
         if (item.category && item.category.toLowerCase().includes(lowerPartial)) {
           suggestionsSet.add(item.category);
         }
       });
       
-      // Get unique shop names
       allOpportunities.forEach((item: RawOpportunity) => {
         if (item.shopName && item.shopName.toLowerCase().includes(lowerPartial)) {
           suggestionsSet.add(item.shopName);
         }
       });
       
-      // Get unique areas
       allOpportunities.forEach((item: RawOpportunity) => {
         if (item.area && item.area.toLowerCase().includes(lowerPartial)) {
           suggestionsSet.add(item.area);
         }
       });
       
-      // Get product names
       allOpportunities
         .filter((item: RawOpportunity) => 
           item.title && item.title.toLowerCase().includes(lowerPartial)
@@ -351,14 +525,8 @@ const SearchContent = ({ navigation }: any) => {
     }
   }, [searchQuery, allOpportunities]);
 
-  const trendingSearches = [
-    { id: '1', label: 'Samsung phones under UGX 2M' },
-    { id: '2', label: 'Mechanic available today' },
-    { id: '3', label: 'Pizza delivery near me' },
-    { id: '4', label: 'Hotel rooms tonight' },
-    { id: '5', label: 'iPhone 16 deals' },
-    { id: '6', label: 'Electrician in Jinja' },
-  ];
+  // Use popular searches from database or fallback
+  const trendingSearches = popularSearches.length > 0 ? popularSearches : getDefaultPopularSearches();
 
   const suggestedPrompts = [
     { id: '1', icon: '🎯', label: 'Find a mechanic who can come today' },
@@ -370,7 +538,7 @@ const SearchContent = ({ navigation }: any) => {
   ];
 
   // ============================================================
-  // ENHANCED SEARCH WITH NATURAL LANGUAGE UNDERSTANDING
+  // ENHANCED SEARCH WITH HISTORY TRACKING
   // ============================================================
   const performSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
@@ -385,20 +553,14 @@ const SearchContent = ({ navigation }: any) => {
       return;
     }
 
-    console.log(`🔍 Searching for: "${query}"`);
-
     setIsLoading(true);
     setIsSearching(true);
 
     try {
-      // Parse natural language query
       const intent = parseNaturalLanguageQuery(query);
-      console.log('📊 Intent:', JSON.stringify(intent, null, 2));
 
-      // Search based on intent
       let results = opportunities;
 
-      // Apply keyword filter
       if (intent.keywords.length > 0) {
         results = results.filter((item: RawOpportunity) => {
           const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''} ${item.area || ''}`.toLowerCase();
@@ -406,7 +568,6 @@ const SearchContent = ({ navigation }: any) => {
         });
       }
 
-      // Apply category filter
       if (intent.categories.length > 0) {
         results = results.filter((item: RawOpportunity) => {
           return intent.categories.some(cat => 
@@ -415,7 +576,6 @@ const SearchContent = ({ navigation }: any) => {
         });
       }
 
-      // Apply price filter
       if (intent.priceRange) {
         results = results.filter((item: RawOpportunity) => {
           const price = item.price || 0;
@@ -423,59 +583,48 @@ const SearchContent = ({ navigation }: any) => {
         });
       }
 
-      // Apply location filter
       if (intent.location) {
         results = results.filter((item: RawOpportunity) => {
           return item.area?.toLowerCase().includes(intent.location!.toLowerCase());
         });
       }
 
-      // Apply type filter
       if (intent.type !== 'all') {
         results = results.filter((item: RawOpportunity) => item.type === intent.type);
       }
 
-      // Apply stock filter
       if (intent.inStock) {
         results = results.filter((item: RawOpportunity) => item.inStock !== false);
       }
 
-      // Apply rating filter
       if (intent.minRating > 0) {
         results = results.filter((item: RawOpportunity) => (item.rating || 0) >= intent.minRating);
       }
 
-      // Score the results
       const scoredResults = results.map((item: RawOpportunity) => {
         let score = 0;
         const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''} ${item.area || ''}`.toLowerCase();
         
-        // Title matches are weighted highest
         if (intent.keywords.some(kw => item.title?.toLowerCase().includes(kw.toLowerCase()))) {
           score += 20;
         }
         
-        // Category matches
         if (intent.categories.some(cat => item.category?.toLowerCase().includes(cat.toLowerCase()))) {
           score += 15;
         }
         
-        // Description matches
         if (intent.keywords.some(kw => item.description?.toLowerCase().includes(kw.toLowerCase()))) {
           score += 10;
         }
         
-        // Shop name matches
         if (intent.keywords.some(kw => item.shopName?.toLowerCase().includes(kw.toLowerCase()))) {
           score += 8;
         }
         
-        // Area matches
         if (intent.location && item.area?.toLowerCase().includes(intent.location.toLowerCase())) {
           score += 10;
         }
         
-        // Price within range
         if (intent.priceRange) {
           const price = item.price || 0;
           if (price >= intent.priceRange.min && price <= intent.priceRange.max) {
@@ -483,7 +632,6 @@ const SearchContent = ({ navigation }: any) => {
           }
         }
         
-        // Rating bonus
         if (item.rating && item.rating >= 4.0) {
           score += 5;
         } else if (item.rating && item.rating >= 3.5) {
@@ -493,41 +641,26 @@ const SearchContent = ({ navigation }: any) => {
         return { ...item, relevanceScore: score };
       });
 
-      // Sort by relevance
       scoredResults.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
 
-      console.log(`📊 Found ${scoredResults.length} direct results`);
-
-      // ============================================================
-      // GET RECOMMENDATIONS
-      // ============================================================
       let recommendations: RawOpportunity[] = [];
 
-      // If we have results, get recommendations based on the top result
       if (scoredResults.length > 0) {
         const topResult = scoredResults[0];
-        
-        // Get similar items
         const similarItems = getSimilarItems(topResult, opportunities);
-        
-        // Filter out items already in results
         const resultIds = new Set(scoredResults.map(r => r.id));
         recommendations = similarItems.filter(item => !resultIds.has(item.id));
         
-        // If we have a user, get personalized recommendations
         if (user?.id) {
           const personalized = await recommendationService.getPersonalizedRecommendations(
             opportunities.filter(item => !resultIds.has(item.id)),
             user.id
           );
-          
-          // Merge and deduplicate
           const combined = [...recommendations, ...personalized];
           const unique = Array.from(new Map(combined.map((item: RawOpportunity) => [item.id, item])).values());
           recommendations = unique;
         }
       } else {
-        // No results found - get recommendations based on query keywords
         const relatedItems = opportunities.filter((item: RawOpportunity) => {
           const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''}`.toLowerCase();
           return intent.keywords.some(kw => searchText.includes(kw.toLowerCase()));
@@ -544,7 +677,6 @@ const SearchContent = ({ navigation }: any) => {
           scoredRelated.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
           recommendations = scoredRelated.slice(0, 20);
         } else if (user?.id) {
-          // Fallback to personalized recommendations
           recommendations = await recommendationService.getPersonalizedRecommendations(
             opportunities,
             user.id
@@ -552,24 +684,16 @@ const SearchContent = ({ navigation }: any) => {
         }
       }
 
-      // Ensure we have a mix of products and services in recommendations
       const mixedRecommendations = mixRecommendations(recommendations);
-      
-      // Limit recommendations
       const finalRecommendations = mixedRecommendations.slice(0, 30);
 
-      console.log(`📊 Recommendations: ${finalRecommendations.length} items`);
-
-      // Prepare results with AI tags
       const taggedResults = scoredResults.map((item: SearchResult, index: number) => ({
         ...item,
         aiTag: index < 3 && (item.relevanceScore || 0) > 10,
       }));
 
-      // Combine results and recommendations
       const allResults = [...taggedResults];
       
-      // Add recommendations if we have them
       if (finalRecommendations.length > 0) {
         const resultIds = new Set(allResults.map(r => r.id));
         const recs = finalRecommendations
@@ -582,10 +706,26 @@ const SearchContent = ({ navigation }: any) => {
         allResults.push(...recs);
       }
 
+      // ✅ Track search in database using local function
+      if (user?.id) {
+        await trackSearch(
+          query,
+          scoredResults.length,
+          intent,
+          {
+            categories: intent.categories,
+            priceRange: intent.priceRange,
+            location: intent.location,
+            type: intent.type,
+            inStock: intent.inStock,
+            minRating: intent.minRating,
+          }
+        );
+      }
+
       setIsLoading(false);
       setIsSearching(false);
 
-      // Navigate to results
       navigation.navigate('SearchResults', {
         results: allResults,
         query: query,
@@ -596,13 +736,8 @@ const SearchContent = ({ navigation }: any) => {
         recommendationsCount: finalRecommendations.length,
       });
 
-      // Save to recent searches
-      const newRecent = {
-        id: Date.now().toString(),
-        label: query.trim(),
-        time: 'Just now',
-      };
-      setRecentSearches(prev => [newRecent, ...prev.filter(r => r.label !== query.trim())]);
+      // Reload recent searches
+      await loadRecentSearches();
 
     } catch (error) {
       console.error('Search error:', error);
@@ -610,7 +745,7 @@ const SearchContent = ({ navigation }: any) => {
       setIsLoading(false);
       setIsSearching(false);
     }
-  }, [allOpportunities, user?.id, navigation]);
+  }, [allOpportunities, user?.id, navigation, trackSearch, loadRecentSearches]);
 
   const handleSearch = useCallback(() => {
     Keyboard.dismiss();
@@ -634,9 +769,35 @@ const SearchContent = ({ navigation }: any) => {
     performSearch(query);
   }, [performSearch]);
 
-  const handleRecentDelete = useCallback((id: string) => {
+  const handleRecentDelete = useCallback(async (id: string) => {
+    // Remove from local state
     setRecentSearches(prev => prev.filter(item => item.id !== id));
-  }, []);
+    
+    // Delete from database
+    await deleteSearch(id);
+  }, [deleteSearch]);
+
+  const handleClearAllRecent = useCallback(async () => {
+    if (user?.id) {
+      Alert.alert(
+        'Clear Search History',
+        'Are you sure you want to clear all search history?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Clear', 
+            style: 'destructive',
+            onPress: async () => {
+              await clearAllSearches();
+              setRecentSearches([]);
+            }
+          }
+        ]
+      );
+    } else {
+      setRecentSearches([]);
+    }
+  }, [user?.id, clearAllSearches]);
 
   const handleSuggestionPress = useCallback((suggestion: string) => {
     setSearchQuery(suggestion);
@@ -657,41 +818,45 @@ const SearchContent = ({ navigation }: any) => {
 
   if (queryError) {
     return (
-      <View style={styles.errorContainer}>
+      <SafeAreaView style={styles.errorContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <Ionicons name="alert-circle-outline" size={48} color="#E74C3C" />
         <Text style={styles.errorText}>Failed to load search data</Text>
         <Text style={styles.errorSubtext}>{queryError.message}</Text>
         <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (queryLoading && !allOpportunities) {
     return (
-      <View style={styles.loadingContainer}>
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading search data...</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-      <View style={[styles.headerContainer, isDesktop && styles.headerContainerDesktop]}>
+      {/* Header with Back Button */}
+      <View style={styles.headerContainer}>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Search</Text>
-        <View style={{ width: 24 }} />
+        <View style={{ width: 40 }} />
       </View>
 
-      <View style={[styles.searchContainer, isDesktop && styles.searchContainerDesktop]}>
+      {/* Search Bar */}
+      <View style={styles.searchWrapper} ref={searchContainerRef}>
         <View style={styles.searchInputWrapper}>
-          <Ionicons name="search-outline" size={22} color="#8A8AAE" />
+          <Ionicons name="search-outline" size={20} color="#8A8AAE" />
           <TextInput
             ref={inputRef}
             style={styles.searchInput}
@@ -705,14 +870,21 @@ const SearchContent = ({ navigation }: any) => {
             onFocus={() => setShowSuggestions(true)}
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={clearSearch}>
-              <Ionicons name="close-circle" size={20} color="#8A8AAE" />
+            <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
+              <Ionicons name="close-circle" size={18} color="#8A8AAE" />
             </TouchableOpacity>
           )}
+          <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
+            <LinearGradient
+              colors={['#4A7DFF', '#6C5CE7']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.searchButtonGradient}
+            >
+              <Ionicons name="search-outline" size={18} color="#FFFFFF" />
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.voiceButton} onPress={handleSearch}>
-          <Ionicons name="search-outline" size={22} color="#4A7DFF" />
-        </TouchableOpacity>
       </View>
 
       {/* Search Suggestions */}
@@ -726,39 +898,52 @@ const SearchContent = ({ navigation }: any) => {
                 style={styles.suggestionItem}
                 onPress={() => handleSuggestionPress(item)}
               >
-                <Ionicons name="search-outline" size={16} color="#8A8AAE" />
+                <Ionicons name="search-outline" size={16} color="#4A7DFF" />
                 <Text style={styles.suggestionText}>{item}</Text>
               </TouchableOpacity>
             )}
-            style={styles.suggestionsList}
+            keyboardShouldPersistTaps="always"
           />
         </View>
       )}
 
+      {/* Loading Overlay */}
       {isLoading && (
         <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#4A7DFF" />
-          <Text style={styles.loadingText}>Searching...</Text>
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#4A7DFF" />
+            <Text style={styles.loadingOverlayText}>Searching...</Text>
+          </View>
         </View>
       )}
 
+      {/* Main Content */}
       {!isLoading && !showSuggestions && (
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Trending Now - From Database */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
+              {isLoadingPopular && (
+                <ActivityIndicator size="small" color="#4A7DFF" />
+              )}
+            </View>
             <View style={styles.trendingGrid}>
-              {trendingSearches.map((item) => (
+              {trendingSearches.slice(0, 6).map((item) => (
                 <TrendingItem key={item.id} item={item} onPress={handlePromptPress} />
               ))}
             </View>
           </View>
 
+          {/* Suggested Prompts */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>💡 Suggested Prompts</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>💡 Suggested Prompts</Text>
+            </View>
             <View style={styles.suggestedGrid}>
               {suggestedPrompts.map((item) => (
                 <SuggestedPrompt key={item.id} item={item} onPress={handlePromptPress} />
@@ -766,11 +951,12 @@ const SearchContent = ({ navigation }: any) => {
             </View>
           </View>
 
+          {/* Recent Searches - From Database */}
           {recentSearches.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>🕐 Recent Searches</Text>
-                <TouchableOpacity onPress={() => setRecentSearches([])}>
+                <TouchableOpacity onPress={handleClearAllRecent}>
                   <Text style={styles.clearRecentText}>Clear All</Text>
                 </TouchableOpacity>
               </View>
@@ -788,7 +974,7 @@ const SearchContent = ({ navigation }: any) => {
           <View style={styles.bottomSpacer} />
         </ScrollView>
       )}
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -804,7 +990,7 @@ export const SearchScreen = ({ navigation }: any) => {
       hideContextPanel={true}
       fullWidth={true}
     >
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
         <BottomSheetModalProvider>
           <SearchContent navigation={navigation} />
         </BottomSheetModalProvider>
@@ -823,27 +1009,244 @@ const styles = StyleSheet.create({
     backgroundColor: '#0D0D1A',
   },
   containerDesktop: {
-    backgroundColor: '#0D0D1A',
     paddingHorizontal: 24,
   },
-  loadingContainer: {
+
+  // Header
+  headerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+    backgroundColor: '#0D0D1A',
+  },
+  backButton: {
+    padding: 4,
+    width: 40,
+  },
+  headerTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: 'bold',
     flex: 1,
+    textAlign: 'center',
+  },
+
+  // Search Bar
+  searchWrapper: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: '#0D0D1A',
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  searchInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  clearButton: {
+    padding: 4,
+  },
+  searchButton: {
+    marginLeft: 4,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  searchButtonGradient: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Suggestions
+  suggestionsContainer: {
+    backgroundColor: 'rgba(20, 20, 40, 0.98)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    maxHeight: 250,
+    marginHorizontal: 16,
+    borderRadius: 12,
+    position: 'absolute',
+    top: 100,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.03)',
+    gap: 12,
+  },
+  suggestionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    flex: 1,
+  },
+
+  // Loading Overlay
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0D0D1A',
-    padding: 20,
+    zIndex: 30,
   },
-  loadingText: {
-    color: '#8A8AAE',
+  loadingCard: {
+    backgroundColor: 'rgba(20, 20, 40, 0.95)',
+    paddingHorizontal: 32,
+    paddingVertical: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  loadingOverlayText: {
+    color: '#FFFFFF',
     fontSize: 14,
     marginTop: 12,
   },
-  loadingOverlay: {
+
+  // Sections
+  section: {
+    marginBottom: 24,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  clearRecentText: {
+    color: '#4A7DFF',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 40,
+  },
+
+  // Trending
+  trendingGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  trendingItem: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  trendingLabel: {
+    color: '#FFFFFF',
+    fontSize: 13,
+  },
+
+  // Suggested Prompts
+  suggestedGrid: {
+    gap: 8,
+  },
+  suggestedPrompt: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  suggestedPromptGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(74, 125, 255, 0.1)',
+    borderRadius: 12,
+  },
+  suggestedPromptIcon: {
+    fontSize: 18,
+    marginRight: 12,
+  },
+  suggestedPromptText: {
     flex: 1,
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  suggestedPromptArrow: {
+    marginLeft: 8,
+  },
+
+  // Recent Searches
+  recentItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.04)',
+  },
+  recentItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  recentItemIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
   },
+  recentItemLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  recentItemTime: {
+    color: '#8A8AAE',
+    fontSize: 11,
+  },
+  recentItemDelete: {
+    padding: 6,
+  },
+
+  // Error & Loading States
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -875,211 +1278,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  headerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    backgroundColor: 'rgba(13, 13, 26, 0.95)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  headerContainerDesktop: {
-    paddingHorizontal: 0,
-    paddingTop: 20,
-    paddingBottom: 12,
-    backgroundColor: 'transparent',
-    borderBottomWidth: 0,
-  },
-  backButton: {
-    padding: 4,
-  },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 12,
-    backgroundColor: 'rgba(13, 13, 26, 0.95)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    gap: 10,
-    zIndex: 10,
-  },
-  searchContainerDesktop: {
-    paddingHorizontal: 0,
-    paddingTop: 12,
-    paddingBottom: 20,
-    backgroundColor: 'transparent',
-    borderBottomWidth: 0,
-  },
-  searchInputWrapper: {
+  loadingContainer: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 10,
-  },
-  searchInput: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 16,
-    padding: 0,
-  },
-  voiceButton: {
-    padding: 8,
-    borderRadius: 20,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  suggestionsContainer: {
-    backgroundColor: 'rgba(13, 13, 26, 0.98)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    maxHeight: 250,
-    position: 'absolute',
-    top: 90,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  suggestionsList: {
-    paddingHorizontal: 16,
-  },
-  suggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.03)',
-    gap: 12,
-  },
-  suggestionText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    flex: 1,
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 10,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  clearRecentText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 40,
-  },
-  trendingGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  trendingItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  trendingLabel: {
-    color: '#FFFFFF',
-    fontSize: 13,
-  },
-  suggestedGrid: {
-    gap: 8,
-  },
-  suggestedPrompt: {
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  suggestedPromptGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(74, 125, 255, 0.1)',
-    borderRadius: 12,
-  },
-  suggestedPromptIcon: {
-    fontSize: 18,
-    marginRight: 10,
-  },
-  suggestedPromptText: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 14,
-  },
-  suggestedPromptArrow: {
-    marginLeft: 8,
-  },
-  recentItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  recentItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  recentItemIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#0D0D1A',
+    padding: 20,
   },
-  recentItemLabel: {
-    color: '#FFFFFF',
-    fontSize: 14,
-  },
-  recentItemTime: {
+  loadingText: {
     color: '#8A8AAE',
-    fontSize: 11,
+    fontSize: 14,
+    marginTop: 12,
   },
-  recentItemDelete: {
-    padding: 4,
-  },
+
   bottomSpacer: {
     height: 40,
   },

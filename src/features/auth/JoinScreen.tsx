@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { supabase } from '../../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
@@ -44,10 +45,11 @@ const StepIndicator = ({ currentStep, totalSteps }: any) => (
 
 // --- Main JoinScreen Component ---
 const JoinContent = ({ navigation }: any) => {
-  const { signInWithPhone, signInWithGoogle } = useAuth();
+  const { signInWithPhone, signInWithGoogle, user } = useAuth();
   const { isDesktop } = useBreakpoint();
   const [step, setStep] = useState(1);
   const [method, setMethod] = useState<'phone' | 'email'>('phone');
+  const [fullName, setFullName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -88,10 +90,18 @@ const JoinContent = ({ navigation }: any) => {
     }
   }, [showWelcome]);
 
+  // Check if name is valid
+  const isNameValid = fullName.trim().length >= 2;
+
   const handleSendOTP = async () => {
     const identifier = method === 'phone' ? phoneNumber : email;
     if (!identifier) {
       Alert.alert('Error', `Please enter your ${method}`);
+      return;
+    }
+
+    if (!isNameValid) {
+      Alert.alert('Error', 'Please enter your full name (minimum 2 characters)');
       return;
     }
 
@@ -107,6 +117,7 @@ const JoinContent = ({ navigation }: any) => {
     }
   };
 
+  // ✅ FIXED: Pass fullName to signInWithPhone
   const handleVerifyOTP = async () => {
     if (!otp || otp.length < 4) {
       Alert.alert('Invalid OTP', 'Please enter the 4-digit verification code.');
@@ -119,8 +130,10 @@ const JoinContent = ({ navigation }: any) => {
       const fullPhone = `+256${phone}`;
       
       console.log('📝 Verifying OTP for phone (custom auth):', fullPhone);
+      console.log('📝 User name being passed:', fullName);  // ✅ Debug log
       
-      await signInWithPhone(fullPhone);
+      // ✅ Pass the fullName to signInWithPhone
+      await signInWithPhone(fullPhone, fullName);
       
       console.log('✅ User signed in successfully');
       navigation.replace('MainTabs');
@@ -190,6 +203,23 @@ const JoinContent = ({ navigation }: any) => {
         Join thousands of people discovering opportunities nearby.
       </Text>
 
+      {/* Full Name Field */}
+      <View style={styles.inputContainer}>
+        <Text style={styles.inputLabel}>Full Name</Text>
+        <TextInput
+          style={[styles.input, fullName.length > 0 && styles.inputFilled]}
+          placeholder="Enter your full name"
+          placeholderTextColor="#8A8AAE"
+          value={fullName}
+          onChangeText={setFullName}
+          autoCapitalize="words"
+          returnKeyType="next"
+        />
+        {fullName.length > 0 && fullName.length < 2 && (
+          <Text style={styles.inputError}>Name must be at least 2 characters</Text>
+        )}
+      </View>
+
       <View style={[styles.methodToggle, isDesktop && styles.methodToggleDesktop]}>
         <TouchableOpacity
           style={[styles.methodOption, method === 'phone' && styles.methodOptionActive]}
@@ -239,9 +269,12 @@ const JoinContent = ({ navigation }: any) => {
       </View>
 
       <TouchableOpacity
-        style={[styles.continueButton, isLoading && styles.continueButtonDisabled]}
+        style={[
+          styles.continueButton,
+          (isLoading || !isNameValid) && styles.continueButtonDisabled
+        ]}
         onPress={handleSendOTP}
-        disabled={isLoading}
+        disabled={isLoading || !isNameValid}
       >
         {isLoading ? (
           <ActivityIndicator color="#FFFFFF" />
@@ -370,7 +403,7 @@ const JoinContent = ({ navigation }: any) => {
         </LinearGradient>
       </View>
 
-      <Text style={styles.welcomeTitle}>You're now a Munolink Member!</Text>
+      <Text style={styles.welcomeTitle}>Welcome, {fullName || 'Munolink Member'}!</Text>
       <Text style={styles.welcomeSubtitle}>
         Here's what you can do now:
       </Text>
@@ -484,71 +517,13 @@ export const JoinScreen = ({ navigation }: any) => {
 
 const styles = StyleSheet.create({
   // ... (all styles remain the same as your original file)
- // DESKTOP STYLES
-  // ============================================================
-  containerDesktop: {
-    backgroundColor: '#F8F9FC',
-    padding: 24,
-  },
-  desktopHeader: {
-    marginBottom: 16,
-    paddingHorizontal: 24,
-    paddingTop: 12,
-  },
-  desktopHeaderTitle: {
-    color: '#1F2F5F',
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  desktopHeaderSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 16,
-    marginTop: 4,
-  },
-  contentDesktop: {
-    maxWidth: 500,
-    width: '100%',
-    alignSelf: 'center',
-    paddingHorizontal: 0,
-  },
-  stepContainerDesktop: {
-    paddingTop: 10,
-  },
-  methodToggleDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  inputContainerDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  dividerContainerDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  otpContainerDesktop: {
-    gap: 12,
-  },
-  termsTextDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  featuresListDesktop: {
-    maxWidth: 400,
-    alignSelf: 'center',
-    width: '100%',
-  },
-
-  // ============================================================
-  // MOBILE STYLES
-  // ============================================================
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  containerDesktop: {
+    backgroundColor: '#F8F9FC',
+    padding: 24,
   },
   keyboardView: {
     flex: 1,
@@ -581,9 +556,18 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
   },
+  contentDesktop: {
+    maxWidth: 500,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+  },
   stepContainer: {
     flex: 1,
     paddingTop: 20,
+  },
+  stepContainerDesktop: {
+    paddingTop: 10,
   },
   stepIconContainer: {
     alignItems: 'center',
@@ -617,12 +601,32 @@ const styles = StyleSheet.create({
     color: '#4A7DFF',
     fontWeight: '500',
   },
+  inputLabel: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 6,
+  },
+  inputFilled: {
+    borderWidth: 1,
+    borderColor: '#4A7DFF',
+  },
+  inputError: {
+    color: '#E74C3C',
+    fontSize: 12,
+    marginTop: 4,
+  },
   methodToggle: {
     flexDirection: 'row',
     backgroundColor: '#F5F7FA',
     borderRadius: 12,
     padding: 4,
     marginBottom: 16,
+  },
+  methodToggleDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
   },
   methodOption: {
     flex: 1,
@@ -647,7 +651,12 @@ const styles = StyleSheet.create({
     color: '#1F2F5F',
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
+  },
+  inputContainerDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
   },
   input: {
     backgroundColor: '#F5F7FA',
@@ -701,6 +710,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 16,
   },
+  dividerContainerDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
   divider: {
     flex: 1,
     height: 1,
@@ -749,6 +763,11 @@ const styles = StyleSheet.create({
     marginTop: 16,
     lineHeight: 18,
   },
+  termsTextDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
   termsLink: {
     color: '#4A7DFF',
   },
@@ -757,6 +776,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginBottom: 24,
+  },
+  otpContainerDesktop: {
+    gap: 12,
   },
   otpInput: {
     width: 44,
@@ -838,6 +860,11 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 24,
   },
+  featuresListDesktop: {
+    maxWidth: 400,
+    alignSelf: 'center',
+    width: '100%',
+  },
   featureItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -871,5 +898,20 @@ const styles = StyleSheet.create({
   businessButtonLink: {
     color: '#4A7DFF',
     fontWeight: '500',
+  },
+  desktopHeader: {
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+  },
+  desktopHeaderTitle: {
+    color: '#1F2F5F',
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  desktopHeaderSubtitle: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 4,
   },
 });

@@ -43,6 +43,7 @@ type ShopProduct = Database['public']['Tables']['shop_products']['Row'];
 type ProviderService = Database['public']['Tables']['provider_services']['Row'];
 type ProductAttribute = Database['public']['Tables']['product_attributes']['Row'];
 type Category = Database['public']['Tables']['categories']['Row'];
+type Institution = Database['public']['Tables']['institutions']['Row'];
 
 // --- Opportunity Scene Interface ---
 interface OpportunityScene {
@@ -57,6 +58,30 @@ interface OpportunityScene {
   is_primary: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// --- Extended Business Type ---
+interface ExtendedBusiness {
+  id: string;
+  owner_id: string | null;
+  name: string;
+  category: string | null;
+  description: string | null;
+  business_type: string | null;
+  is_active: boolean;
+  is_verified: boolean | null;
+  rating: number | null;
+  review_count: number | null;
+  logo_url: string | null;
+  phone: string | null;
+  opening_hours: string | null;
+  is_open: boolean | null;
+  created_at: string | null;
+  // Service-specific fields
+  price?: number;
+  service_id?: string;
+  // Institution-specific fields
+  institution_id?: string;
 }
 
 // --- Business Type Configuration ---
@@ -137,7 +162,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
   
   // --- State ---
-  const [business, setBusiness] = useState<Shop | null>(null);
+  const [business, setBusiness] = useState<ExtendedBusiness | null>(null);
   const [businessType, setBusinessType] = useState<string>('shop');
   const [category, setCategory] = useState<string>('');
   const [config, setConfig] = useState<any>(BUSINESS_CONFIGS.shop);
@@ -546,17 +571,16 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     setShowCustomForm(false);
   };
 
-  // --- Load All Offerings (Products + Services) ---
-  const loadAllOfferings = async (shop: Shop) => {
-    console.log('🔄 Loading offerings for shop:', shop.id);
+  // --- Load Shop Offerings (Products) ---
+  const loadShopOfferings = async (shopId: string) => {
+    console.log('🔄 Loading shop offerings for shop:', shopId);
     let allOfferings: any[] = [];
 
-    // 1. Load Products with catalog data
     try {
       const { data: productData, error: productError } = await supabase
         .from('shop_products')
         .select('*')
-        .eq('shop_id', shop.id)
+        .eq('shop_id', shopId)
         .order('created_at', { ascending: false });
 
       if (!productError && productData) {
@@ -592,71 +616,121 @@ const BusinessDashboardContent = ({ navigation }: any) => {
         }));
         
         allOfferings = [...allOfferings, ...productsWithCatalog];
-      } else if (productError) {
-        console.error('❌ Product load error:', productError);
       }
     } catch (error) {
       console.error('❌ Product load exception:', error);
     }
 
-    // 2. Load Services with catalog data
-    if (shop.owner_id) {
-      try {
-        const { data: serviceData, error: serviceError } = await supabase
-          .from('provider_services')
-          .select('*')
-          .eq('user_id', shop.owner_id)
-          .order('created_at', { ascending: false });
+    setOfferings(allOfferings);
+    console.log('📊 Total shop offerings loaded:', allOfferings.length);
+  };
 
-        if (!serviceError && serviceData) {
-          console.log('✅ Found', serviceData.length, 'services');
-          
-          const servicesWithCatalog = await Promise.all(serviceData.map(async (item) => {
-            let catalogData = null;
-            if (item.service_id) {
-              const { data: catalog, error: catalogError } = await supabase
-                .from('service_catalog')
-                .select('*')
-                .eq('id', item.service_id)
-                .single();
-              
-              if (!catalogError) {
-                catalogData = catalog;
-              }
-            }
-            
-            const { data: sceneData } = await (supabase as any)
-              .from('opportunity_scenes')
+  // --- Load Service Offerings (Services) ---
+  const loadServiceOfferings = async (userId: string) => {
+    console.log('🔄 Loading service offerings for user:', userId);
+    let allOfferings: any[] = [];
+
+    try {
+      const { data: serviceData, error: serviceError } = await supabase
+        .from('provider_services')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (!serviceError && serviceData) {
+        console.log('✅ Found', serviceData.length, 'services');
+        
+        const servicesWithCatalog = await Promise.all(serviceData.map(async (item) => {
+          let catalogData = null;
+          if (item.service_id) {
+            const { data: catalog, error: catalogError } = await supabase
+              .from('service_catalog')
               .select('*')
-              .eq('opportunity_id', item.id)
-              .eq('opportunity_type', 'service')
-              .order('scene_index', { ascending: true });
+              .eq('id', item.service_id)
+              .single();
             
-            return { 
-              ...item, 
-              service_catalog: catalogData, 
-              type: 'service', 
-              scenes: sceneData || [] 
-            };
-          }));
+            if (!catalogError) {
+              catalogData = catalog;
+            }
+          }
           
-          allOfferings = [...allOfferings, ...servicesWithCatalog];
-        } else if (serviceError) {
-          console.error('❌ Service load error:', serviceError);
-        }
-      } catch (error) {
-        console.error('❌ Service load exception:', error);
+          const { data: sceneData } = await (supabase as any)
+            .from('opportunity_scenes')
+            .select('*')
+            .eq('opportunity_id', item.id)
+            .eq('opportunity_type', 'service')
+            .order('scene_index', { ascending: true });
+          
+          return { 
+            ...item, 
+            service_catalog: catalogData, 
+            type: 'service', 
+            scenes: sceneData || [] 
+          };
+        }));
+        
+        allOfferings = [...allOfferings, ...servicesWithCatalog];
       }
+    } catch (error) {
+      console.error('❌ Service load exception:', error);
     }
 
-    allOfferings.sort((a, b) => {
-      const dateA = new Date(a.created_at || 0);
-      const dateB = new Date(b.created_at || 0);
-      return dateB.getTime() - dateA.getTime();
-    });
-    
-    console.log('📊 Total offerings loaded:', allOfferings.length);
     setOfferings(allOfferings);
+    console.log('📊 Total service offerings loaded:', allOfferings.length);
+  };
+
+  // --- Load Institution Offerings ---
+  const loadInstitutionOfferings = async (institutionId: string) => {
+    console.log('🔄 Loading institution offerings for institution:', institutionId);
+    let allOfferings: any[] = [];
+
+    try {
+      const { data: serviceData, error: serviceError } = await supabase
+        .from('provider_services')
+        .select('*')
+        .eq('institution_id', institutionId)
+        .order('created_at', { ascending: false });
+
+      if (!serviceError && serviceData) {
+        console.log('✅ Found', serviceData.length, 'institution services');
+        
+        const servicesWithCatalog = await Promise.all(serviceData.map(async (item) => {
+          let catalogData = null;
+          if (item.service_id) {
+            const { data: catalog, error: catalogError } = await supabase
+              .from('service_catalog')
+              .select('*')
+              .eq('id', item.service_id)
+              .single();
+            
+            if (!catalogError) {
+              catalogData = catalog;
+            }
+          }
+          
+          const { data: sceneData } = await (supabase as any)
+            .from('opportunity_scenes')
+            .select('*')
+            .eq('opportunity_id', item.id)
+            .eq('opportunity_type', 'service')
+            .order('scene_index', { ascending: true });
+          
+          return { 
+            ...item, 
+            service_catalog: catalogData, 
+            type: 'service', 
+            scenes: sceneData || [] 
+          };
+        }));
+        
+        allOfferings = [...allOfferings, ...servicesWithCatalog];
+      }
+    } catch (error) {
+      console.error('❌ Institution service load exception:', error);
+    }
+
+    setOfferings(allOfferings);
+    console.log('📊 Total institution offerings loaded:', allOfferings.length);
   };
 
   // ============================================================
@@ -671,57 +745,179 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     }
 
     try {
-      const { data: businessData, error: businessError } = await supabase
+      let businessData: ExtendedBusiness | null = null;
+      let businessType = 'shop';
+      let businessId: string | null = null;
+
+      // 1. Try to load from shops table
+      const { data: shopData, error: shopError } = await supabase
         .from('shops')
         .select('*')
         .eq('owner_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (businessError || !businessData || businessData.length === 0) {
+      if (!shopError && shopData && shopData.length > 0) {
+        const shop = shopData[0];
+        businessData = {
+          id: shop.id,
+          owner_id: shop.owner_id,
+          name: shop.name,
+          category: shop.category,
+          description: shop.description,
+          business_type: shop.business_type,
+          is_active: shop.is_active || false,
+          is_verified: shop.is_verified || false,
+          rating: shop.rating || 0,
+          review_count: shop.review_count || 0,
+          logo_url: shop.logo_url || null,
+          phone: shop.phone || null,
+          opening_hours: shop.opening_hours || null,
+          is_open: shop.is_open !== false,
+          created_at: shop.created_at,
+        };
+        businessType = 'shop';
+        businessId = shop.id;
+        console.log('✅ Found shop business:', businessData.name);
+      }
+
+      // 2. If no shop, try to load from provider_services
+      if (!businessData) {
+        const { data: serviceData, error: serviceError } = await supabase
+          .from('provider_services')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (!serviceError && serviceData && serviceData.length > 0) {
+          const service = serviceData[0];
+          
+          // Load the service catalog separately
+          let catalogData = null;
+          if (service.service_id) {
+            const { data: catalog, error: catalogError } = await supabase
+              .from('service_catalog')
+              .select('*')
+              .eq('id', service.service_id)
+              .single();
+            
+            if (!catalogError) {
+              catalogData = catalog;
+            }
+          }
+
+          businessData = {
+            id: service.id,
+            owner_id: service.user_id,
+            name: catalogData?.name || 'Service Business',
+            category: catalogData?.category || 'Uncategorized',
+            description: catalogData?.description || '',
+            business_type: 'service',
+            is_active: service.is_active || false,
+            is_verified: false,
+            rating: 0,
+            review_count: 0,
+            logo_url: null,
+            phone: null,
+            opening_hours: null,
+            is_open: true,
+            created_at: service.created_at,
+            price: service.price,
+            service_id: service.service_id,
+          };
+          businessType = 'service';
+          businessId = service.id;
+          console.log('✅ Found service business:', businessData.name);
+        }
+      }
+
+      // 3. If no shop or service, try to load from institutions
+      if (!businessData) {
+        const { data: institutionData, error: institutionError } = await supabase
+          .from('institutions')
+          .select('*')
+          .eq('created_by', user.id)
+          .order('created_at', { ascending: false });
+
+        if (!institutionError && institutionData && institutionData.length > 0) {
+          const institution = institutionData[0];
+          businessData = {
+            id: institution.id,
+            owner_id: user.id,
+            name: institution.name,
+            category: institution.type || 'Uncategorized',
+            description: institution.description || '',
+            business_type: 'institution',
+            is_active: institution.is_open || false,
+            is_verified: institution.is_verified || false,
+            rating: institution.rating || 0,
+            review_count: institution.review_count || 0,
+            logo_url: institution.logo || null,
+            phone: institution.phone || null,
+            opening_hours: institution.working_hours ? JSON.stringify(institution.working_hours) : null,
+            is_open: institution.is_open !== false,
+            created_at: institution.created_at,
+            institution_id: institution.id,
+          };
+          businessType = 'institution';
+          businessId = institution.id;
+          console.log('✅ Found institution business:', businessData.name);
+        }
+      }
+
+      // If no business found at all
+      if (!businessData) {
         setLoading(false);
         return;
       }
 
-      const shop = businessData[0];
-      setBusiness(shop);
-      
-      const bizType = shop.business_type || 'shop';
-      setBusinessType(bizType);
-      setCategory(shop.category || '');
-      setConfig(BUSINESS_CONFIGS[bizType] || BUSINESS_CONFIGS.shop);
+      // Set the business state
+      setBusiness(businessData);
+      setBusinessType(businessType);
+      setCategory(businessData.category || '');
+      setConfig(BUSINESS_CONFIGS[businessType] || BUSINESS_CONFIGS.shop);
 
       setBusinessSettings({
-        logo: shop.logo_url || '',
+        logo: businessData.logo_url || '',
         banner: '',
-        description: shop.description || '',
-        phone: shop.phone || '',
+        description: businessData.description || '',
+        phone: businessData.phone || '',
         email: '',
         website: '',
-        workingHours: shop.opening_hours || '',
-        isOpen: shop.is_open !== false,
+        workingHours: businessData.opening_hours || '',
+        isOpen: businessData.is_open !== false,
       });
 
-      await loadAllOfferings(shop);
+      // Load offerings based on business type
+      if (businessType === 'shop' && businessId) {
+        await loadShopOfferings(businessId);
+      } else if (businessType === 'service' && user.id) {
+        await loadServiceOfferings(user.id);
+      } else if (businessType === 'institution' && businessId) {
+        await loadInstitutionOfferings(businessId);
+      }
 
-      const { data: activityData } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('shop_id', shop.id)
-        .order('created_at', { ascending: false })
-        .limit(10);
+      // Load transactions (works for all types)
+      if (businessId) {
+        const { data: activityData } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('shop_id', businessId)
+          .order('created_at', { ascending: false })
+          .limit(10);
 
-      const today = new Date().toISOString().split('T')[0];
-      const todayActivity = activityData?.filter(a => a.created_at?.startsWith(today)) ?? [];
-      const todayRevenue = todayActivity.reduce((sum, a) => sum + (a.amount || 0), 0);
+        const today = new Date().toISOString().split('T')[0];
+        const todayActivity = activityData?.filter(a => a.created_at?.startsWith(today)) ?? [];
+        const todayRevenue = todayActivity.reduce((sum, a) => sum + (a.amount || 0), 0);
 
-      setStats({
-        revenue: todayRevenue,
-        activityCount: activityData?.length || 0,
-        customers: new Set(activityData?.map(a => a.user_id)).size || 0,
-        offerings: offerings.length,
-        rating: shop.rating || 0,
-        reviews: shop.review_count || 0,
-      });
+        setStats({
+          revenue: todayRevenue,
+          activityCount: activityData?.length || 0,
+          customers: new Set(activityData?.map(a => a.user_id)).size || 0,
+          offerings: offerings.length,
+          rating: businessData.rating || 0,
+          reviews: businessData.review_count || 0,
+        });
+      }
 
       await loadCategories();
 
@@ -1104,18 +1300,34 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     
     setSavingSettings(true);
     try {
-      const { error } = await supabase
-        .from('shops')
-        .update({
-          logo_url: businessSettings.logo || null,
-          description: businessSettings.description || null,
-          phone: businessSettings.phone || null,
-          opening_hours: businessSettings.workingHours || null,
-          is_open: businessSettings.isOpen,
-        })
-        .eq('id', business.id);
+      // Check which table to update based on business type
+      if (businessType === 'shop' || businessType === 'service') {
+        const { error } = await supabase
+          .from('shops')
+          .update({
+            logo_url: businessSettings.logo || null,
+            description: businessSettings.description || null,
+            phone: businessSettings.phone || null,
+            opening_hours: businessSettings.workingHours || null,
+            is_open: businessSettings.isOpen,
+          })
+          .eq('id', business.id);
 
-      if (error) throw error;
+        if (error) throw error;
+      } else if (businessType === 'institution') {
+        const { error } = await supabase
+          .from('institutions')
+          .update({
+            logo: businessSettings.logo || null,
+            description: businessSettings.description || null,
+            phone: businessSettings.phone || null,
+            working_hours: businessSettings.workingHours ? { hours: businessSettings.workingHours } : null,
+            is_open: businessSettings.isOpen,
+          })
+          .eq('id', business.id);
+
+        if (error) throw error;
+      }
 
       Alert.alert('Success', 'Business settings updated successfully!');
       setShowBusinessSettings(false);

@@ -17,7 +17,7 @@ interface AuthContextType {
   user: any | null;
   session: Session | null;
   signIn: (userData: any) => Promise<void>;
-  signInWithPhone: (phone: string) => Promise<void>;
+  signInWithPhone: (phone: string, fullName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   joinAsGuest: () => void;
@@ -25,7 +25,7 @@ interface AuthContextType {
   createSessionForUser: (userId: string) => Promise<void>;
   setIsAuthenticated: (value: boolean) => void;
   setIsGuest: (value: boolean) => void;
-  logout: () => Promise<void>;  // ✅ Add logout
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -121,10 +121,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('✅ Google user authenticated:', data.user.id);
         
         const googleUser = data.user;
+        const userName = googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || 'Google User';
         const userData = {
           id: googleUser.id,
           phone: googleUser.phone || '',
-          full_name: googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || 'Google User',
+          full_name: userName,
           avatar_url: googleUser.user_metadata?.avatar_url || googleUser.user_metadata?.picture || null,
           created_at: new Date().toISOString(),
           isVerified: true,
@@ -151,7 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .insert({
               id: googleUser.id,
               phone_number: googleUser.phone || '',
-              full_name: googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || 'Google User',
+              full_name: userName,
               avatar_url: googleUser.user_metadata?.avatar_url || googleUser.user_metadata?.picture || null,
               role: 'customer',
               wallet_balance: 0,
@@ -191,66 +192,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithPhone = async (phone: string): Promise<void> => {
+  // ✅ FIXED: Properly save user name to database
+  const signInWithPhone = async (phone: string, fullName?: string): Promise<void> => {
     console.log('📝 Signing in with phone (custom auth):', phone);
+    console.log('📝 User name provided:', fullName || 'Not provided');
+    
     try {
       const cleanPhone = phone.replace(/\s/g, '');
       const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
       
-      const userId = generateUUID();
+      // Check if user exists first
+      const { data: existingUser, error: checkError } = await supabase
+        .from('users')
+        .select('id, full_name, phone_number')
+        .eq('phone_number', fullPhone)
+        .maybeSingle();
+
+      let userId: string;
+      let userName: string;
+
+      if (existingUser) {
+        console.log('✅ User already exists with ID:', existingUser.id);
+        userId = existingUser.id;
+        userName = existingUser.full_name || fullName?.trim() || 'Munolink Member';
+        
+        // If name was provided and user has no name, update it
+        if (fullName?.trim() && !existingUser.full_name) {
+          console.log('📝 Updating user name in database to:', fullName);
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({ full_name: fullName.trim() })
+            .eq('id', userId);
+            
+          if (updateError) {
+            console.error('Error updating user name:', updateError);
+          } else {
+            console.log('✅ User name updated successfully');
+            userName = fullName.trim();
+          }
+        }
+      } else {
+        // Create new user
+        userId = generateUUID();
+        userName = fullName?.trim() || 'Munolink Member';
+        
+        console.log('📝 Creating new user in database...');
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: userId,
+            phone_number: fullPhone,
+            full_name: userName,
+            role: 'customer',
+            wallet_balance: 0,
+            lifetime_savings: 0,
+            kyc_verified: false,
+            created_at: new Date().toISOString(),
+          });
+
+        if (insertError) {
+          console.error('❌ Error creating user in database:', insertError);
+          throw insertError;
+        }
+        console.log('✅ User created in database successfully with name:', userName);
+      }
+
+      // Create user data object for session
       const userData = {
         id: userId,
         phone: fullPhone,
+        full_name: userName,
+        name: userName,
         created_at: new Date().toISOString(),
-        name: 'Munolink Member',
         isVerified: true,
-        full_name: 'Munolink Member',
         role: 'customer',
         wallet_balance: 0,
         lifetime_savings: 0,
       };
-
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('id')
-        .eq('phone_number', fullPhone)
-        .maybeSingle();
-
-      if (existingUser) {
-        console.log('✅ User already exists with ID:', existingUser.id);
-        userData.id = existingUser.id;
-        
-        await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-        await AsyncStorage.setItem('userData', JSON.stringify(userData));
-
-        setUser(userData);
-        setIsAuthenticated(true);
-        setIsGuest(false);
-        
-        console.log('✅ Existing user signed in successfully with ID:', userData.id);
-        return;
-      }
-
-      console.log('📝 Creating new user in database...');
-      const { error: insertError } = await supabase
-        .from('users')
-        .insert({
-          id: userId,
-          phone_number: fullPhone,
-          full_name: 'Munolink Member',
-          role: 'customer',
-          wallet_balance: 0,
-          lifetime_savings: 0,
-          kyc_verified: false,
-          created_at: new Date().toISOString(),
-        });
-
-      if (insertError) {
-        console.error('❌ Error creating user in database:', insertError);
-        throw insertError;
-      } else {
-        console.log('✅ User created in database successfully');
-      }
 
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
@@ -259,7 +277,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAuthenticated(true);
       setIsGuest(false);
       
-      console.log('✅ User signed in successfully with ID:', userData.id);
+      console.log('✅ User signed in successfully with ID:', userId, 'Name:', userName);
     } catch (error) {
       console.error('❌ Sign in error:', error);
       throw error;
@@ -274,20 +292,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       const phoneNumber = userData.phone || userData.phone_number || '';
+      const userName = userData.full_name || userData.name || 'Munolink Member';
       
+      // Check if user exists
       const { data: existingUser, error: checkError } = await supabase
         .from('users')
-        .select('id')
+        .select('id, full_name')
         .eq('phone_number', phoneNumber)
         .maybeSingle();
 
       if (!existingUser && phoneNumber) {
+        console.log('📝 Creating new user in database');
         const { error: insertError } = await supabase
           .from('users')
           .insert({
             id: userData.id,
             phone_number: phoneNumber,
-            full_name: userData.full_name || userData.name || 'Munolink Member',
+            full_name: userName,
             role: 'customer',
             wallet_balance: 0,
             lifetime_savings: 0,
@@ -300,6 +321,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else if (existingUser) {
         userData.id = existingUser.id;
+        userData.full_name = existingUser.full_name || userName;
       }
       
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
@@ -309,7 +331,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAuthenticated(true);
       setIsGuest(false);
       
-      console.log('✅ User signed in successfully with ID:', userData.id);
+      console.log('✅ User signed in successfully with ID:', userData.id, 'Name:', userData.full_name);
     } catch (error) {
       console.error('❌ Sign in error:', error);
       throw error;
@@ -335,7 +357,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
   
-  // ✅ Alias logout to signOut
   const logout = signOut;
   
   const joinAsGuest = (): void => {
@@ -388,7 +409,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithPhone,
         signInWithGoogle,
         signOut,
-        logout,  // ✅ Add logout here
+        logout,
         joinAsGuest,
         refreshSession,
         createSessionForUser,
