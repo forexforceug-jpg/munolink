@@ -39,7 +39,7 @@ const ICONS: Record<string, IconName> = {
   directions: 'location',
   share: 'share-social',
   save: 'bookmark',
-  saveOutline: 'bookmark',
+  saveOutline: 'bookmark-outline',
 };
 
 interface FloatingActionRailProps {
@@ -293,13 +293,18 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const displayShareCount = shareCount > 0 ? shareCount : 0;
   const displaySavedCount = saveCount;
 
-  // ✅ Shop logo logic
-  const logoUrl = shopLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(opportunity.shopName || 'S')}&background=4A7DFF&color=fff&size=64&font-size=0.33`;
-  const showLogoFallback = logoError || !shopLogo;
+  // ✅ SHOP LOGO - Use the real logo from the database
+  const shopLogoUrl = shopLogo || opportunity.shopLogo || null;
+  
+  // ✅ Check if we have a valid logo URL
+  const hasValidLogo = shopLogoUrl && shopLogoUrl.startsWith('http');
+  
+  // ✅ Log the logo URL for debugging
+  console.log(`🏪 Shop logo for ${opportunity.shopName}:`, shopLogoUrl);
 
   return (
     <View style={[styles.container, { gap }]}>
-      {/* Shop Button - With Logo */}
+      {/* Shop Button - With Real Logo from Database */}
       <TouchableOpacity
         style={[
           styles.shopButton,
@@ -313,9 +318,9 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.8}
       >
         <View style={styles.shopLetterContainer}>
-          {!showLogoFallback ? (
+          {hasValidLogo ? (
             <Image
-              source={{ uri: logoUrl }}
+              source={{ uri: shopLogoUrl }}
               style={[
                 styles.shopLogo,
                 { width: shopButtonSize * 0.7, height: shopButtonSize * 0.7 }
@@ -344,7 +349,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
           {displayRating}
         </Text>
-        {/* ✅ FIXED: Only render if displayReviewCount is not null */}
         {displayReviewCount && (
           <Text style={[styles.valueSubText, { fontSize: valueFontSize - 2 }]}>
             {displayReviewCount}
@@ -361,8 +365,8 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.shopName, opportunity.area || ''))}
         activeOpacity={0.7}
       >
-<Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />  
-      <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
+        <Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />  
+        <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
           {distanceDisplay}
         </Text>
       </TouchableOpacity>
@@ -382,7 +386,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* ✅ FIXED: Save/Wishlist Button - Now properly displays count */}
+      {/* ✅ Save/Wishlist Button */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -449,7 +453,8 @@ export const FloatingActionRail = memo(FloatingActionRailComponent, (prevProps, 
                           prevProps.savedCount !== nextProps.savedCount;
   const otherPropsChanged = prevProps.shareCount !== nextProps.shareCount ||
                            prevProps.reviewCount !== nextProps.reviewCount ||
-                           prevProps.distance !== nextProps.distance;
+                           prevProps.distance !== nextProps.distance ||
+                           prevProps.shopLogo !== nextProps.shopLogo;
   
   // Don't re-render if only the opportunity object reference changed but ID is the same
   if (!opportunityChanged && !saveStateChanged && !otherPropsChanged) {

@@ -1045,6 +1045,7 @@ export type Database = {
           logo_url: string | null
           longitude: number | null
           name: string
+          banner_url: string | null
           opening_hours: string | null
           owner_id: string | null
           phone: string | null

@@ -2,7 +2,15 @@
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Platform } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  Dimensions, 
+  Platform,
+  PixelRatio,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
 import { FeedScreen } from '../features/feed/FeedScreen';
@@ -14,15 +22,23 @@ import { useBreakpoint } from '../hooks/useBreakpoint';
 
 const Tab = createBottomTabNavigator();
 const { width, height } = Dimensions.get('window');
+const pixelRatio = PixelRatio.get();
 
 // Responsive sizing
 const isSmallDevice = width < 375;
 const isMediumDevice = width >= 375 && width < 420;
 
+// ✅ Get icon size based on device density for sharper icons
+const getIconSize = (baseSize: number) => {
+  // Scale icon size based on pixel ratio for sharper rendering
+  const scaledSize = baseSize * Math.min(pixelRatio / 2, 1.2);
+  return Math.round(scaledSize);
+};
+
 // Custom Tab Bar Button for Pay
 const CustomTabBarButton = ({ children, onPress }: any) => {
   const buttonSize = isSmallDevice ? 52 : 60;
-  const iconSize = isSmallDevice ? 22 : 26;
+  const iconSize = isSmallDevice ? getIconSize(22) : getIconSize(26);
   
   return (
     <TouchableOpacity
@@ -37,7 +53,16 @@ const CustomTabBarButton = ({ children, onPress }: any) => {
         style={[styles.payButtonGradient, { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }]}
       >
         <View style={[styles.payButtonInner, { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }]}>
-          <Ionicons name="card" size={iconSize} color="#FFFFFF" />
+          <Ionicons 
+            name="card" 
+            size={iconSize} 
+            color="#FFFFFF" 
+            style={{ 
+              // ✅ Ensure icon is centered and sharp
+              textShadowColor: 'transparent',
+              shadowColor: 'transparent',
+            }} 
+          />
           <Text style={[styles.payLabel, { fontSize: isSmallDevice ? 8 : 9 }]}>Pay</Text>
         </View>
       </LinearGradient>
@@ -48,12 +73,27 @@ const CustomTabBarButton = ({ children, onPress }: any) => {
 // Custom Tab Icon
 const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }: any) => {
   const iconColor = focused ? '#4A7DFF' : 'rgba(255,255,255,0.6)';
-  const iconSize = isSmallDevice ? 20 : (isMediumDevice ? 22 : 24);
+  
+  // ✅ Larger base icon size for sharper display
+  const baseIconSize = isSmallDevice ? 22 : (isMediumDevice ? 24 : 26);
+  const iconSize = getIconSize(baseIconSize);
+  
   const labelSize = isSmallDevice ? 9 : 10;
   const wrapperPadding = isSmallDevice ? 4 : 6;
 
   const renderIcon = () => {
-    const commonProps = { size: iconSize, color: iconColor };
+    const commonProps = { 
+      size: iconSize, 
+      color: iconColor,
+      // ✅ These help with icon rendering quality
+      style: {
+        textShadowColor: 'transparent',
+        shadowColor: 'transparent',
+        // ✅ Ensures the icon is rendered at exact size
+        width: iconSize,
+        height: iconSize,
+      }
+    };
     switch (iconType) {
       case 'Ionicons':
         return <Ionicons name={icon} {...commonProps} />;
@@ -67,7 +107,7 @@ const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }:
   };
 
   if (isPay) {
-    return null; // Pay button uses CustomTabBarButton
+    return null;
   }
   
   return (
@@ -98,7 +138,6 @@ const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }:
 export const TabNavigator = () => {
   const { isDesktop } = useBreakpoint();
 
-  // Hide tab bar on desktop
   if (isDesktop) {
     return (
       <Tab.Navigator
@@ -232,17 +271,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: Platform.OS === 'ios' ? 80 : 70,
-    // ✅ More transparent - 55% opacity for better visibility of content behind
     backgroundColor: 'rgba(26, 42, 79, 0.55)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.05)',
     ...Platform.select({
       ios: {
-        // ✅ iOS - even more transparent with blur effect
         backgroundColor: 'rgba(26, 42, 79, 0.45)',
       },
       android: {
-        // ✅ Android - slightly more opaque for better readability
         backgroundColor: 'rgba(26, 42, 79, 0.60)',
       },
     }),
@@ -253,13 +289,15 @@ const styles = StyleSheet.create({
     position: 'relative',
     paddingVertical: 2,
     flex: 1,
-    // ✅ Prevent text from wrapping
     flexDirection: 'column',
   },
   iconWrapper: {
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    // ✅ Ensure icons are centered
+    minWidth: 40,
+    minHeight: 40,
   },
   iconWrapperFocused: {
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
@@ -270,7 +308,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: 0.3,
     textAlign: 'center',
-    // ✅ Force single line
     flexShrink: 0,
     flexWrap: 'nowrap',
     maxWidth: '100%',

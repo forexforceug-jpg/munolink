@@ -22,7 +22,7 @@ export class OpportunityFormatter {
       },
       location: {
         area: raw.area || 'Near you',
-        distance: raw.distance || '0.6 km',
+        distance: String(raw.distance || '0.6 km'),
       },
       price: raw.price,
       currency: raw.currency || 'UGX',

@@ -43,6 +43,7 @@ interface ShopData {
   is_verified: boolean | null;
   is_open: boolean | null;
   logo_url: string | null;
+  banner_url: string | null;
   cover_image?: string;
   description: string | null;
   created_at: string | null;
@@ -466,8 +467,8 @@ export const ShopProfileScreen: React.FC<ShopProfileScreenProps> = ({ route, nav
       >
         {/* Cover Image */}
         <View style={styles.coverContainer}>
-          {shop.logo_url ? (
-            <Image source={{ uri: shop.logo_url }} style={styles.coverImage} />
+          {shop.banner_url ? (
+            <Image source={{ uri: shop.banner_url }} style={styles.coverImage} />
           ) : (
             <View style={[styles.coverImage, styles.coverImagePlaceholder]}>
               <Text style={styles.coverImagePlaceholderText}>🏪</Text>

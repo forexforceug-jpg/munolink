@@ -19,7 +19,6 @@ import {
   ActivityIndicator,
   Switch,
   Animated,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -41,24 +40,7 @@ type CatalogItem = Database['public']['Tables']['catalog']['Row'];
 type ServiceCatalogItem = Database['public']['Tables']['service_catalog']['Row'];
 type ShopProduct = Database['public']['Tables']['shop_products']['Row'];
 type ProviderService = Database['public']['Tables']['provider_services']['Row'];
-type ProductAttribute = Database['public']['Tables']['product_attributes']['Row'];
-type Category = Database['public']['Tables']['categories']['Row'];
 type Institution = Database['public']['Tables']['institutions']['Row'];
-
-// --- Opportunity Scene Interface ---
-interface OpportunityScene {
-  id: string;
-  opportunity_id: string;
-  opportunity_type: 'product' | 'service';
-  scene_index: number;
-  scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
-  image_url: string;
-  image_caption: string | null;
-  order_index: number;
-  is_primary: boolean;
-  created_at: string;
-  updated_at: string;
-}
 
 // --- Extended Business Type ---
 interface ExtendedBusiness {
@@ -73,85 +55,56 @@ interface ExtendedBusiness {
   rating: number | null;
   review_count: number | null;
   logo_url: string | null;
+  banner_url?: string | null;
   phone: string | null;
   opening_hours: string | null;
   is_open: boolean | null;
   created_at: string | null;
-  // Service-specific fields
   price?: number;
   service_id?: string;
-  // Institution-specific fields
   institution_id?: string;
 }
 
-// --- Business Type Configuration ---
+// --- Simplified Business Type Configuration ---
 const BUSINESS_CONFIGS: Record<string, any> = {
   shop: {
     offeringLabel: 'Products',
     offeringIcon: 'cube-outline',
-    activityLabel: 'Orders',
-    activityIcon: 'receipt-outline',
-    statuses: ['New', 'Confirmed', 'Preparing', 'Ready', 'Shipped', 'Completed', 'Cancelled'],
-    stats: ['Revenue', 'Orders', 'Customers', 'Products'],
     catalogTable: 'catalog',
     offeringTable: 'shop_products',
     foreignKey: 'catalog_id',
     priceField: 'regular_price',
     stockField: 'in_stock',
     activeField: 'in_stock',
-    sellerSpecsField: 'seller_specifications' as string,
-    supportsAttributes: true,
+    supportsAttributes: false,
     hasStock: true,
   },
   service: {
     offeringLabel: 'Services',
     offeringIcon: 'construct-outline',
-    activityLabel: 'Bookings',
-    activityIcon: 'calendar-outline',
-    statuses: ['Requested', 'Accepted', 'Scheduled', 'In Progress', 'Completed', 'Cancelled'],
-    stats: ['Revenue', 'Bookings', 'Customers', 'Services'],
     catalogTable: 'service_catalog',
     offeringTable: 'provider_services',
     foreignKey: 'service_id',
     priceField: 'price',
     activeField: 'is_active',
-    sellerSpecsField: null,
     supportsAttributes: false,
     hasStock: false,
   },
   institution: {
     offeringLabel: 'Offerings',
     offeringIcon: 'business-outline',
-    activityLabel: 'Reservations',
-    activityIcon: 'calendar-outline',
-    statuses: ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled'],
-    stats: ['Revenue', 'Reservations', 'Customers', 'Offerings'],
     catalogTable: 'service_catalog',
     offeringTable: 'provider_services',
     foreignKey: 'service_id',
     priceField: 'price',
     activeField: 'is_active',
-    sellerSpecsField: null,
     supportsAttributes: false,
     hasStock: false,
   },
 };
 
-// --- Scene Types ---
-const SCENE_TYPES = [
-  { id: 'hero', label: 'Hero', icon: 'star', description: 'Main image shown first' },
-  { id: 'details', label: 'Details', icon: 'information-circle', description: 'Product details view' },
-  { id: 'trust', label: 'Trust', icon: 'shield-checkmark', description: 'Trust signals' },
-  { id: 'gallery', label: 'Gallery', icon: 'images', description: 'Multiple images' },
-  { id: 'extra', label: 'Extra', icon: 'add-circle', description: 'Additional image' },
-];
-
-// --- Tag Suggestions ---
-const SUGGESTED_TAGS = [
-  'Premium', 'Best Seller', 'New', 'Limited', 'Exclusive', 
-  'Free Delivery', 'Warranty', 'Certified', 'Eco-Friendly', 
-  'Organic', 'Handmade', 'Custom', 'On Sale', 'Trending'
-];
+// --- Placeholder Image ---
+const PLACEHOLDER_IMAGE = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCIgdmlld0JveD0iMCAwIDgwIDgwIj48cmVjdCB3aWR0aD0iODAiIGhlaWdodD0iODAiIGZpbGw9IiM0QTdERkYiLz48dGV4dCB4PSI0MCIgeT0iNDAiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiNGRkZGRkYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIiBmb250LWZhbWlseT0iQXJpYWwiPk5vIEltYWdlPC90ZXh0Pjwvc3ZnPg==';
 
 // ============================================================
 // BUSINESS DASHBOARD MAIN COMPONENT
@@ -177,45 +130,25 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   const [showSceneManager, setShowSceneManager] = useState(false);
   const [showBusinessSettings, setShowBusinessSettings] = useState(false);
   
-  // --- Categories from Database ---
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
-  const [brandOptions, setBrandOptions] = useState<string[]>([]);
-  
   // --- Add Offering States ---
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [offeringType, setOfferingType] = useState<'product' | 'service'>('product');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [selectedCatalogItem, setSelectedCatalogItem] = useState<any>(null);
-  const [isCustomMode, setIsCustomMode] = useState(false);
-  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
+  // --- Form Data ---
   const [formData, setFormData] = useState({
     name: '',
-    category: '',
-    brand: '',
     description: '',
     price: '',
-    discount: '',
-    discountType: 'percentage' as 'percentage' | 'fixed',
-    stock: '',
+    category: '',
+    images: [] as string[],
     in_stock: true,
     is_active: true,
-    images: [] as string[],
-    specifications: {} as Record<string, any>,
-    attributeValues: {} as Record<string, string>,
-    tags: [] as string[],
-    tagInput: '',
+    brand: '',
     duration: '',
-    custom_name: '',
-    custom_description: '',
   });
-  const [saving, setSaving] = useState(false);
-  const [productAttributes, setProductAttributes] = useState<ProductAttribute[]>([]);
-  const [showSpecsModal, setShowSpecsModal] = useState(false);
-  const [specKey, setSpecKey] = useState('');
-  const [specValue, setSpecValue] = useState('');
   
   // --- Scene Manager States ---
   const [sceneImages, setSceneImages] = useState<Record<string, string>>({});
@@ -234,7 +167,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   });
   const [savingSettings, setSavingSettings] = useState(false);
   
-  const searchInputRef = useRef<TextInput>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(height)).current;
 
@@ -242,32 +174,133 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   // 1. HELPER FUNCTIONS
   // ============================================================
 
-  // --- Load Categories ---
-  const loadCategories = async () => {
+  // --- Upload Image to Supabase Storage ---
+  const uploadImage = async (uri: string, folder: string): Promise<string> => {
     try {
-      const { data, error } = await supabase
-        .from('categories')
-        .select('name')
-        .order('name', { ascending: true });
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      const fileExt = blob.type.split('/')[1] || 'jpg';
+      const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${fileExt}`;
+      
+      const { data, error } = await supabase.storage
+        .from('catalog-images')
+        .upload(fileName, blob, {
+          cacheControl: '3600',
+          upsert: false,
+        });
 
-      if (!error && data) {
-        const names = data.map(c => c.name);
-        setCategoryOptions(names);
+      if (error) {
+        console.error('Upload error:', error);
+        throw error;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('catalog-images')
+        .getPublicUrl(fileName);
+
+      return urlData.publicUrl;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      throw error;
+    }
+  };
+
+  // --- Upload Multiple Images ---
+  const uploadImages = async (uris: string[], folder: string): Promise<string[]> => {
+    const uploadedUrls: string[] = [];
+    
+    for (const uri of uris) {
+      try {
+        const url = await uploadImage(uri, folder);
+        uploadedUrls.push(url);
+      } catch (error) {
+        console.error('Failed to upload image:', uri, error);
+      }
+    }
+    
+    return uploadedUrls;
+  };
+
+  // --- Upload Business Image to catalog-images bucket ---
+  const uploadBusinessImage = async (uri: string, folder: string): Promise<string> => {
+    try {
+      console.log('📤 Uploading business image to catalog-images...');
+      
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      const fileExt = blob.type.split('/')[1] || 'jpg';
+      const fileName = `business/${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${fileExt}`;
+      
+      console.log(`📝 Filename: ${fileName}`);
+      
+      const { data, error } = await supabase.storage
+        .from('catalog-images')
+        .upload(fileName, blob, {
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (error) {
+        console.error('Upload error:', error);
+        throw error;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('catalog-images')
+        .getPublicUrl(fileName);
+
+      console.log('✅ Uploaded:', urlData.publicUrl);
+      return urlData.publicUrl;
+    } catch (error) {
+      console.error('Error uploading business image:', error);
+      throw error;
+    }
+  };
+
+  // --- Delete Image from Storage ---
+  const deleteImageFromStorage = async (imageUrl: string): Promise<void> => {
+    try {
+      const urlParts = imageUrl.split('/');
+      const filePath = urlParts.slice(urlParts.indexOf('catalog-images') + 1).join('/');
+      
+      if (filePath) {
+        const { error } = await supabase.storage
+          .from('catalog-images')
+          .remove([filePath]);
+        
+        if (error) {
+          console.error('Error deleting image from storage:', error);
+        }
       }
     } catch (error) {
-      console.error('Error loading categories:', error);
+      console.error('Error deleting image:', error);
+    }
+  };
+
+  // --- Delete Multiple Images from Storage ---
+  const deleteImagesFromStorage = async (imageUrls: string[]): Promise<void> => {
+    for (const url of imageUrls) {
+      await deleteImageFromStorage(url);
     }
   };
 
   // --- Save Scenes ---
   const saveScenes = async (opportunityId: string, images: string[], type: 'product' | 'service') => {
     try {
-      const sceneTypes = ['hero', 'details', 'trust', 'gallery', 'extra'];
+      const sceneTypes: ('hero' | 'details' | 'trust' | 'gallery' | 'extra')[] = ['hero', 'details', 'trust', 'gallery', 'extra'];
       const maxScenes = Math.min(images.length, 5);
+
+      await supabase
+        .from('opportunity_scenes')
+        .delete()
+        .eq('opportunity_id', opportunityId)
+        .eq('opportunity_type', type);
 
       for (let i = 0; i < maxScenes; i++) {
         const sceneType = sceneTypes[i] || 'gallery';
-        await (supabase as any)
+        await supabase
           .from('opportunity_scenes')
           .insert({
             opportunity_id: opportunityId,
@@ -282,89 +315,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     } catch (error) {
       console.error('Error saving scenes:', error);
     }
-  };
-
-  // --- Save Product Attributes ---
-  const saveProductAttributes = async (catalogId: string, productId: string) => {
-    try {
-      const entries = Object.entries(formData.attributeValues).filter(([_, value]) => 
-        value && typeof value === 'string' && value.trim() !== ''
-      );
-
-      for (const [attributeName, value] of entries) {
-        let { data: existingAttribute } = await supabase
-          .from('product_attributes')
-          .select('id')
-          .eq('catalog_id', catalogId)
-          .eq('attribute_name', attributeName)
-          .single();
-
-        let attributeId: string;
-
-        if (!existingAttribute) {
-          const { data: newAttr, error: createError } = await supabase
-            .from('product_attributes')
-            .insert({
-              catalog_id: catalogId,
-              attribute_name: attributeName,
-              attribute_value: value,
-              attribute_type: 'text',
-            })
-            .select()
-            .single();
-
-          if (createError) throw createError;
-          if (!newAttr) throw new Error('Failed to create attribute');
-          attributeId = (newAttr as any).id;
-        } else {
-          attributeId = existingAttribute.id;
-        }
-
-        await supabase
-          .from('product_attribute_values')
-          .insert({
-            product_id: productId,
-            attribute_id: attributeId,
-            value: value,
-          });
-      }
-    } catch (error) {
-      console.error('Error saving attributes:', error);
-    }
-  };
-
-  // --- Add Tag ---
-  const addTag = (tag: string) => {
-    const trimmed = tag.trim();
-    if (!trimmed) return;
-    if (formData.tags.includes(trimmed)) {
-      Alert.alert('Tag Exists', 'This tag is already added');
-      return;
-    }
-    if (formData.tags.length >= 10) {
-      Alert.alert('Too Many Tags', 'Maximum 10 tags allowed');
-      return;
-    }
-    setFormData(prev => ({
-      ...prev,
-      tags: [...prev.tags, trimmed],
-      tagInput: '',
-    }));
-  };
-
-  // --- Remove Tag ---
-  const removeTag = (tag: string) => {
-    setFormData(prev => ({
-      ...prev,
-      tags: prev.tags.filter(t => t !== tag),
-    }));
-  };
-
-  // --- Remove Specification ---
-  const removeSpecification = (key: string) => {
-    const newSpecs = { ...formData.specifications };
-    delete newSpecs[key];
-    setFormData(prev => ({ ...prev, specifications: newSpecs }));
   };
 
   // --- Pick Images ---
@@ -395,7 +345,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     }
   };
 
-  // --- Remove Image ---
+  // --- Remove Image from Form ---
   const removeImage = (index: number) => {
     setFormData(prev => ({
       ...prev,
@@ -403,172 +353,19 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     }));
   };
 
-  // --- Select Catalog Item ---
-  const selectCatalogItem = (item: any) => {
-    setSelectedCatalogItem(item);
-    setIsCustomMode(false);
-    setShowCustomForm(true);
-    
-    const specs = item.specifications || {};
-    const editableSpecs: Record<string, any> = {};
-    Object.keys(specs).forEach(key => {
-      editableSpecs[key] = specs[key] || '';
-    });
-
-    setFormData({
-      name: item.name || '',
-      category: item.category || '',
-      brand: item.brand || '',
-      description: item.description || '',
-      price: '',
-      discount: '',
-      discountType: 'percentage',
-      stock: '',
-      in_stock: true,
-      is_active: true,
-      images: item.images || [],
-      specifications: editableSpecs,
-      attributeValues: {},
-      tags: item.tags || [],
-      tagInput: '',
-      duration: item.duration || '',
-      custom_name: item.name || '',
-      custom_description: item.description || '',
-    });
-
-    if (offeringType === 'product' && config.supportsAttributes) {
-      loadProductAttributes(item.id);
-    }
-  };
-
-  // --- Create New Custom Offering ---
-  const createCustomOffering = () => {
-    setSelectedCatalogItem(null);
-    setIsCustomMode(true);
-    setShowCustomForm(true);
-    setFormData({
-      name: searchQuery.trim() || '',
-      category: '',
-      brand: '',
-      description: '',
-      price: '',
-      discount: '',
-      discountType: 'percentage',
-      stock: '',
-      in_stock: true,
-      is_active: true,
-      images: [],
-      specifications: {},
-      attributeValues: {},
-      tags: [],
-      tagInput: '',
-      duration: '',
-      custom_name: '',
-      custom_description: '',
-    });
-    setSearchResults([]);
-    setSearchQuery('');
-    setProductAttributes([]);
-  };
-
-  // --- Load Product Attributes ---
-  const loadProductAttributes = async (catalogId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('product_attributes')
-        .select('*')
-        .eq('catalog_id', catalogId)
-        .order('sort_order', { ascending: true });
-
-      if (!error && data) {
-        setProductAttributes(data);
-        const attributeValues: Record<string, string> = {};
-        data.forEach((attr: ProductAttribute) => {
-          attributeValues[attr.attribute_name] = '';
-        });
-        setFormData(prev => ({ ...prev, attributeValues }));
-      }
-    } catch (error) {
-      console.error('Error loading attributes:', error);
-    }
-  };
-
-  // --- Add Specification ---
-  const addSpecification = () => {
-    if (!specKey.trim() || !specValue.trim()) {
-      Alert.alert('Error', 'Please enter both key and value');
-      return;
-    }
-    setFormData(prev => ({
-      ...prev,
-      specifications: { ...prev.specifications, [specKey.trim()]: specValue.trim() },
-    }));
-    setSpecKey('');
-    setSpecValue('');
-    setShowSpecsModal(false);
-  };
-
-  // --- Smart Search ---
-  const performSearch = async (query: string) => {
-    setSearchQuery(query);
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    setIsSearching(true);
-    const table = offeringType === 'product' ? 'catalog' : 'service_catalog';
-    
-    try {
-      let searchQuery = `name.ilike.%${query}%,category.ilike.%${query}%`;
-      if (offeringType === 'product') {
-        searchQuery += `,brand.ilike.%${query}%`;
-      }
-      
-      const { data, error } = await supabase
-        .from(table)
-        .select('*')
-        .or(searchQuery)
-        .limit(15);
-
-      if (!error && data) {
-        setSearchResults(data);
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
   // --- Reset Form ---
   const resetForm = () => {
     setFormData({
       name: '',
-      category: '',
-      brand: '',
       description: '',
       price: '',
-      discount: '',
-      discountType: 'percentage',
-      stock: '',
+      category: '',
+      images: [],
       in_stock: true,
       is_active: true,
-      images: [],
-      specifications: {},
-      attributeValues: {},
-      tags: [],
-      tagInput: '',
+      brand: '',
       duration: '',
-      custom_name: '',
-      custom_description: '',
     });
-    setSelectedCatalogItem(null);
-    setIsCustomMode(false);
-    setSearchResults([]);
-    setSearchQuery('');
-    setProductAttributes([]);
-    setShowCustomForm(false);
   };
 
   // --- Load Shop Offerings (Products) ---
@@ -600,7 +397,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             }
           }
           
-          const { data: sceneData } = await (supabase as any)
+          const { data: sceneData } = await supabase
             .from('opportunity_scenes')
             .select('*')
             .eq('opportunity_id', item.id)
@@ -654,7 +451,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             }
           }
           
-          const { data: sceneData } = await (supabase as any)
+          const { data: sceneData } = await supabase
             .from('opportunity_scenes')
             .select('*')
             .eq('opportunity_id', item.id)
@@ -708,7 +505,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             }
           }
           
-          const { data: sceneData } = await (supabase as any)
+          const { data: sceneData } = await supabase
             .from('opportunity_scenes')
             .select('*')
             .eq('opportunity_id', item.id)
@@ -770,6 +567,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
           rating: shop.rating || 0,
           review_count: shop.review_count || 0,
           logo_url: shop.logo_url || null,
+          banner_url: (shop as any).banner_url || null,
           phone: shop.phone || null,
           opening_hours: shop.opening_hours || null,
           is_open: shop.is_open !== false,
@@ -791,7 +589,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
         if (!serviceError && serviceData && serviceData.length > 0) {
           const service = serviceData[0];
           
-          // Load the service catalog separately
           let catalogData = null;
           if (service.service_id) {
             const { data: catalog, error: catalogError } = await supabase
@@ -817,6 +614,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             rating: 0,
             review_count: 0,
             logo_url: null,
+            banner_url: null,
             phone: null,
             opening_hours: null,
             is_open: true,
@@ -852,6 +650,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             rating: institution.rating || 0,
             review_count: institution.review_count || 0,
             logo_url: institution.logo || null,
+            banner_url: institution.cover_image || null,
             phone: institution.phone || null,
             opening_hours: institution.working_hours ? JSON.stringify(institution.working_hours) : null,
             is_open: institution.is_open !== false,
@@ -864,13 +663,11 @@ const BusinessDashboardContent = ({ navigation }: any) => {
         }
       }
 
-      // If no business found at all
       if (!businessData) {
         setLoading(false);
         return;
       }
 
-      // Set the business state
       setBusiness(businessData);
       setBusinessType(businessType);
       setCategory(businessData.category || '');
@@ -878,7 +675,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
 
       setBusinessSettings({
         logo: businessData.logo_url || '',
-        banner: '',
+        banner: businessData.banner_url || '',
         description: businessData.description || '',
         phone: businessData.phone || '',
         email: '',
@@ -896,7 +693,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
         await loadInstitutionOfferings(businessId);
       }
 
-      // Load transactions (works for all types)
+      // Load transactions
       if (businessId) {
         const { data: activityData } = await supabase
           .from('transactions')
@@ -919,8 +716,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
         });
       }
 
-      await loadCategories();
-
     } catch (error) {
       console.error('Error loading dashboard:', error);
     } finally {
@@ -929,7 +724,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  // --- Publish Offering ---
+  // --- Publish Offering (CREATE) ---
   const publishOffering = async () => {
     if (!business) {
       Alert.alert('Error', 'No business found');
@@ -937,7 +732,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     }
 
     if (!formData.name.trim()) {
-      Alert.alert('Error', 'Please enter a name');
+      Alert.alert('Error', 'Please enter a name/title');
       return;
     }
 
@@ -950,209 +745,94 @@ const BusinessDashboardContent = ({ navigation }: any) => {
 
     try {
       const price = parseFloat(formData.price);
-      const discount = formData.discount ? parseFloat(formData.discount) : 0;
-      
-      let finalPrice = price;
-      if (discount > 0) {
-        if (formData.discountType === 'percentage') {
-          finalPrice = price - (price * discount / 100);
-        } else {
-          finalPrice = price - discount;
-        }
+      const folder = offeringType === 'product' ? 'products' : 'services';
+
+      let uploadedImageUrls: string[] = [];
+      if (formData.images.length > 0) {
+        console.log('📤 Uploading images...');
+        uploadedImageUrls = await uploadImages(formData.images, folder);
+        console.log('✅ Uploaded images:', uploadedImageUrls);
       }
 
-      let catalogId: string = selectedCatalogItem?.id || '';
       const table = offeringType === 'product' ? 'catalog' : 'service_catalog';
-
-      // If custom mode or no catalog ID, create catalog entry first
-      if (isCustomMode || !catalogId) {
-        const insertData: any = {
-          name: formData.name.trim(),
-          category: formData.category || 'Uncategorized',
-          description: formData.description || null,
-          specifications: formData.specifications || {},
-          images: formData.images || [],
-          is_active: true,
-          tags: formData.tags || [],
-        };
-        
-        if (offeringType === 'product') {
-          insertData.brand = formData.brand || null;
-        }
-        
-        if (offeringType === 'service') {
-          insertData.duration = formData.duration || null;
-        }
-
-        const { data: newCatalog, error: catalogError } = await supabase
-          .from(table)
-          .insert(insertData)
-          .select()
-          .single();
-
-        if (catalogError) throw catalogError;
-        if (!newCatalog) throw new Error('Failed to create catalog item');
-        catalogId = (newCatalog as any).id;
-      }
-
-      if (!catalogId) {
-        throw new Error('No catalog ID available. Please select or create a catalog item.');
-      }
-
-      let existingOffering = null;
+      
+      const insertData: any = {
+        name: formData.name.trim(),
+        category: formData.category.trim() || 'Uncategorized',
+        description: formData.description || null,
+        specifications: {},
+        images: uploadedImageUrls,
+        is_active: true,
+        tags: [],
+      };
       
       if (offeringType === 'product') {
-        const { data, error } = await supabase
-          .from('shop_products')
-          .select('id, catalog_id, regular_price, in_stock, seller_specifications')
-          .eq('shop_id', business.id)
-          .eq('catalog_id', catalogId)
-          .maybeSingle();
-
-        if (!error && data) {
-          existingOffering = data;
-        }
-      } else {
-        const { data, error } = await supabase
-          .from('provider_services')
-          .select('id, service_id, price, is_active')
-          .eq('user_id', business.owner_id!)
-          .eq('service_id', catalogId)
-          .maybeSingle();
-
-        if (!error && data) {
-          existingOffering = data;
-        }
+        insertData.brand = formData.brand || null;
       }
+      
+      if (offeringType === 'service') {
+        insertData.duration = formData.duration || null;
+      }
+
+      const { data: newCatalog, error: catalogError } = await supabase
+        .from(table)
+        .insert(insertData)
+        .select()
+        .single();
+
+      if (catalogError) throw catalogError;
+      if (!newCatalog) throw new Error('Failed to create catalog item');
+      
+      const catalogId = (newCatalog as any).id;
 
       let offeringId: string | null = null;
 
-      if (existingOffering) {
-        if (offeringType === 'product') {
-          const { data, error } = await supabase
-            .from('shop_products')
-            .update({
-              regular_price: finalPrice,
-              in_stock: formData.in_stock,
-              seller_specifications: formData.specifications || {},
-            })
-            .eq('id', existingOffering.id)
-            .select()
-            .single();
+      if (offeringType === 'product') {
+        const { data, error } = await supabase
+          .from('shop_products')
+          .insert({
+            shop_id: business.id,
+            catalog_id: catalogId,
+            regular_price: price,
+            in_stock: formData.in_stock,
+            seller_specifications: {},
+          })
+          .select()
+          .single();
 
-          if (error) throw error;
-          offeringId = existingOffering.id;
-        } else {
-          const { data, error } = await supabase
-            .from('provider_services')
-            .update({
-              price: finalPrice,
-              is_active: formData.is_active,
-            })
-            .eq('id', existingOffering.id)
-            .select()
-            .single();
-
-          if (error) throw error;
-          offeringId = existingOffering.id;
-        }
-
-        Alert.alert(
-          'Updated!',
-          `Your ${offeringType} has been updated successfully!`,
-          [{ text: 'OK' }]
-        );
-
+        if (error) throw error;
+        if (!data) throw new Error('Failed to create product');
+        offeringId = (data as any).id;
       } else {
-        if (offeringType === 'product') {
-          const { data, error } = await supabase
-            .from('shop_products')
-            .insert({
-              shop_id: business.id,
-              catalog_id: catalogId,
-              regular_price: finalPrice,
-              in_stock: formData.in_stock,
-              seller_specifications: formData.specifications || {},
-            })
-            .select()
-            .single();
+        const { data, error } = await supabase
+          .from('provider_services')
+          .insert({
+            user_id: business.owner_id!,
+            service_id: catalogId,
+            price: price,
+            is_active: formData.is_active,
+            ...(businessType === 'institution' ? { institution_id: business.id } : {}),
+          })
+          .select()
+          .single();
 
-          if (error) {
-            if (error.code === '23505') {
-              await loadDashboard();
-              Alert.alert(
-                'Already Exists',
-                `This ${offeringType} is already in your catalog. It has been refreshed.`,
-                [{ text: 'OK' }]
-              );
-              setSaving(false);
-              setShowAddModal(false);
-              setShowCustomForm(false);
-              resetForm();
-              return;
-            }
-            throw error;
-          }
-          if (!data) throw new Error('Failed to create product');
-          offeringId = (data as any).id;
-
-          if (config.supportsAttributes && Object.keys(formData.attributeValues).length > 0 && catalogId) {
-            await saveProductAttributes(catalogId, offeringId);
-          }
-
-        } else {
-          const { data, error } = await supabase
-            .from('provider_services')
-            .insert({
-              user_id: business.owner_id!,
-              service_id: catalogId,
-              price: finalPrice,
-              is_active: formData.is_active,
-              ...(businessType === 'institution' ? { institution_id: business.id } : {}),
-            })
-            .select()
-            .single();
-
-          if (error) {
-            if (error.code === '23505') {
-              await loadDashboard();
-              Alert.alert(
-                'Already Exists',
-                `This ${offeringType} is already in your catalog. It has been refreshed.`,
-                [{ text: 'OK' }]
-              );
-              setSaving(false);
-              setShowAddModal(false);
-              setShowCustomForm(false);
-              resetForm();
-              return;
-            }
-            throw error;
-          }
-          if (!data) throw new Error('Failed to create service');
-          offeringId = (data as any).id;
-        }
-
-        Alert.alert(
-          'Success!',
-          `${isCustomMode ? 'Custom ' : ''}${offeringType === 'product' ? 'Product' : 'Service'} published successfully!`,
-          [{ text: 'OK' }]
-        );
+        if (error) throw error;
+        if (!data) throw new Error('Failed to create service');
+        offeringId = (data as any).id;
       }
 
-      if (offeringId && formData.images.length > 0) {
-        await (supabase as any)
-          .from('opportunity_scenes')
-          .delete()
-          .eq('opportunity_id', offeringId)
-          .eq('opportunity_type', offeringType);
-        
-        await saveScenes(offeringId, formData.images, offeringType);
+      if (offeringId && uploadedImageUrls.length > 0) {
+        await saveScenes(offeringId, uploadedImageUrls, offeringType);
       }
+
+      Alert.alert(
+        'Success!',
+        `${offeringType === 'product' ? 'Product' : 'Service'} published successfully!`,
+        [{ text: 'OK' }]
+      );
 
       resetForm();
       setShowAddModal(false);
-      setShowCustomForm(false);
       await loadDashboard();
 
     } catch (error: any) {
@@ -1163,6 +843,196 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     }
   };
 
+  // --- Update Offering (EDIT) ---
+  const updateOffering = async () => {
+    if (!selectedOffering) {
+      Alert.alert('Error', 'No offering selected');
+      return;
+    }
+
+    if (!formData.name.trim()) {
+      Alert.alert('Error', 'Please enter a name/title');
+      return;
+    }
+
+    if (!formData.price || parseFloat(formData.price) <= 0) {
+      Alert.alert('Error', 'Please enter a valid price');
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const price = parseFloat(formData.price);
+      const folder = offeringType === 'product' ? 'products' : 'services';
+      
+      const catalogData = selectedOffering.catalog || selectedOffering.service_catalog || {};
+      const existingImages = catalogData.images || [];
+      
+      const removedImages = existingImages.filter((img: string) => !formData.images.includes(img));
+      
+      if (removedImages.length > 0) {
+        console.log('🗑️ Deleting removed images:', removedImages);
+        await deleteImagesFromStorage(removedImages);
+      }
+      
+      const localUris = formData.images.filter((img: string) => img.startsWith('file://') || img.startsWith('blob:'));
+      let newUploadedImages: string[] = [];
+      
+      if (localUris.length > 0) {
+        console.log('📤 Uploading new images...');
+        newUploadedImages = await uploadImages(localUris, folder);
+        console.log('✅ Uploaded new images:', newUploadedImages);
+      }
+      
+      const existingUrls = formData.images.filter((img: string) => !img.startsWith('file://') && !img.startsWith('blob:'));
+      const allImageUrls = [...existingUrls, ...newUploadedImages];
+
+      const table = offeringType === 'product' ? 'catalog' : 'service_catalog';
+      const catalogId = catalogData.id;
+      
+      const updateData: any = {
+        name: formData.name.trim(),
+        category: formData.category.trim() || 'Uncategorized',
+        description: formData.description || null,
+        images: allImageUrls,
+        updated_at: new Date().toISOString(),
+      };
+      
+      if (offeringType === 'product') {
+        updateData.brand = formData.brand || null;
+      }
+      
+      if (offeringType === 'service') {
+        updateData.duration = formData.duration || null;
+      }
+
+      const { error: catalogError } = await supabase
+        .from(table)
+        .update(updateData)
+        .eq('id', catalogId);
+
+      if (catalogError) throw catalogError;
+
+      if (offeringType === 'product') {
+        const { error } = await supabase
+          .from('shop_products')
+          .update({
+            regular_price: price,
+            in_stock: formData.in_stock,
+          })
+          .eq('id', selectedOffering.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('provider_services')
+          .update({
+            price: price,
+            is_active: formData.is_active,
+          })
+          .eq('id', selectedOffering.id);
+
+        if (error) throw error;
+      }
+
+      if (allImageUrls.length > 0) {
+        await saveScenes(selectedOffering.id, allImageUrls, offeringType);
+      }
+
+      Alert.alert(
+        'Success!',
+        `${offeringType === 'product' ? 'Product' : 'Service'} updated successfully!`,
+        [{ text: 'OK' }]
+      );
+
+      setShowEditModal(false);
+      resetForm();
+      await loadDashboard();
+
+    } catch (error: any) {
+      console.error('Update error:', error);
+      Alert.alert('Error', error.message || 'Failed to update');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // --- Delete Offering ---
+  const deleteOffering = async () => {
+    if (!selectedOffering) {
+      Alert.alert('Error', 'No offering selected');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const catalogData = selectedOffering.catalog || selectedOffering.service_catalog || {};
+      
+      if (catalogData.images && catalogData.images.length > 0) {
+        console.log('🗑️ Deleting images...');
+        await deleteImagesFromStorage(catalogData.images);
+      }
+      
+      await supabase
+        .from('opportunity_scenes')
+        .delete()
+        .eq('opportunity_id', selectedOffering.id)
+        .eq('opportunity_type', selectedOffering.type || 'product');
+      
+      if (selectedOffering.type === 'product') {
+        await supabase
+          .from('shop_products')
+          .delete()
+          .eq('id', selectedOffering.id);
+      } else {
+        await supabase
+          .from('provider_services')
+          .delete()
+          .eq('id', selectedOffering.id);
+      }
+      
+      const table = selectedOffering.type === 'product' ? 'catalog' : 'service_catalog';
+      await supabase
+        .from(table)
+        .delete()
+        .eq('id', catalogData.id);
+      
+      Alert.alert('Success', 'Offering deleted successfully!');
+      setShowDeleteConfirm(false);
+      setSelectedOffering(null);
+      await loadDashboard();
+      
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      Alert.alert('Error', error.message || 'Failed to delete');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // --- Open Edit Modal ---
+  const openEditModal = (offering: any) => {
+    const catalogData = offering.catalog || offering.service_catalog || {};
+    
+    setSelectedOffering(offering);
+    setOfferingType(offering.type || 'product');
+    
+    setFormData({
+      name: catalogData.name || '',
+      description: catalogData.description || '',
+      price: offering.regular_price?.toString() || offering.price?.toString() || '',
+      category: catalogData.category || '',
+      images: catalogData.images || [],
+      in_stock: offering.in_stock !== undefined ? offering.in_stock : true,
+      is_active: offering.is_active !== undefined ? offering.is_active : true,
+      brand: catalogData.brand || '',
+      duration: catalogData.duration || '',
+    });
+    
+    setShowEditModal(true);
+  };
+
   // --- Open Scene Manager ---
   const openSceneManager = async (offering: any) => {
     setSelectedOffering(offering);
@@ -1170,7 +1040,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     
     const type = offering.type || 'product';
     
-    const { data } = await (supabase as any)
+    const { data } = await supabase
       .from('opportunity_scenes')
       .select('*')
       .eq('opportunity_id', offering.id)
@@ -1180,7 +1050,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     if (data) {
       const sceneMap: Record<string, string> = {};
       const gallery: string[] = [];
-      data.forEach((scene: OpportunityScene) => {
+      data.forEach((scene: any) => {
         if (scene.scene_type === 'gallery') {
           gallery.push(scene.image_url);
         } else {
@@ -1213,23 +1083,29 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     if (!selectedOffering) return;
 
     try {
-      const imageUrl = imageUri;
       const type = selectedOffering.type || 'product';
       
-      const { error } = await (supabase as any)
+      const validSceneTypes: ('hero' | 'details' | 'trust' | 'gallery' | 'extra')[] = ['hero', 'details', 'trust', 'gallery', 'extra'];
+      const sceneIndex = validSceneTypes.indexOf(sceneType as any);
+      
+      if (sceneIndex === -1) {
+        throw new Error('Invalid scene type');
+      }
+      
+      const { error } = await supabase
         .from('opportunity_scenes')
         .upsert({
           opportunity_id: selectedOffering.id,
           opportunity_type: type,
-          scene_type: sceneType,
-          scene_index: SCENE_TYPES.findIndex(s => s.id === sceneType) + 1,
-          image_url: imageUrl,
+          scene_type: sceneType as 'hero' | 'details' | 'trust' | 'gallery' | 'extra',
+          scene_index: sceneIndex + 1,
+          image_url: imageUri,
           is_primary: sceneType === 'hero',
         }, { onConflict: 'opportunity_id, scene_type' });
 
       if (error) throw error;
 
-      setSceneImages(prev => ({ ...prev, [sceneType]: imageUrl }));
+      setSceneImages(prev => ({ ...prev, [sceneType]: imageUri }));
       Alert.alert('Success', 'Scene updated successfully!');
 
     } catch (error) {
@@ -1255,11 +1131,10 @@ const BusinessDashboardContent = ({ navigation }: any) => {
 
       if (!result.canceled && result.assets) {
         const newImages = result.assets.map(asset => asset.uri);
-        const allImages = [...galleryImages, ...newImages];
         const type = selectedOffering.type || 'product';
         
         for (const img of newImages) {
-          await (supabase as any)
+          await supabase
             .from('opportunity_scenes')
             .insert({
               opportunity_id: selectedOffering.id,
@@ -1271,7 +1146,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             });
         }
         
-        setGalleryImages(allImages);
+        setGalleryImages(prev => [...prev, ...newImages]);
       }
     } catch (error) {
       console.error('Error adding gallery images:', error);
@@ -1282,7 +1157,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   const removeGalleryImage = async (index: number) => {
     const imageToRemove = galleryImages[index];
     try {
-      await (supabase as any)
+      await supabase
         .from('opportunity_scenes')
         .delete()
         .eq('opportunity_id', selectedOffering.id)
@@ -1300,41 +1175,99 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     
     setSavingSettings(true);
     try {
-      // Check which table to update based on business type
+      let logoUrl = businessSettings.logo;
+      let bannerUrl = businessSettings.banner;
+
+      console.log('🔄 Starting business settings save...');
+      console.log('📷 Logo:', logoUrl ? 'Has logo' : 'No logo');
+      console.log('📷 Banner:', bannerUrl ? 'Has banner' : 'No banner');
+
+      // Upload logo if it's a local file
+      if (logoUrl && (logoUrl.startsWith('file://') || logoUrl.startsWith('blob:'))) {
+        console.log('📤 Uploading logo...');
+        logoUrl = await uploadBusinessImage(logoUrl, 'logos');
+        console.log('✅ Logo uploaded:', logoUrl);
+        // Update the state immediately to show preview
+        setBusinessSettings(prev => ({ ...prev, logo: logoUrl }));
+      }
+
+      // Upload banner if it's a local file
+      if (bannerUrl && (bannerUrl.startsWith('file://') || bannerUrl.startsWith('blob:'))) {
+        console.log('📤 Uploading banner...');
+        bannerUrl = await uploadBusinessImage(bannerUrl, 'banners');
+        console.log('✅ Banner uploaded:', bannerUrl);
+        // Update the state immediately to show preview
+        setBusinessSettings(prev => ({ ...prev, banner: bannerUrl }));
+      }
+
+      // Update based on business type
       if (businessType === 'shop' || businessType === 'service') {
+        const updateData: any = {
+          logo_url: logoUrl || null,
+          description: businessSettings.description || null,
+          phone: businessSettings.phone || null,
+          opening_hours: businessSettings.workingHours || null,
+          is_open: businessSettings.isOpen,
+        };
+        
+        // Add banner_url if it exists in schema
+        (updateData as any).banner_url = bannerUrl || null;
+
+        console.log('📝 Updating shop with:', updateData);
+
         const { error } = await supabase
           .from('shops')
-          .update({
-            logo_url: businessSettings.logo || null,
-            description: businessSettings.description || null,
-            phone: businessSettings.phone || null,
-            opening_hours: businessSettings.workingHours || null,
-            is_open: businessSettings.isOpen,
-          })
+          .update(updateData)
           .eq('id', business.id);
 
-        if (error) throw error;
+        if (error) {
+          console.error('❌ Update error:', error);
+          throw error;
+        }
+        console.log('✅ Shop updated successfully');
       } else if (businessType === 'institution') {
+        const updateData = {
+          logo: logoUrl || null,
+          cover_image: bannerUrl || null,
+          description: businessSettings.description || null,
+          phone: businessSettings.phone || null,
+          working_hours: businessSettings.workingHours ? { hours: businessSettings.workingHours } : null,
+          is_open: businessSettings.isOpen,
+        };
+
+        console.log('📝 Updating institution with:', updateData);
+
         const { error } = await supabase
           .from('institutions')
-          .update({
-            logo: businessSettings.logo || null,
-            description: businessSettings.description || null,
-            phone: businessSettings.phone || null,
-            working_hours: businessSettings.workingHours ? { hours: businessSettings.workingHours } : null,
-            is_open: businessSettings.isOpen,
-          })
+          .update(updateData)
           .eq('id', business.id);
 
-        if (error) throw error;
+        if (error) {
+          console.error('❌ Update error:', error);
+          throw error;
+        }
+        console.log('✅ Institution updated successfully');
       }
+
+      // Update local business state
+      setBusiness(prev => prev ? {
+        ...prev,
+        logo_url: logoUrl || prev.logo_url,
+        banner_url: bannerUrl || prev.banner_url,
+        description: businessSettings.description || prev.description,
+        phone: businessSettings.phone || prev.phone,
+        opening_hours: businessSettings.workingHours || prev.opening_hours,
+        is_open: businessSettings.isOpen,
+      } : null);
 
       Alert.alert('Success', 'Business settings updated successfully!');
       setShowBusinessSettings(false);
-      loadDashboard();
+      
+      // Reload dashboard to refresh everything
+      await loadDashboard();
 
     } catch (error: any) {
-      console.error('Error saving settings:', error);
+      console.error('❌ Error saving settings:', error);
       Alert.alert('Error', error.message || 'Failed to save settings');
     } finally {
       setSavingSettings(false);
@@ -1378,11 +1311,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     if (show) {
       setOfferingType(type);
       setShowAddModal(true);
-      setShowCustomForm(false);
-      setSearchQuery('');
-      setSearchResults([]);
-      setIsCustomMode(false);
-      setSelectedCatalogItem(null);
+      resetForm();
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
         Animated.timing(slideAnim, { toValue: 0, duration: 350, useNativeDriver: true }),
@@ -1498,7 +1427,12 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   const renderOfferings = () => (
     <View style={styles.tabContent}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>All Offerings ({offerings.length})</Text>
+        <Text style={styles.sectionTitle}>
+          All Offerings ({offerings.length})
+          <Text style={{ fontSize: 12, color: '#8A8AAE', fontWeight: '400' }}>
+            {' '}({offerings.filter(o => o.type === 'product').length} products, {offerings.filter(o => o.type === 'service').length} services)
+          </Text>
+        </Text>
         <View style={styles.addButtonsRow}>
           <TouchableOpacity style={[styles.addButton, styles.addButtonProduct]} onPress={() => showAddModalAnimated(true, 'product')}>
             <Ionicons name="cube-outline" size={14} color="#FFFFFF" />
@@ -1545,7 +1479,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
                 </Text>
               </View>
               <Image
-                source={{ uri: images[0] || 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=No+Image' }}
+                source={{ uri: images[0] || PLACEHOLDER_IMAGE }}
                 style={styles.offeringImage}
               />
               <View style={styles.offeringInfo}>
@@ -1565,8 +1499,20 @@ const BusinessDashboardContent = ({ navigation }: any) => {
                 >
                   <Ionicons name="images-outline" size={18} color="#4A7DFF" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.offeringAction}>
+                <TouchableOpacity 
+                  style={styles.offeringAction}
+                  onPress={() => openEditModal(item)}
+                >
                   <Ionicons name="create-outline" size={18} color="#4A7DFF" />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.offeringAction, { backgroundColor: 'rgba(231,76,60,0.08)' }]}
+                  onPress={() => {
+                    setSelectedOffering(item);
+                    setShowDeleteConfirm(true);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#E74C3C" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1630,7 +1576,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
               return (
                 <View key={index} style={[styles.offeringCard, isProduct ? styles.offeringCardProduct : styles.offeringCardService]}>
                   <Image
-                    source={{ uri: images[0] || 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=No+Image' }}
+                    source={{ uri: images[0] || PLACEHOLDER_IMAGE }}
                     style={styles.offeringImage}
                   />
                   <View style={styles.offeringInfo}>
@@ -1704,247 +1650,389 @@ const BusinessDashboardContent = ({ navigation }: any) => {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {!showCustomForm ? (
-                // Search / Selection Mode
-                <View>
-                  <View style={styles.typeSelector}>
-                    <TouchableOpacity
-                      style={[styles.typeOption, offeringType === 'product' && styles.typeOptionActive]}
-                      onPress={() => setOfferingType('product')}
-                    >
-                      <Ionicons name="cube-outline" size={18} color={offeringType === 'product' ? '#2ECC71' : '#8A8AAE'} />
-                      <Text style={[styles.typeOptionText, offeringType === 'product' && styles.typeOptionTextActive]}>
-                        Product
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.typeOption, offeringType === 'service' && styles.typeOptionActive]}
-                      onPress={() => setOfferingType('service')}
-                    >
-                      <Ionicons name="construct-outline" size={18} color={offeringType === 'service' ? '#6C5CE7' : '#8A8AAE'} />
-                      <Text style={[styles.typeOptionText, offeringType === 'service' && styles.typeOptionTextActive]}>
-                        Service
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.searchSection}>
-                    <View style={styles.searchInputWrapper}>
-                      <Ionicons name="search" size={20} color="#8A8AAE" />
-                      <TextInput
-                        ref={searchInputRef}
-                        style={styles.searchInput}
-                        placeholder={`Search ${offeringType === 'product' ? 'products' : 'services'}...`}
-                        placeholderTextColor="#8A8AAE"
-                        value={searchQuery}
-                        onChangeText={performSearch}
-                        autoFocus={false}
-                      />
-                      {isSearching && <ActivityIndicator size="small" color="#4A7DFF" />}
-                    </View>
-                    
-                    <TouchableOpacity style={styles.createCustomBtn} onPress={createCustomOffering}>
-                      <Ionicons name="add-circle-outline" size={18} color="#4A7DFF" />
-                      <Text style={styles.createCustomBtnText}>Create Custom {offeringType === 'product' ? 'Product' : 'Service'}</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {isSearching ? (
-                    <View style={styles.searchLoading}>
-                      <ActivityIndicator size="small" color="#4A7DFF" />
-                      <Text style={styles.searchLoadingText}>Searching...</Text>
-                    </View>
-                  ) : searchResults.length > 0 ? (
-                    <FlatList
-                      data={searchResults}
-                      keyExtractor={(item) => item.id}
-                      style={styles.searchResultsList}
-                      renderItem={({ item }) => (
-                        <TouchableOpacity style={styles.searchResultItem} onPress={() => selectCatalogItem(item)}>
-                          {item.images && item.images.length > 0 ? (
-                            <Image source={{ uri: item.images[0] }} style={styles.searchResultImage} />
-                          ) : (
-                            <View style={[styles.searchResultImage, { backgroundColor: '#F5F7FA', justifyContent: 'center', alignItems: 'center' }]}>
-                              <Ionicons name={offeringType === 'product' ? 'cube-outline' : 'construct-outline'} size={20} color="#8A8AAE" />
-                            </View>
-                          )}
-                          <View style={styles.searchResultInfo}>
-                            <Text style={styles.searchResultName}>{item.name}</Text>
-                            <Text style={styles.searchResultCategory}>{item.category || 'Uncategorized'}</Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color="#8A8AAE" />
-                        </TouchableOpacity>
-                      )}
-                    />
-                  ) : searchQuery.trim() ? (
-                    <View style={styles.searchEmpty}>
-                      <Ionicons name="search-outline" size={40} color="#8A8AAE" />
-                      <Text style={styles.searchEmptyTitle}>No results found</Text>
-                      <Text style={styles.searchEmptySubtext}>
-                        Try a different search term or create a custom {offeringType}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : (
-                // Custom Form
-                <View style={styles.formSection}>
-                  <TouchableOpacity onPress={() => {
-                    setShowCustomForm(false);
-                    resetForm();
-                  }}>
-                    <Ionicons name="arrow-back" size={20} color="#4A7DFF" />
+              <View style={styles.formSection}>
+                <View style={styles.typeSelector}>
+                  <TouchableOpacity
+                    style={[styles.typeOption, offeringType === 'product' && styles.typeOptionActive]}
+                    onPress={() => setOfferingType('product')}
+                  >
+                    <Ionicons name="cube-outline" size={18} color={offeringType === 'product' ? '#2ECC71' : '#8A8AAE'} />
+                    <Text style={[styles.typeOptionText, offeringType === 'product' && styles.typeOptionTextActive]}>
+                      Product
+                    </Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.typeOption, offeringType === 'service' && styles.typeOptionActive]}
+                    onPress={() => setOfferingType('service')}
+                  >
+                    <Ionicons name="construct-outline" size={18} color={offeringType === 'service' ? '#6C5CE7' : '#8A8AAE'} />
+                    <Text style={[styles.typeOptionText, offeringType === 'service' && styles.typeOptionTextActive]}>
+                      Service
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Name/Title *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder={`Enter ${offeringType} name`}
+                    value={formData.name}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Category</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g., Electronics, Fashion, Home Services"
+                    value={formData.category}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, category: text }))}
+                  />
+                </View>
+
+                {offeringType === 'product' && (
                   <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>Name *</Text>
+                    <Text style={styles.formLabel}>Brand (optional)</Text>
                     <TextInput
                       style={styles.formInput}
-                      placeholder="Enter name"
-                      value={formData.name}
-                      onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+                      placeholder="e.g., Apple, Samsung"
+                      value={formData.brand}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, brand: text }))}
                     />
                   </View>
+                )}
 
+                {offeringType === 'service' && (
                   <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>Category</Text>
+                    <Text style={styles.formLabel}>Duration (optional)</Text>
                     <TextInput
                       style={styles.formInput}
-                      placeholder="e.g., Electronics"
-                      value={formData.category}
-                      onChangeText={(text) => setFormData(prev => ({ ...prev, category: text }))}
+                      placeholder="e.g., 1 hour, 2-3 days"
+                      value={formData.duration}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, duration: text }))}
                     />
                   </View>
+                )}
 
-                  {offeringType === 'product' && (
-                    <View style={styles.formGroup}>
-                      <Text style={styles.formLabel}>Brand</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        placeholder="e.g., Apple"
-                        value={formData.brand}
-                        onChangeText={(text) => setFormData(prev => ({ ...prev, brand: text }))}
-                      />
-                    </View>
-                  )}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Description</Text>
+                  <TextInput
+                    style={[styles.formInput, styles.formTextArea]}
+                    placeholder="Describe your offering..."
+                    multiline
+                    numberOfLines={3}
+                    value={formData.description}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
+                  />
+                </View>
 
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>Description</Text>
-                    <TextInput
-                      style={[styles.formInput, styles.formTextArea]}
-                      placeholder="Describe your offering..."
-                      multiline
-                      numberOfLines={3}
-                      value={formData.description}
-                      onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
-                    />
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Price (UGX) *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="0"
+                    keyboardType="numeric"
+                    value={formData.price}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, price: text }))}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Images</Text>
+                  <Text style={styles.formHelperText}>Upload photos to showcase your offering</Text>
+                  
+                  <View style={styles.imageUploadRow}>
+                    {formData.images.map((uri, index) => (
+                      <View key={index} style={styles.imagePreviewContainer}>
+                        <Image source={{ uri }} style={styles.imagePreview} />
+                        <TouchableOpacity onPress={() => removeImage(index)} style={styles.imageRemoveBtn}>
+                          <Ionicons name="close-circle" size={20} color="#E74C3C" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {formData.images.length < 5 && (
+                      <TouchableOpacity style={styles.imageAddBtn} onPress={pickImages}>
+                        <Ionicons name="camera" size={24} color="#4A7DFF" />
+                        <Text style={styles.imageAddText}>Add</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
+                  <Text style={styles.imageHelperText}>
+                    {formData.images.length}/5 images added
+                  </Text>
+                </View>
 
-                  <View style={styles.formRow}>
-                    <View style={styles.formGroupHalf}>
-                      <Text style={styles.formLabel}>Price *</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        placeholder="0"
-                        keyboardType="numeric"
-                        value={formData.price}
-                        onChangeText={(text) => setFormData(prev => ({ ...prev, price: text }))}
+                {formData.images.length > 0 && (
+                  <View style={styles.previewSection}>
+                    <Text style={styles.previewLabel}>Preview</Text>
+                    <View style={styles.previewContainer}>
+                      <Image 
+                        source={{ uri: formData.images[0] }} 
+                        style={styles.previewImage}
                       />
-                    </View>
-                    <View style={styles.formGroupHalf}>
-                      <Text style={styles.formLabel}>Discount</Text>
-                      <View style={styles.discountRow}>
-                        <TextInput
-                          style={[styles.formInput, styles.discountInput]}
-                          placeholder="0"
-                          keyboardType="numeric"
-                          value={formData.discount}
-                          onChangeText={(text) => setFormData(prev => ({ ...prev, discount: text }))}
-                        />
-                        <View style={styles.discountTypeContainer}>
-                          <TouchableOpacity
-                            style={[styles.discountTypeBtn, formData.discountType === 'percentage' && styles.discountTypeActive]}
-                            onPress={() => setFormData(prev => ({ ...prev, discountType: 'percentage' }))}
-                          >
-                            <Text style={[styles.discountTypeText, formData.discountType === 'percentage' && styles.discountTypeTextActive]}>%</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.discountTypeBtn, formData.discountType === 'fixed' && styles.discountTypeActive]}
-                            onPress={() => setFormData(prev => ({ ...prev, discountType: 'fixed' }))}
-                          >
-                            <Text style={[styles.discountTypeText, formData.discountType === 'fixed' && styles.discountTypeTextActive]}>UGX</Text>
-                          </TouchableOpacity>
-                        </View>
+                      <View style={styles.previewInfo}>
+                        <Text style={styles.previewName}>{formData.name || 'Untitled'}</Text>
+                        <Text style={styles.previewPrice}>UGX {formData.price || '0'}</Text>
+                        <Text style={styles.previewCategory}>{formData.category || 'Uncategorized'}</Text>
                       </View>
                     </View>
                   </View>
+                )}
 
-                  {offeringType === 'service' && (
-                    <View style={styles.formGroup}>
-                      <Text style={styles.formLabel}>Duration (optional)</Text>
-                      <TextInput
-                        style={styles.formInput}
-                        placeholder="e.g., 1 hour"
-                        value={formData.duration}
-                        onChangeText={(text) => setFormData(prev => ({ ...prev, duration: text }))}
-                      />
-                    </View>
-                  )}
-
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>Images</Text>
-                    <View style={styles.imageUploadRow}>
-                      {formData.images.map((uri, index) => (
-                        <View key={index} style={styles.imagePreviewContainer}>
-                          <Image source={{ uri }} style={styles.imagePreview} />
-                          <TouchableOpacity onPress={() => removeImage(index)} style={styles.imageRemoveBtn}>
-                            <Ionicons name="close-circle" size={20} color="#E74C3C" />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                      {formData.images.length < 5 && (
-                        <TouchableOpacity style={styles.imageAddBtn} onPress={pickImages}>
-                          <Ionicons name="camera" size={20} color="#4A7DFF" />
-                          <Text style={styles.imageAddText}>Add</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-
-                  <View style={styles.toggleRow}>
-                    <Text style={styles.toggleLabel}>In Stock / Active</Text>
-                    <Switch
-                      value={offeringType === 'product' ? formData.in_stock : formData.is_active}
-                      onValueChange={(value) => {
-                        if (offeringType === 'product') {
-                          setFormData(prev => ({ ...prev, in_stock: value }));
-                        } else {
-                          setFormData(prev => ({ ...prev, is_active: value }));
-                        }
-                      }}
-                      trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.publishButton, saving && styles.publishButtonDisabled]}
-                    onPress={publishOffering}
-                    disabled={saving}
-                  >
-                    <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.publishGradient}>
-                      {saving ? (
-                        <ActivityIndicator color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.publishButtonText}>
-                          {isCustomMode ? 'Create Custom' : 'Publish'} {offeringType}
-                        </Text>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
+                <View style={styles.toggleRow}>
+                  <Text style={styles.toggleLabel}>
+                    {offeringType === 'product' ? 'In Stock' : 'Active'}
+                  </Text>
+                  <Switch
+                    value={offeringType === 'product' ? formData.in_stock : formData.is_active}
+                    onValueChange={(value) => {
+                      if (offeringType === 'product') {
+                        setFormData(prev => ({ ...prev, in_stock: value }));
+                      } else {
+                        setFormData(prev => ({ ...prev, is_active: value }));
+                      }
+                    }}
+                    trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+                  />
                 </View>
-              )}
+
+                <TouchableOpacity
+                  style={[styles.publishButton, saving && styles.publishButtonDisabled]}
+                  onPress={publishOffering}
+                  disabled={saving}
+                >
+                  <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.publishGradient}>
+                    {saving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.publishButtonText}>
+                        Publish {offeringType === 'product' ? 'Product' : 'Service'}
+                      </Text>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             </ScrollView>
           </Animated.View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // --- Render Edit Modal ---
+  const renderEditModal = () => {
+    if (!showEditModal || !selectedOffering) return null;
+    
+    return (
+      <Modal
+        visible={showEditModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowEditModal(false)}
+      >
+        <View style={styles.addModalOverlay}>
+          <TouchableOpacity 
+            style={styles.addModalBackdrop} 
+            activeOpacity={1}
+            onPress={() => setShowEditModal(false)}
+          />
+          <Animated.View 
+            style={[
+              styles.addModalContent,
+              { transform: [{ translateY: slideAnim }], opacity: fadeAnim }
+            ]}
+          >
+            <View style={styles.addModalHeader}>
+              <Text style={styles.addModalTitle}>
+                Edit {offeringType === 'product' ? 'Product' : 'Service'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowEditModal(false)}>
+                <Ionicons name="close" size={24} color="#1F2F5F" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView 
+              style={styles.addModalScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.formSection}>
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Name/Title *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder={`Enter ${offeringType} name`}
+                    value={formData.name}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Category</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g., Electronics, Fashion, Home Services"
+                    value={formData.category}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, category: text }))}
+                  />
+                </View>
+
+                {offeringType === 'product' && (
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>Brand (optional)</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g., Apple, Samsung"
+                      value={formData.brand}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, brand: text }))}
+                    />
+                  </View>
+                )}
+
+                {offeringType === 'service' && (
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>Duration (optional)</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="e.g., 1 hour, 2-3 days"
+                      value={formData.duration}
+                      onChangeText={(text) => setFormData(prev => ({ ...prev, duration: text }))}
+                    />
+                  </View>
+                )}
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Description</Text>
+                  <TextInput
+                    style={[styles.formInput, styles.formTextArea]}
+                    placeholder="Describe your offering..."
+                    multiline
+                    numberOfLines={3}
+                    value={formData.description}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Price (UGX) *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="0"
+                    keyboardType="numeric"
+                    value={formData.price}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, price: text }))}
+                  />
+                </View>
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Images</Text>
+                  <Text style={styles.formHelperText}>Upload photos to showcase your offering</Text>
+                  
+                  <View style={styles.imageUploadRow}>
+                    {formData.images.map((uri, index) => (
+                      <View key={index} style={styles.imagePreviewContainer}>
+                        <Image source={{ uri }} style={styles.imagePreview} />
+                        <TouchableOpacity onPress={() => removeImage(index)} style={styles.imageRemoveBtn}>
+                          <Ionicons name="close-circle" size={20} color="#E74C3C" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {formData.images.length < 5 && (
+                      <TouchableOpacity style={styles.imageAddBtn} onPress={pickImages}>
+                        <Ionicons name="camera" size={24} color="#4A7DFF" />
+                        <Text style={styles.imageAddText}>Add</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <Text style={styles.imageHelperText}>
+                    {formData.images.length}/5 images added
+                  </Text>
+                </View>
+
+                <View style={styles.toggleRow}>
+                  <Text style={styles.toggleLabel}>
+                    {offeringType === 'product' ? 'In Stock' : 'Active'}
+                  </Text>
+                  <Switch
+                    value={offeringType === 'product' ? formData.in_stock : formData.is_active}
+                    onValueChange={(value) => {
+                      if (offeringType === 'product') {
+                        setFormData(prev => ({ ...prev, in_stock: value }));
+                      } else {
+                        setFormData(prev => ({ ...prev, is_active: value }));
+                      }
+                    }}
+                    trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.publishButton, saving && styles.publishButtonDisabled]}
+                  onPress={updateOffering}
+                  disabled={saving}
+                >
+                  <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.publishGradient}>
+                    {saving ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.publishButtonText}>
+                        Update {offeringType === 'product' ? 'Product' : 'Service'}
+                      </Text>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // --- Render Delete Confirmation ---
+  const renderDeleteConfirm = () => {
+    if (!showDeleteConfirm || !selectedOffering) return null;
+
+    const name = selectedOffering.catalog?.name || selectedOffering.service_catalog?.name || 'this offering';
+
+    return (
+      <Modal
+        visible={showDeleteConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.deleteIconContainer}>
+              <Ionicons name="alert-circle" size={48} color="#E74C3C" />
+            </View>
+            <Text style={styles.deleteTitle}>Delete Offering?</Text>
+            <Text style={styles.deleteDescription}>
+              Are you sure you want to delete "{name}"? This will permanently remove it from your catalog and delete all associated images. This action cannot be undone.
+            </Text>
+            <View style={styles.deleteButtons}>
+              <TouchableOpacity 
+                style={[styles.deleteButton, styles.deleteCancelButton]} 
+                onPress={() => setShowDeleteConfirm(false)}
+              >
+                <Text style={styles.deleteCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.deleteButton, styles.deleteConfirmButton]} 
+                onPress={deleteOffering}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.deleteConfirmText}>Delete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
     );
@@ -1993,46 +2081,63 @@ const BusinessDashboardContent = ({ navigation }: any) => {
               Each scene represents a different image slot for your offering
             </Text>
 
-            {SCENE_TYPES.map((sceneType) => (
-              <View key={sceneType.id} style={styles.sceneItem}>
-                <View style={styles.sceneItemHeader}>
-                  <View style={styles.sceneItemIcon}>
-                    <Ionicons name={sceneType.icon as any} size={16} color="#4A7DFF" />
-                  </View>
-                  <View style={styles.sceneItemInfo}>
-                    <Text style={styles.sceneItemLabel}>{sceneType.label}</Text>
-                    <Text style={styles.sceneItemDescription}>{sceneType.description}</Text>
-                  </View>
-                  <View style={styles.sceneItemBadge}>
-                    <Text style={styles.sceneItemBadgeText}>
-                      {sceneImages[sceneType.id] ? 'Set' : 'Empty'}
-                    </Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.sceneImageContainer}
-                  onPress={async () => {
-                    const result = await ImagePicker.launchImageLibraryAsync({
-                      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                      quality: 0.8,
-                    });
-                    if (!result.canceled && result.assets[0]) {
-                      updateSceneImage(sceneType.id, result.assets[0].uri);
-                    }
-                  }}
-                >
-                  {sceneImages[sceneType.id] ? (
-                    <Image source={{ uri: sceneImages[sceneType.id] }} style={styles.sceneImage} />
-                  ) : (
-                    <View style={styles.sceneImagePlaceholder}>
-                      <Ionicons name="image-outline" size={32} color="#8A8AAE" />
-                      <Text style={styles.sceneImagePlaceholderText}>Tap to add image</Text>
+            {['hero', 'details', 'trust', 'gallery', 'extra'].map((sceneType) => {
+              const labels: Record<string, string> = {
+                hero: 'Hero',
+                details: 'Details',
+                trust: 'Trust',
+                gallery: 'Gallery',
+                extra: 'Extra'
+              };
+              const descriptions: Record<string, string> = {
+                hero: 'Main image shown first',
+                details: 'Product details view',
+                trust: 'Trust signals',
+                gallery: 'Multiple images',
+                extra: 'Additional image'
+              };
+              
+              return (
+                <View key={sceneType} style={styles.sceneItem}>
+                  <View style={styles.sceneItemHeader}>
+                    <View style={styles.sceneItemIcon}>
+                      <Ionicons name="image-outline" size={16} color="#4A7DFF" />
                     </View>
-                  )}
-                </TouchableOpacity>
-              </View>
-            ))}
+                    <View style={styles.sceneItemInfo}>
+                      <Text style={styles.sceneItemLabel}>{labels[sceneType]}</Text>
+                      <Text style={styles.sceneItemDescription}>{descriptions[sceneType]}</Text>
+                    </View>
+                    <View style={styles.sceneItemBadge}>
+                      <Text style={styles.sceneItemBadgeText}>
+                        {sceneImages[sceneType] ? 'Set' : 'Empty'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.sceneImageContainer}
+                    onPress={async () => {
+                      const result = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                        quality: 0.8,
+                      });
+                      if (!result.canceled && result.assets[0]) {
+                        updateSceneImage(sceneType, result.assets[0].uri);
+                      }
+                    }}
+                  >
+                    {sceneImages[sceneType] ? (
+                      <Image source={{ uri: sceneImages[sceneType] }} style={styles.sceneImage} />
+                    ) : (
+                      <View style={styles.sceneImagePlaceholder}>
+                        <Ionicons name="image-outline" size={32} color="#8A8AAE" />
+                        <Text style={styles.sceneImagePlaceholderText}>Tap to add image</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
 
             <Text style={styles.sceneManagerSectionTitle}>Gallery Images</Text>
             <Text style={styles.sceneManagerSectionSubtitle}>
@@ -2112,30 +2217,56 @@ const BusinessDashboardContent = ({ navigation }: any) => {
             <View style={styles.settingsGroup}>
               <Text style={styles.settingsGroupTitle}>Branding</Text>
               
+              {/* Logo Section */}
               <View style={styles.settingsImagePicker}>
-                <TouchableOpacity onPress={pickLogo}>
+                <Text style={styles.settingsLabel}>Logo</Text>
+                <TouchableOpacity onPress={pickLogo} style={styles.logoTouchable}>
                   {businessSettings.logo ? (
-                    <Image source={{ uri: businessSettings.logo }} style={styles.settingsLogo} />
+                    <Image 
+                      source={{ uri: businessSettings.logo }} 
+                      style={styles.settingsLogo}
+                      onError={(e) => {
+                        console.log('Logo load error:', e.nativeEvent.error);
+                      }}
+                    />
                   ) : (
                     <View style={styles.settingsImagePlaceholder}>
                       <Ionicons name="camera" size={24} color="#8A8AAE" />
-                      <Text style={styles.settingsImagePlaceholderText}>Logo</Text>
+                      <Text style={styles.settingsImagePlaceholderText}>Add Logo</Text>
                     </View>
                   )}
                 </TouchableOpacity>
+                {businessSettings.logo && (
+                  <Text style={styles.previewUrlText} numberOfLines={1}>
+                    {businessSettings.logo}
+                  </Text>
+                )}
               </View>
 
+              {/* Banner Section */}
               <View style={styles.settingsBannerPicker}>
-                <TouchableOpacity onPress={pickBanner}>
+                <Text style={styles.settingsLabel}>Banner Image</Text>
+                <TouchableOpacity onPress={pickBanner} style={styles.bannerTouchable}>
                   {businessSettings.banner ? (
-                    <Image source={{ uri: businessSettings.banner }} style={styles.settingsBanner} />
+                    <Image 
+                      source={{ uri: businessSettings.banner }} 
+                      style={styles.settingsBanner}
+                      onError={(e) => {
+                        console.log('Banner load error:', e.nativeEvent.error);
+                      }}
+                    />
                   ) : (
                     <View style={styles.settingsBannerPlaceholder}>
                       <Ionicons name="image-outline" size={32} color="#8A8AAE" />
-                      <Text style={styles.settingsBannerPlaceholderText}>Add Banner</Text>
+                      <Text style={styles.settingsBannerPlaceholderText}>Tap to add banner image</Text>
                     </View>
                   )}
                 </TouchableOpacity>
+                {businessSettings.banner && (
+                  <Text style={styles.previewUrlText} numberOfLines={1}>
+                    {businessSettings.banner}
+                  </Text>
+                )}
               </View>
             </View>
 
@@ -2184,19 +2315,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
               </View>
             </View>
 
-            <View style={styles.settingsGroup}>
-              <Text style={styles.settingsGroupTitle}>Verification</Text>
-              <View style={styles.verificationItem}>
-                <View style={[styles.verificationIcon, { backgroundColor: 'rgba(46,204,113,0.1)' }]}>
-                  <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
-                </View>
-                <View style={styles.verificationContent}>
-                  <Text style={styles.verificationTitle}>Email Verified</Text>
-                  <Text style={styles.verificationDesc}>Your email has been confirmed</Text>
-                </View>
-              </View>
-            </View>
-
             <View style={{ height: 40 }} />
           </ScrollView>
         </View>
@@ -2208,14 +2326,12 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   // 5. TABS AND LOADING STATES
   // ============================================================
 
-  // --- Tabs ---
   const tabs = [
     { key: 'overview', icon: 'home-outline', label: 'Overview' },
     { key: 'offerings', icon: 'grid-outline', label: 'Offerings' },
     { key: 'wallet', icon: 'wallet-outline', label: 'Wallet' },
   ];
 
-  // --- Loading State ---
   if (loading) {
     return (
       <View style={[styles.loadingContainer, isDesktop && styles.loadingContainerDesktop]}>
@@ -2225,7 +2341,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     );
   }
 
-  // --- No Business State ---
   if (!business) {
     return (
       <View style={[styles.emptyState, isDesktop && styles.emptyStateDesktop]}>
@@ -2239,7 +2354,6 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     );
   }
 
-  // --- Main Render ---
   return (
     <View style={[styles.container, isDesktop && styles.containerDesktop]}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -2262,9 +2376,20 @@ const BusinessDashboardContent = ({ navigation }: any) => {
       )}
 
       <View style={styles.banner}>
-        <View>
-          <Text style={styles.bannerName}>{business.name}</Text>
-          <Text style={styles.bannerType}>{category || 'Uncategorized'}</Text>
+        <View style={styles.bannerLeft}>
+          {business.logo_url && (
+            <Image 
+              source={{ uri: business.logo_url }} 
+              style={styles.bannerLogo}
+              onError={(e) => {
+                console.log('Banner logo error:', e.nativeEvent.error);
+              }}
+            />
+          )}
+          <View>
+            <Text style={styles.bannerName}>{business.name}</Text>
+            <Text style={styles.bannerType}>{category || 'Uncategorized'}</Text>
+          </View>
         </View>
         <View style={styles.bannerStatus}>
           <View style={[styles.bannerDot, { backgroundColor: business.is_active ? '#2ECC71' : '#F1C40F' }]} />
@@ -2306,6 +2431,8 @@ const BusinessDashboardContent = ({ navigation }: any) => {
       </ScrollView>
 
       {renderAddModal()}
+      {renderEditModal()}
+      {renderDeleteConfirm()}
       {renderSceneManager()}
       {renderBusinessSettings()}
     </View>
@@ -2329,7 +2456,10 @@ export const BusinessDashboardScreen = ({ navigation }: any) => {
   );
 };
 
-// --- Styles ---
+// ============================================================
+// 6. STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2423,6 +2553,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E8ECF4',
+  },
+  bannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  bannerLogo: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F5F7FA',
   },
   bannerName: {
     fontSize: 16,
@@ -2757,99 +2898,6 @@ const styles = StyleSheet.create({
   addModalScroll: {
     paddingHorizontal: 20,
   },
-  searchSection: {
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  searchInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F7FA',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  searchInput: {
-    flex: 1,
-    color: '#1F2F5F',
-    fontSize: 15,
-    padding: 0,
-  },
-  createCustomBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    marginTop: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(74,125,255,0.08)',
-    gap: 6,
-  },
-  createCustomBtnText: {
-    color: '#4A7DFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  searchLoading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    gap: 8,
-  },
-  searchLoadingText: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  searchResultsList: {
-    maxHeight: 300,
-    marginTop: 8,
-  },
-  searchResultItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F6FA',
-    gap: 10,
-  },
-  searchResultImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-  },
-  searchResultInfo: {
-    flex: 1,
-  },
-  searchResultName: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  searchResultCategory: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 1,
-  },
-  searchEmpty: {
-    alignItems: 'center',
-    paddingVertical: 30,
-  },
-  searchEmptyTitle: {
-    color: '#1F2F5F',
-    fontSize: 16,
-    fontWeight: '500',
-    marginTop: 8,
-  },
-  searchEmptySubtext: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: 4,
-  },
   formSection: {
     paddingTop: 12,
   },
@@ -2857,17 +2905,15 @@ const styles = StyleSheet.create({
     gap: 4,
     marginBottom: 12,
   },
-  formGroupHalf: {
-    flex: 1,
-  },
-  formRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
   formLabel: {
     color: '#1F2F5F',
     fontSize: 13,
     fontWeight: '500',
+  },
+  formHelperText: {
+    color: '#8A8AAE',
+    fontSize: 11,
+    marginBottom: 6,
   },
   formInput: {
     backgroundColor: '#F5F7FA',
@@ -2883,49 +2929,18 @@ const styles = StyleSheet.create({
     height: 80,
     textAlignVertical: 'top',
   },
-  discountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  discountInput: {
-    flex: 1,
-  },
-  discountTypeContainer: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  discountTypeBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    backgroundColor: '#F5F7FA',
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  discountTypeActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-    borderColor: '#4A7DFF',
-  },
-  discountTypeText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  discountTypeTextActive: {
-    color: '#4A7DFF',
-  },
   imageUploadRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    marginVertical: 6,
   },
   imagePreviewContainer: {
     position: 'relative',
   },
   imagePreview: {
-    width: 60,
-    height: 60,
+    width: 70,
+    height: 70,
     borderRadius: 8,
   },
   imageRemoveBtn: {
@@ -2934,8 +2949,8 @@ const styles = StyleSheet.create({
     right: -6,
   },
   imageAddBtn: {
-    width: 60,
-    height: 60,
+    width: 70,
+    height: 70,
     borderRadius: 8,
     backgroundColor: '#F5F7FA',
     justifyContent: 'center',
@@ -2949,6 +2964,52 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 2,
   },
+  imageHelperText: {
+    color: '#8A8AAE',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  previewSection: {
+    backgroundColor: '#F8FAFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+  },
+  previewLabel: {
+    color: '#1F2F5F',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  previewContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  previewImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+  },
+  previewInfo: {
+    flex: 1,
+  },
+  previewName: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  previewPrice: {
+    color: '#4A7DFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  previewCategory: {
+    color: '#8A8AAE',
+    fontSize: 11,
+  },
   toggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2956,6 +3017,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F5F6FA',
+    marginBottom: 8,
   },
   toggleLabel: {
     color: '#1F2F5F',
@@ -2979,147 +3041,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  sectionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  addSpecBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: 'rgba(74,125,255,0.08)',
-    borderRadius: 6,
-  },
-  addSpecBtnText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  specItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F7FA',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginBottom: 4,
-  },
-  specItemKey: {
-    color: '#1F2F5F',
-    fontSize: 13,
-    fontWeight: '500',
-    marginRight: 4,
-  },
-  specItemValue: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    flex: 1,
-  },
-  specItemRemove: {
-    padding: 4,
-  },
-  specEmptyText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    paddingVertical: 4,
-  },
-  tagInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  tagInput: {
-    flex: 1,
-  },
-  addTagBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#4A7DFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingVertical: 8,
-  },
-  tagChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(74,125,255,0.08)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    gap: 4,
-  },
-  tagChipText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-  },
-  tagEmptyText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    paddingVertical: 4,
-  },
-  suggestedTagsScroll: {
-    maxHeight: 36,
-    marginTop: 4,
-  },
-  suggestedTag: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: '#F5F7FA',
-    borderRadius: 14,
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  suggestedTagText: {
-    color: '#8A8AAE',
-    fontSize: 11,
-  },
-  dropdownWrapper: {
-    position: 'relative',
-    zIndex: 10,
-  },
-  dropdownList: {
-    position: 'absolute',
-    top: 50,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-    maxHeight: 150,
-    zIndex: 20,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  dropdownItem: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F6FA',
-  },
-  dropdownItemText: {
-    color: '#1F2F5F',
-    fontSize: 14,
-  },
   typeSelector: {
     flexDirection: 'row',
     backgroundColor: '#F5F7FA',
     borderRadius: 10,
     padding: 4,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   typeOption: {
     flex: 1,
@@ -3148,6 +3075,76 @@ const styles = StyleSheet.create({
   typeOptionTextActive: {
     color: '#1F2F5F',
     fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    width: width * 0.85,
+    maxWidth: 400,
+    alignItems: 'center',
+  },
+  deleteIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(231,76,60,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  deleteTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2F5F',
+    marginBottom: 8,
+  },
+  deleteDescription: {
+    fontSize: 14,
+    color: '#8A8AAE',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  deleteButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  deleteButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  deleteCancelButton: {
+    backgroundColor: '#F5F7FA',
+  },
+  deleteCancelText: {
+    color: '#1F2F5F',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deleteConfirmButton: {
+    backgroundColor: '#E74C3C',
+  },
+  deleteConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  previewUrlText: {
+    fontSize: 10,
+    color: '#8A8AAE',
+    marginTop: 4,
+    textAlign: 'center',
+    maxWidth: '100%',
   },
   sceneManagerContainer: {
     flex: 1,
@@ -3393,6 +3390,15 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   settingsImagePicker: {
+    marginBottom: 16,
+  },
+  settingsLabel: {
+    color: '#1F2F5F',
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  logoTouchable: {
     alignItems: 'center',
   },
   settingsLogo: {
@@ -3408,6 +3414,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F7FA',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    borderStyle: 'dashed',
   },
   settingsImagePlaceholderText: {
     color: '#8A8AAE',
@@ -3415,8 +3424,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   settingsBannerPicker: {
-    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bannerTouchable: {
     width: '100%',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   settingsBanner: {
     width: '100%',
@@ -3431,6 +3444,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F7FA',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E8ECF4',
+    borderStyle: 'dashed',
   },
   settingsBannerPlaceholderText: {
     color: '#8A8AAE',
@@ -3439,12 +3455,6 @@ const styles = StyleSheet.create({
   },
   settingsField: {
     marginBottom: 12,
-  },
-  settingsLabel: {
-    color: '#1F2F5F',
-    fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 4,
   },
   settingsInput: {
     backgroundColor: '#F5F7FA',
@@ -3466,72 +3476,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
   },
-  verificationItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  verificationIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  verificationContent: {
-    flex: 1,
-  },
-  verificationTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  verificationDesc: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  referralItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  referralIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(74,125,255,0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  referralContent: {
-    flex: 1,
-  },
-  referralTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  referralDesc: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  referralCode: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-  },
-  referralCodeLabel: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  referralCodeValue: {
-    color: '#4A7DFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   viewAllBtn: {
     paddingVertical: 10,
     alignItems: 'center',
@@ -3541,53 +3485,5 @@ const styles = StyleSheet.create({
     color: '#4A7DFF',
     fontSize: 14,
     fontWeight: '500',
-  },
-  specsModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  specsModalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    width: width * 0.85,
-  },
-  specsModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  specsModalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1F2F5F',
-  },
-  specsModalClose: {
-    padding: 4,
-  },
-  specsModalInput: {
-    backgroundColor: '#F5F7FA',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#1F2F5F',
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-    marginBottom: 10,
-  },
-  specsModalAdd: {
-    backgroundColor: '#4A7DFF',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  specsModalAddText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });

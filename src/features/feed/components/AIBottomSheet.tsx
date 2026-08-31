@@ -1,6 +1,6 @@
 // src/features/feed/components/AIBottomSheet.tsx
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,16 +15,26 @@ import {
   Platform,
   Animated,
   useWindowDimensions,
+  SafeAreaView,
+  LogBox,
 } from 'react-native';
-import { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { Opportunity } from '../../../services/feed.service';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { supabase } from '../../../lib/supabase';
+
+// Ignore specific warnings
+LogBox.ignoreLogs(['VirtualizedLists should never be nested']);
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
+// ============================================================
+// TYPES
+// ============================================================
+
 interface AIBottomSheetProps {
-  bottomSheetRef?: React.RefObject<BottomSheetModal | null>;
+  bottomSheetRef?: React.RefObject<any>;
   opportunity: Opportunity | null;
   contextHint?: string;
   onClose: () => void;
@@ -45,6 +55,30 @@ interface Suggestion {
   query: string;
 }
 
+interface AIAction {
+  type: 'view_seller' | 'see_similar' | 'share' | 'contact' | 'view_reviews';
+  label: string;
+  data?: any;
+}
+
+interface AIMessage extends Message {
+  actions?: AIAction[];
+}
+
+interface MarketplaceData {
+  similarItems: any[];
+  priceData: any[];
+  sellerData: any;
+  location: string;
+  inStock: boolean;
+  rating: number;
+  reviewCount: number;
+}
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+
 export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
   bottomSheetRef,
   opportunity,
@@ -54,17 +88,32 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
   visible = false,
 }) => {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const isLargeScreen = width >= 768;
+  const isSmallScreen = width < 380;
   
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<AIMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [hasInitialized, setHasInitialized] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   
   // Animation for typing dots
   const [dotAnimations] = useState(() => 
     [1, 2, 3].map(() => new Animated.Value(0))
   );
+
+  // Debug logging
+  useEffect(() => {
+    console.log('🔍 AIBottomSheet - Props:', {
+      visible,
+      hasOpportunity: !!opportunity,
+      opportunityTitle: opportunity?.title || 'null',
+      isDesktopView,
+      messagesCount: messages.length,
+      hasInitialized,
+    });
+  }, [visible, opportunity, isDesktopView, messages.length, hasInitialized]);
 
   // Animate typing dots
   useEffect(() => {
@@ -99,160 +148,406 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
     };
   }, [isLoading]);
 
-  // Quick suggestion chips - responsive count
-  const getSuggestions = (): Suggestion[] => {
-    const allSuggestions: Suggestion[] = [
-      { icon: '⚖️', text: 'Compare similar', query: 'Compare this with similar products' },
+  // ============================================================
+  // SUGGESTIONS - Context-Aware Based on Opportunity Type
+  // ============================================================
+  
+  const getSuggestions = useCallback((): Suggestion[] => {
+    const isProduct = opportunity?.type === 'product';
+    const isService = opportunity?.type === 'service';
+    const category = opportunity?.category || '';
+    
+    // Product suggestions
+    if (isProduct) {
+      return [
+        { icon: '🔍', text: 'Best alternative', query: 'What are the best alternatives?' },
+        { icon: '💰', text: 'Cheaper options', query: 'Find cheaper options' },
+        { icon: '⚖️', text: 'Compare nearby', query: 'Compare with nearby sellers' },
+        { icon: '📊', text: 'Is it worth it?', query: 'Is this a good deal?' },
+        { icon: '🎓', text: 'Best for school', query: 'Is this good for school?' },
+        { icon: '🔄', text: 'Find similar', query: 'Find similar products' },
+      ];
+    }
+    
+    // Service suggestions
+    if (isService) {
+      return [
+        { icon: '👥', text: 'Compare providers', query: 'Compare with other providers' },
+        { icon: '📅', text: 'Available this weekend?', query: 'Are you available this weekend?' },
+        { icon: '📋', text: 'What\'s included?', query: 'What does the service include?' },
+        { icon: '💰', text: 'Cheaper options', query: 'Find cheaper options' },
+        { icon: '⭐', text: 'Best rated nearby', query: 'Who is the best rated nearby?' },
+      ];
+    }
+    
+    // Default suggestions
+    return [
+      { icon: '⚖️', text: 'Compare similar', query: 'Compare this with similar' },
       { icon: '💰', text: 'Good deal?', query: 'Is this a good deal?' },
       { icon: '📋', text: 'Features', query: 'Tell me about the features' },
       { icon: '⭐', text: 'Reviews', query: 'What do customers say?' },
       { icon: '🚚', text: 'Delivery', query: 'Tell me about delivery' },
       { icon: '🛡️', text: 'Warranty', query: 'What warranty is offered?' },
     ];
-    
-    // Show fewer suggestions on small screens
-    if (width < 380) return allSuggestions.slice(0, 3);
-    if (width < 500) return allSuggestions.slice(0, 4);
-    return allSuggestions;
-  };
+  }, [opportunity]);
 
   const suggestions = getSuggestions();
-
-  // Get AI response based on query
-  const generateAIResponse = (query: string, opp: Opportunity): string => {
+const queryMarketplace = useCallback(async (opp: Opportunity): Promise<MarketplaceData | null> => {
+  try {
+    // 1. Get similar opportunities for comparison
+    const tableName = opp.type === 'product' ? 'catalog' : 'service_catalog';
+    const categoryFilter = opp.category || '';
+    
+    let query = supabase
+      .from(tableName)
+      .select('*')
+      .limit(10);
+    
+    if (categoryFilter) {
+      query = query.eq('category', categoryFilter);
+    }
+    
+    const { data: similarItems } = await query;
+    
+    // 2. Get price distribution - ✅ Split into separate queries to avoid type issues
+    let priceData: any[] = [];
+    const isProduct = opp.type === 'product';
+    
+    if (isProduct) {
+      const { data } = await supabase
+        .from('shop_products')
+        .select('regular_price')
+        .eq('in_stock', true)
+        .limit(20);
+      if (data) priceData = data;
+    } else {
+      const { data } = await supabase
+        .from('provider_services')
+        .select('price')
+        .eq('is_active', true)
+        .limit(20);
+      if (data) priceData = data;
+    }
+    
+    // 3. Get seller info
+    const { data: sellerData } = await supabase
+      .from('shops')
+      .select('rating, review_count, is_verified')
+      .eq('id', opp.shopId)
+      .single();
+    
+    return {
+      similarItems: similarItems || [],
+      priceData: priceData || [],
+      sellerData: sellerData || {},
+      location: opp.area || 'nearby',
+      inStock: opp.inStock !== false,
+      rating: opp.rating || 0,
+      reviewCount: opp.reviewCount || 0,
+    };
+  } catch (error) {
+    console.error('Error querying marketplace:', error);
+    return null;
+  }
+}, []);
+  // ============================================================
+  // AI RESPONSE GENERATOR - With Real Data
+  // ============================================================
+  
+  const generateAIResponse = useCallback(async (query: string, opp: Opportunity): Promise<AIMessage> => {
     const lowerQuery = query.toLowerCase();
     const productName = opp.title || 'this product';
     const price = opp.price || 0;
     const currency = opp.currency || 'UGX';
     const shopName = opp.shopName || 'the seller';
-    const rating = opp.rating || 0;
-    const reviewCount = opp.reviewCount || 0;
-    const area = opp.area || 'nearby';
-    const inStock = opp.inStock !== false;
-    const category = opp.category || 'product';
-    const specs = opp.specifications || {};
-    const description = opp.description || '';
     
-    // Compare similar
-    if (lowerQuery.includes('compare') || lowerQuery.includes('similar')) {
-      return `🔍 **Comparing ${productName}**\n\n` +
-        `This ${category} is priced at ${currency} ${price.toLocaleString()}.\n\n` +
-        `**Key Features:**\n${Object.entries(specs).map(([key, val]) => `• ${key}: ${val}`).join('\n') || '• No specifications listed'}\n\n` +
-        `**Market Comparison:**\n` +
-        `• Similar products typically range between ${currency} ${Math.round(price * 0.7).toLocaleString()} and ${currency} ${Math.round(price * 1.3).toLocaleString()}\n` +
-        `• ${shopName} has a ${rating > 0 ? `${rating.toFixed(1)}⭐ rating` : 'good reputation'}\n` +
-        `• Located in ${area}\n\n` +
-        `💡 **Verdict:** ${rating > 4.0 ? 'Excellent' : 'Good'} value for money.`;
+    // Query real marketplace data
+    const marketData = await queryMarketplace(opp);
+    
+    // If no data, return honest response
+    if (!marketData) {
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `I couldn't fetch enough marketplace data to answer that accurately. Please try again or ask a different question.`,
+        actions: [
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+          { type: 'see_similar', label: 'See Similar', data: { category: opp.category } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
-
-    // Good deal / Worth it
+    
+    // Calculate market insights
+    const prices = marketData.priceData
+      .map(p => p.regular_price || p.price || 0)
+      .filter(p => p > 0);
+    
+    const avgPrice = prices.length > 0 
+      ? prices.reduce((a, b) => a + b, 0) / prices.length 
+      : price;
+    
+    const minPrice = prices.length > 0 ? Math.min(...prices) : price * 0.7;
+    const maxPrice = prices.length > 0 ? Math.max(...prices) : price * 1.3;
+    const priceDiff = avgPrice > 0 ? ((price - avgPrice) / avgPrice) * 100 : 0;
+    const isGoodDeal = priceDiff < -10 && marketData.rating > 4.0;
+    
+    // ============================================================
+    // COMPARE SIMILAR
+    // ============================================================
+    if (lowerQuery.includes('compare') || lowerQuery.includes('similar') || lowerQuery.includes('alternative')) {
+      const similarCount = marketData.similarItems?.length || 0;
+      
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `🔍 **Comparing ${productName}**\n\n` +
+          `**Current Price:** ${currency} ${price.toLocaleString()}\n` +
+          `**Seller Rating:** ${marketData.rating > 0 ? `${marketData.rating.toFixed(1)}⭐ (${marketData.reviewCount} reviews)` : 'New seller'}\n` +
+          `**Location:** ${marketData.location}\n` +
+          `**Availability:** ${marketData.inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
+          `**Market Comparison (from ${similarCount} similar items):**\n` +
+          `• Price range: ${currency} ${Math.round(minPrice).toLocaleString()} - ${currency} ${Math.round(maxPrice).toLocaleString()}\n` +
+          `• Average price: ${currency} ${Math.round(avgPrice).toLocaleString()}\n` +
+          `• Current price is ${priceDiff > 0 ? '+' : ''}${Math.round(priceDiff)}% ${priceDiff < 0 ? 'below' : 'above'} average\n` +
+          `• ${shopName} is ${marketData.rating > 4.0 ? 'highly rated' : marketData.rating > 3.0 ? 'reliable' : 'new'}\n\n` +
+          `💡 **Verdict:** ${isGoodDeal ? '✅ Good deal!' : priceDiff < 0 ? '🟡 Competitive pricing' : '🟠 Consider comparing with other options.'}`,
+        actions: [
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+          { type: 'see_similar', label: 'See Similar', data: { category: opp.category } },
+          { type: 'share', label: 'Share', data: { opportunityId: opp.id } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
+    }
+    
+    // ============================================================
+    // GOOD DEAL / WORTH IT
+    // ============================================================
     if (lowerQuery.includes('good deal') || lowerQuery.includes('worth') || lowerQuery.includes('value')) {
-      return `💰 **Value Analysis: ${productName}**\n\n` +
-        `**Price:** ${currency} ${price.toLocaleString()}\n` +
-        `**Seller Rating:** ${rating > 0 ? `${rating.toFixed(1)}⭐ (${reviewCount} reviews)` : 'New seller'}\n` +
-        `**Location:** ${area}\n` +
-        `**Availability:** ${inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
-        `**Value Score:** ${rating > 4.0 ? '🟢 Excellent' : rating > 3.0 ? '🟡 Good' : '🟠 Average'}\n\n` +
-        `💡 **Recommendation:** ${rating > 4.0 ? 'This is a great deal! Highly recommended.' : rating > 3.0 ? 'This is a solid option.' : 'Consider comparing with other options.'}`;
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `💰 **Value Analysis: ${productName}**\n\n` +
+          `**Price:** ${currency} ${price.toLocaleString()}\n` +
+          `**Market Average:** ${currency} ${Math.round(avgPrice).toLocaleString()}\n` +
+          `**Price Difference:** ${priceDiff > 0 ? '+' : ''}${Math.round(priceDiff)}% ${priceDiff < 0 ? 'below' : 'above'} average\n` +
+          `**Seller Rating:** ${marketData.rating > 0 ? `${marketData.rating.toFixed(1)}⭐ (${marketData.reviewCount} reviews)` : 'New seller'}\n` +
+          `**Location:** ${marketData.location}\n` +
+          `**Availability:** ${marketData.inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
+          `**Value Score:** ${isGoodDeal ? '🟢 Excellent' : priceDiff < 0 ? '🟡 Good' : '🟠 Average'}\n\n` +
+          `💡 **Recommendation:** ${isGoodDeal ? '✅ This is a great deal! Highly recommended.' : priceDiff < 0 ? 'This is a solid option.' : 'Consider comparing with other options.'}`,
+        actions: [
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+          { type: 'see_similar', label: 'See Similar', data: { category: opp.category } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
-
-    // Features / Specifications
+    
+    // ============================================================
+    // FEATURES / SPECIFICATIONS
+    // ============================================================
     if (lowerQuery.includes('feature') || lowerQuery.includes('spec') || lowerQuery.includes('detail')) {
+      const specs = opp.specifications || {};
       const specList = Object.entries(specs)
         .filter(([_, value]) => value)
         .map(([key, value]) => `• **${key}:** ${value}`)
         .join('\n');
 
-      return `📋 **${productName} - Specifications**\n\n` +
-        `${specList || 'No detailed specifications available.'}\n\n` +
-        `${description ? `📝 **Description:**\n${description}\n\n` : ''}` +
-        `🏷️ **Category:** ${category}\n` +
-        `📍 **Location:** ${area}\n` +
-        `📦 **Status:** ${inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
-        `💡 Ask me about specific features or comparisons!`;
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `📋 **${productName} - Specifications**\n\n` +
+          `${specList || 'No detailed specifications available.'}\n\n` +
+          `${opp.description ? `📝 **Description:**\n${opp.description}\n\n` : ''}` +
+          `🏷️ **Category:** ${opp.category || 'Uncategorized'}\n` +
+          `📍 **Location:** ${marketData.location}\n` +
+          `📦 **Status:** ${marketData.inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
+          `💡 Ask me about specific features or comparisons!`,
+        actions: [
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+          { type: 'see_similar', label: 'See Similar', data: { category: opp.category } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
-
-    // Customer reviews
+    
+    // ============================================================
+    // REVIEWS
+    // ============================================================
     if (lowerQuery.includes('review') || lowerQuery.includes('customer') || lowerQuery.includes('feedback')) {
-      return `⭐ **Customer Feedback for ${productName}**\n\n` +
-        `${rating > 0 ? `**Overall Rating:** ${rating.toFixed(1)} ⭐ (${reviewCount} reviews)\n\n` : '**No reviews yet**\n\n'}` +
-        `**Seller Reputation:**\n` +
-        `• ${shopName} has been rated by ${reviewCount > 0 ? reviewCount : 'no'} customers\n` +
-        `• ${rating > 4.0 ? '✅ Highly trusted seller' : rating > 3.0 ? '✅ Reliable seller' : '⚠️ Consider reviewing feedback'}\n\n` +
-        `💡 **Tip:** Click the "Reviews" button to see detailed customer feedback!`;
+      const rating = marketData.rating || 0;
+      const reviewCount = marketData.reviewCount || 0;
+      
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `⭐ **Customer Feedback for ${productName}**\n\n` +
+          `${rating > 0 ? `**Overall Rating:** ${rating.toFixed(1)} ⭐ (${reviewCount} reviews)\n\n` : '**No reviews yet**\n\n'}` +
+          `**Seller Reputation:**\n` +
+          `• ${shopName} has been rated by ${reviewCount > 0 ? reviewCount : 'no'} customers\n` +
+          `• ${rating > 4.0 ? '✅ Highly trusted seller' : rating > 3.0 ? '✅ Reliable seller' : '⚠️ Consider reviewing feedback'}\n\n` +
+          `💡 **Tip:** Click the "Reviews" button to see detailed customer feedback!`,
+        actions: [
+          { type: 'view_reviews', label: 'View Reviews', data: { productId: opp.id } },
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
-
-    // Delivery / Shipping
+    
+    // ============================================================
+    // DELIVERY
+    // ============================================================
     if (lowerQuery.includes('delivery') || lowerQuery.includes('shipping') || lowerQuery.includes('deliver')) {
-      return `🚚 **Delivery Information for ${productName}**\n\n` +
-        `📍 **Location:** ${area}\n` +
-        `📦 **Status:** ${inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
-        `**Estimated Delivery:**\n` +
-        `• ${area === 'Kampala' || area === 'Jinja' ? '1-2 business days' : '2-4 business days'}\n\n` +
-        `**Shipping Options:**\n` +
-        `• Standard delivery available\n` +
-        `• Express delivery (contact seller)\n\n` +
-        `💡 Contact ${shopName} for specific delivery fees.`;
+      // Honest delivery estimation
+      const estimatedDays = marketData.location === 'Kampala' || marketData.location === 'Jinja' 
+        ? '1-2 business days' 
+        : '2-4 business days';
+      
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `🚚 **Delivery Information for ${productName}**\n\n` +
+          `📍 **Location:** ${marketData.location}\n` +
+          `📦 **Status:** ${marketData.inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
+          `**Estimated Delivery:**\n` +
+          `• ${estimatedDays}\n\n` +
+          `**Shipping Options:**\n` +
+          `• Standard delivery available\n` +
+          `• Express delivery (contact seller)\n\n` +
+          `💡 Contact ${shopName} for specific delivery fees and exact timing.`,
+        actions: [
+          { type: 'contact', label: 'Contact Seller', data: { shopId: opp.shopId } },
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
-
-    // Warranty / Guarantee
+    
+    // ============================================================
+    // WARRANTY / GUARANTEE - HONEST RESPONSE
+    // ============================================================
     if (lowerQuery.includes('warranty') || lowerQuery.includes('guarantee') || lowerQuery.includes('return')) {
-      return `🛡️ **Warranty & Returns for ${productName}**\n\n` +
-        `**Warranty:**\n` +
-        `• Standard manufacturer warranty\n` +
-        `• ${shopName} ${rating > 4.0 ? 'premium' : 'standard'} seller guarantee\n\n` +
-        `**Returns Policy:**\n` +
-        `• ${rating > 4.0 ? '30-day' : '14-day'} return window\n` +
-        `• Must be in original packaging\n\n` +
-        `💡 Ask ${shopName} for specific warranty terms.`;
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `🛡️ **Warranty & Returns for ${productName}**\n\n` +
+          `⚠️ **I couldn't verify the exact warranty from the seller's listing.**\n\n` +
+          `**What I can tell you:**\n` +
+          `• ${shopName} has a ${marketData.rating > 4.0 ? 'premium' : 'standard'} seller reputation\n` +
+          `• ${marketData.rating > 4.0 ? 'Highly rated sellers typically offer better warranty terms' : 'Check with the seller for specific warranty details'}\n\n` +
+          `💡 **Next steps:**\n` +
+          `• Click "Contact Seller" to ask about warranty directly\n` +
+          `• View the seller's profile for more information\n\n` +
+          `**I won't guess warranty terms - it's better to get accurate information from the seller.**`,
+        actions: [
+          { type: 'contact', label: 'Contact Seller', data: { shopId: opp.shopId } },
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
-
-    // Price / Cost
+    
+    // ============================================================
+    // PRICE / COST
+    // ============================================================
     if (lowerQuery.includes('price') || lowerQuery.includes('cost') || lowerQuery.includes('expensive')) {
-      return `💰 **Pricing Information for ${productName}**\n\n` +
-        `**Current Price:** ${currency} ${price.toLocaleString()}\n` +
-        `**Seller:** ${shopName}\n` +
-        `**Category:** ${category}\n\n` +
-        `**Price Comparison:**\n` +
-        `• ${rating > 4.0 ? '✅ Competitive pricing' : '🟡 Average market price'}\n` +
-        `• ${currency} ${Math.round(price * 0.8).toLocaleString()} - ${currency} ${Math.round(price * 1.2).toLocaleString()} (typical range)\n\n` +
-        `💡 ${price > 500000 ? 'Premium product with higher value' : 'Affordable option with good value'}`;
+      return {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `💰 **Pricing Information for ${productName}**\n\n` +
+          `**Current Price:** ${currency} ${price.toLocaleString()}\n` +
+          `**Market Average:** ${currency} ${Math.round(avgPrice).toLocaleString()}\n` +
+          `**Seller:** ${shopName}\n` +
+          `**Category:** ${opp.category || 'Uncategorized'}\n\n` +
+          `**Price Comparison:**\n` +
+          `• ${priceDiff < 0 ? '✅ Below average price' : '🟡 At or above average price'}\n` +
+          `• Price range: ${currency} ${Math.round(minPrice).toLocaleString()} - ${currency} ${Math.round(maxPrice).toLocaleString()}\n\n` +
+          `💡 ${price > 500000 ? 'Premium product with higher value' : 'Affordable option with good value'}`,
+        actions: [
+          { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+          { type: 'see_similar', label: 'See Similar', data: { category: opp.category } },
+        ],
+        timestamp: new Date().toISOString(),
+      };
     }
+    
+    // ============================================================
+    // GENERAL / UNKNOWN QUERY
+    // ============================================================
+    return {
+      id: Date.now().toString(),
+      type: 'ai',
+      text: `🤔 **Here's what I know about ${productName}**\n\n` +
+        `**Overview:**\n` +
+        `• ${productName}\n` +
+        `• Category: ${opp.category || 'Uncategorized'}\n` +
+        `• Price: ${currency} ${price.toLocaleString()}\n\n` +
+        `**Seller:** ${shopName} ${marketData.rating > 0 ? `(${marketData.rating.toFixed(1)}⭐)` : ''}\n` +
+        `**Location:** ${marketData.location}\n` +
+        `**Status:** ${marketData.inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
+        `${Object.keys(opp.specifications || {}).length > 0 ? `**Key Features:**\n${Object.entries(opp.specifications || {}).slice(0, 3).map(([k, v]) => `• ${k}: ${v}`).join('\n')}\n\n` : ''}` +
+        `💡 **Try asking:**\n` +
+        `• "Compare this with similar products"\n` +
+        `• "Is this a good deal?"\n` +
+        `• "Tell me about the features"\n` +
+        `• "What do customers say?"\n` +
+        `• "Tell me about delivery"`,
+      actions: [
+        { type: 'view_seller', label: 'View Seller', data: { shopId: opp.shopId } },
+        { type: 'see_similar', label: 'See Similar', data: { category: opp.category } },
+        { type: 'share', label: 'Share', data: { opportunityId: opp.id } },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+  }, [queryMarketplace]);
 
-    // General / Unknown query
-    return `🤔 **Here's what I know about ${productName}**\n\n` +
-      `**Overview:**\n` +
-      `• ${productName}\n` +
-      `• Category: ${category}\n` +
-      `• Price: ${currency} ${price.toLocaleString()}\n\n` +
-      `**Seller:** ${shopName} ${rating > 0 ? `(${rating.toFixed(1)}⭐)` : ''}\n` +
-      `**Location:** ${area}\n` +
-      `**Status:** ${inStock ? '✅ In Stock' : '❌ Out of Stock'}\n\n` +
-      `${Object.keys(specs).length > 0 ? `**Key Features:**\n${Object.entries(specs).slice(0, 3).map(([k, v]) => `• ${k}: ${v}`).join('\n')}\n\n` : ''}` +
-      `💡 **Try asking:**\n` +
-      `• "Compare this with similar products"\n` +
-      `• "Is this a good deal?"\n` +
-      `• "Tell me about the features"\n` +
-      `• "What do customers say?"\n` +
-      `• "Tell me about delivery"`;
-  };
-
-  // Initialize messages when opportunity changes
+  // ============================================================
+  // INITIALIZE MESSAGES
+  // ============================================================
+  
   useEffect(() => {
-    if (opportunity) {
+    if (opportunity && visible) {
+      console.log('📱 Initializing messages for opportunity:', opportunity.title);
       const initialMessage = getInitialMessage();
       setMessages([
         {
-          id: '1',
+          id: Date.now().toString(),
           type: 'ai',
           text: initialMessage,
           timestamp: new Date().toISOString(),
         },
       ]);
+      setHasInitialized(true);
+      
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: false });
+      }, 100);
+    } else if (visible && !opportunity) {
+      console.log('⚠️ AIBottomSheet is visible but opportunity is null');
+      setMessages([
+        {
+          id: Date.now().toString(),
+          type: 'ai',
+          text: '👋 **Hi!** Please select an opportunity to chat with me about.',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      setHasInitialized(true);
     }
-  }, [opportunity]);
+  }, [opportunity, visible]);
 
-  const getInitialMessage = () => {
+  // Reset when sheet closes
+  useEffect(() => {
+    if (!visible) {
+      setInputText('');
+      setIsLoading(false);
+    }
+  }, [visible]);
+
+  const getInitialMessage = useCallback(() => {
     const productName = opportunity?.title || 'this product';
     const category = opportunity?.category || 'product';
     const price = opportunity?.price || 0;
@@ -260,7 +555,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
     const shopName = opportunity?.shopName || 'the seller';
     const rating = opportunity?.rating || 0;
     
-    let baseMessage = `👋 **Hi! I'm your Munolink AI assistant.**\n\nI can help you learn more about **${productName}** — this ${category} from ${shopName}${rating > 0 ? ` (${rating.toFixed(1)}⭐)` : ''} priced at ${currency} ${price.toLocaleString()}.`;
+    let baseMessage = `👋 **Hi! I'm muno AI.**\n\nI can help you learn more about **${productName}** — this ${category} from ${shopName}${rating > 0 ? ` (${rating.toFixed(1)}⭐)` : ''} priced at ${currency} ${price.toLocaleString()}.`;
     
     if (contextHint) {
       baseMessage += `\n\n${contextHint}`;
@@ -269,15 +564,21 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
     baseMessage += `\n\n💡 **Try asking:**\n• "Compare similar"\n• "Is this a good deal?"\n• "Tell me about features"\n• "What do customers say?"`;
     
     return baseMessage;
-  };
+  }, [opportunity, contextHint]);
 
-  const handleSendMessage = async () => {
-    if (!inputText.trim() || !opportunity) return;
+  // ============================================================
+  // HANDLE SEND MESSAGE - FIXED for suggestion bug
+  // ============================================================
+  
+  const handleSendMessage = useCallback(async (customQuery?: string) => {
+    const query = customQuery || inputText;
+    if (!query.trim() || !opportunity) return;
 
-    const userMessage: Message = {
+    // Add user message
+    const userMessage: AIMessage = {
       id: Date.now().toString(),
       type: 'user',
-      text: inputText.trim(),
+      text: query.trim(),
       timestamp: new Date().toISOString(),
     };
 
@@ -285,56 +586,58 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
     setInputText('');
     setIsLoading(true);
 
-    // Simulate AI thinking
-    setTimeout(() => {
-      const aiResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'ai',
-        text: generateAIResponse(inputText.trim(), opportunity),
-        timestamp: new Date().toISOString(),
-      };
+    try {
+      // Generate AI response with real data
+      const aiResponse = await generateAIResponse(query.trim(), opportunity);
       setMessages((prev) => [...prev, aiResponse]);
+    } catch (error) {
+      console.error('Error generating AI response:', error);
+      // Fallback response
+      setMessages((prev) => [...prev, {
+        id: Date.now().toString(),
+        type: 'ai',
+        text: `I'm having trouble analyzing that right now. Please try asking a different question.`,
+        timestamp: new Date().toISOString(),
+      }]);
+    } finally {
       setIsLoading(false);
-      
-      // Scroll to bottom
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
-    }, 800 + Math.random() * 400);
-  };
+    }
+  }, [inputText, opportunity, generateAIResponse]);
 
-  const handleSuggestionPress = (query: string) => {
-    if (!opportunity) return;
-    setInputText(query);
-    // Auto-send after a short delay
-    setTimeout(() => {
-      handleSendMessage();
-    }, 300);
-  };
+  const handleSuggestionPress = useCallback((query: string) => {
+    handleSendMessage(query);
+  }, [handleSendMessage]);
 
-  // Format timestamp
-  const formatTime = (timestamp?: string) => {
+  const formatTime = useCallback((timestamp?: string) => {
     if (!timestamp) return '';
     const date = new Date(timestamp);
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  };
+  }, []);
 
-  // Render AI Message with markdown-like formatting
-  const renderAIText = (text: string) => {
+  // ============================================================
+  // RENDER AI MESSAGE - UNIFIED for Desktop & Mobile
+  // ============================================================
+  
+  const renderAIText = useCallback((text: string) => {
     const lines = text.split('\n');
     return lines.map((line, index) => {
-      let formattedLine = line.replace(/\*\*(.*?)\*\*/g, (match, p1) => p1);
+      const isBold = line.includes('**');
       const isBullet = line.trim().startsWith('•');
       const isEmoji = line.trim().match(/^[👍👋🤔🔍💰📋⭐🚚🛡️💡✅❌🟢🟡🟠📦📍🏷️⚖️]/);
       
       if (line.trim() === '') {
-        return <View key={index} style={{ height: 6 }} />;
+        return <View key={index} style={{ height: 4 }} />;
       }
+      
+      let displayText = line.replace(/\*\*(.*?)\*\*/g, '$1');
       
       if (isEmoji && !isBullet) {
         return (
           <Text key={index} style={styles.aiEmojiLine}>
-            {line}
+            {displayText}
           </Text>
         );
       }
@@ -342,21 +645,72 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
       if (isBullet) {
         return (
           <Text key={index} style={styles.aiBulletPoint}>
-            {line}
+            {displayText}
+          </Text>
+        );
+      }
+      
+      if (isBold) {
+        return (
+          <Text key={index} style={styles.aiBoldText}>
+            {displayText}
           </Text>
         );
       }
       
       return (
         <Text key={index} style={styles.aiTextLine}>
-          {line}
+          {displayText}
         </Text>
       );
     });
+  }, []);
+
+  const renderAIMessage = useCallback((message: AIMessage) => {
+    return (
+      <View>
+        {renderAIText(message.text)}
+        {message.actions && message.actions.length > 0 && (
+          <View style={styles.actionContainer}>
+            {message.actions.map((action, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.actionButton}
+                onPress={() => handleActionPress(action)}
+              >
+                <Text style={styles.actionButtonText}>{action.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  }, [renderAIText]);
+
+  const handleActionPress = (action: AIAction) => {
+    console.log('Action pressed:', action);
+    // Implement navigation or other actions
+    switch (action.type) {
+      case 'view_seller':
+        // Navigate to seller profile
+        break;
+      case 'see_similar':
+        // Navigate to similar items
+        break;
+      case 'share':
+        // Share the opportunity
+        break;
+      case 'contact':
+        // Open contact seller
+        break;
+      case 'view_reviews':
+        // Open reviews
+        break;
+    }
   };
 
   // Render Typing Dots
-  const renderTypingDots = () => {
+  const renderTypingDots = useCallback(() => {
     return (
       <View style={styles.typingContainer}>
         {dotAnimations.map((anim, index) => (
@@ -383,10 +737,10 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         ))}
       </View>
     );
-  };
+  }, [dotAnimations]);
 
   // ============================================================
-  // DESKTOP VIEW - Render content directly (no Modal wrapper)
+  // DESKTOP VIEW
   // ============================================================
   if (isDesktopView) {
     if (!opportunity) {
@@ -403,16 +757,18 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
 
     return (
       <View style={styles.desktopContainer}>
-        {/* Header */}
         <View style={styles.desktopHeader}>
           <View style={styles.desktopHeaderLeft}>
-            <View style={styles.aiAvatarContainer}>
-              <Text style={styles.aiAvatar}>🤖</Text>
-            </View>
+            <LinearGradient
+              colors={['#4A7DFF', '#6C5CE7']}
+              style={styles.desktopAvatarGradient}
+            >
+              <Text style={styles.desktopAvatar}>🔮</Text>
+            </LinearGradient>
             <View>
-              <Text style={styles.desktopHeaderTitle}>AI Assistant</Text>
+              <Text style={styles.desktopHeaderTitle}>muno AI</Text>
               <Text style={styles.desktopHeaderSubtitle} numberOfLines={1}>
-                {opportunity.title}
+                Knows Munolink • {opportunity.title}
               </Text>
             </View>
           </View>
@@ -421,7 +777,6 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
           </TouchableOpacity>
         </View>
 
-        {/* Messages */}
         <ScrollView
           ref={scrollViewRef}
           style={styles.desktopMessagesContainer}
@@ -444,12 +799,12 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
               >
                 {message.type === 'ai' && (
                   <View style={styles.desktopAIIconContainer}>
-                    <Text style={styles.desktopAIIcon}>🤖</Text>
+                    <Text style={styles.desktopAIIcon}>🔮</Text>
                   </View>
                 )}
                 <View style={styles.desktopMessageContent}>
                   {message.type === 'ai' ? (
-                    <View>{renderAIText(message.text)}</View>
+                    <View>{renderAIMessage(message)}</View>
                   ) : (
                     <Text style={styles.desktopUserText}>{message.text}</Text>
                   )}
@@ -464,7 +819,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
             <View style={[styles.desktopMessageWrapper, styles.desktopAIWrapper]}>
               <View style={[styles.desktopMessageBubble, styles.desktopAIBubble]}>
                 <View style={styles.desktopAIIconContainer}>
-                  <Text style={styles.desktopAIIcon}>🤖</Text>
+                  <Text style={styles.desktopAIIcon}>🔮</Text>
                 </View>
                 <View style={styles.desktopMessageContent}>
                   {renderTypingDots()}
@@ -474,7 +829,6 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
           )}
         </ScrollView>
 
-        {/* Suggestions */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -493,23 +847,22 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
           ))}
         </ScrollView>
 
-        {/* Input */}
         <View style={styles.desktopInputContainer}>
           <TextInput
             style={styles.desktopInput}
-            placeholder="Ask me anything..."
+            placeholder="What can I help you find?"
             placeholderTextColor="#8A8AAE"
             value={inputText}
             onChangeText={setInputText}
             multiline
-            onSubmitEditing={handleSendMessage}
+            onSubmitEditing={() => handleSendMessage()}
           />
           <TouchableOpacity
             style={[
               styles.desktopSendButton,
               !inputText.trim() && styles.desktopSendButtonDisabled,
             ]}
-            onPress={handleSendMessage}
+            onPress={() => handleSendMessage()}
             disabled={!inputText.trim() || isLoading}
           >
             <LinearGradient
@@ -527,9 +880,10 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
   }
 
   // ============================================================
-  // MOBILE VIEW - Use Modal with BottomSheet
+  // MOBILE VIEW
   // ============================================================
-  const modalHeight = height * (isLargeScreen ? 0.7 : 0.8);
+  const modalHeight = height * (isLargeScreen ? 0.75 : 0.85);
+  const bottomInset = Platform.OS === 'ios' ? insets.bottom : 0;
 
   return (
     <Modal
@@ -537,13 +891,15 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
       transparent={true}
       animationType="slide"
       onRequestClose={onClose}
+      statusBarTranslucent={true}
     >
       <KeyboardAvoidingView
         style={styles.mobileModalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 25}
       >
         <TouchableOpacity style={styles.mobileBackdrop} onPress={onClose} activeOpacity={1} />
-        <View style={[styles.mobileModalContent, { height: modalHeight }]}>
+        <SafeAreaView style={[styles.mobileModalContent, { height: modalHeight, paddingBottom: bottomInset }]}>
           {/* Drag Indicator */}
           <View style={styles.mobileDragIndicatorContainer}>
             <View style={styles.mobileDragIndicator} />
@@ -552,18 +908,21 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
           {/* Header */}
           <View style={styles.mobileHeader}>
             <View style={styles.mobileHeaderLeft}>
-              <View style={styles.mobileAIAvatar}>
-                <Text style={styles.mobileAIAvatarText}>🤖</Text>
-              </View>
+              <LinearGradient
+                colors={['#4A7DFF', '#6C5CE7']}
+                style={styles.mobileAvatarGradient}
+              >
+                <Text style={styles.mobileAvatarText}>🔮</Text>
+              </LinearGradient>
               <View>
-                <Text style={styles.mobileHeaderTitle}>AI Assistant</Text>
+                <Text style={styles.mobileHeaderTitle}>muno AI</Text>
                 <Text style={styles.mobileHeaderSubtitle} numberOfLines={1}>
                   {opportunity?.title || 'No product selected'}
                 </Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.mobileCloseButton}>
-              <Ionicons name="close" size={22} color="#8A8AAE" />
+              <Ionicons name="close" size={24} color="#8A8AAE" />
             </TouchableOpacity>
           </View>
 
@@ -576,48 +935,53 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
                 contentContainerStyle={styles.mobileMessagesContent}
                 showsVerticalScrollIndicator={false}
               >
-                {messages.map((message) => (
-                  <View
-                    key={message.id}
-                    style={[
-                      styles.mobileMessageWrapper,
-                      message.type === 'user' ? styles.mobileUserWrapper : styles.mobileAIWrapper,
-                    ]}
-                  >
+                {messages.length === 0 ? (
+                  <View style={styles.mobileEmptyState}>
+                    <Text style={styles.mobileEmptyStateText}>Loading conversation...</Text>
+                  </View>
+                ) : (
+                  messages.map((message) => (
                     <View
+                      key={message.id}
                       style={[
-                        styles.mobileMessageBubble,
-                        message.type === 'user' ? styles.mobileUserBubble : styles.mobileAIBubble,
+                        styles.mobileMessageWrapper,
+                        message.type === 'user' ? styles.mobileUserWrapper : styles.mobileAIWrapper,
                       ]}
                     >
-                      {message.type === 'ai' && (
-                        <Text style={styles.mobileAIIcon}>🤖</Text>
-                      )}
-                      <Text
+                      <View
                         style={[
-                          styles.mobileMessageText,
-                          message.type === 'user' ? styles.mobileUserText : styles.mobileAIText,
+                          styles.mobileMessageBubble,
+                          message.type === 'user' ? styles.mobileUserBubble : styles.mobileAIBubble,
                         ]}
                       >
-                        {message.text}
+                        {message.type === 'ai' && (
+                          <Text style={styles.mobileAIIcon}>🔮</Text>
+                        )}
+                        <View style={styles.mobileMessageContent}>
+                          {message.type === 'ai' ? (
+                            renderAIMessage(message)
+                          ) : (
+                            <Text style={styles.mobileUserText}>{message.text}</Text>
+                          )}
+                        </View>
+                      </View>
+                      <Text style={styles.mobileMessageTime}>
+                        {formatTime(message.timestamp)}
                       </Text>
                     </View>
-                    <Text style={styles.mobileMessageTime}>
-                      {formatTime(message.timestamp)}
-                    </Text>
-                  </View>
-                ))}
+                  ))
+                )}
                 {isLoading && (
                   <View style={[styles.mobileMessageWrapper, styles.mobileAIWrapper]}>
                     <View style={[styles.mobileMessageBubble, styles.mobileAIBubble]}>
-                      <Text style={styles.mobileAIIcon}>🤖</Text>
+                      <Text style={styles.mobileAIIcon}>🔮</Text>
                       {renderTypingDots()}
                     </View>
                   </View>
                 )}
               </ScrollView>
 
-              {/* Suggestions - Responsive */}
+              {/* Suggestions */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -641,40 +1005,52 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
               <View style={styles.mobileInputContainer}>
                 <TextInput
                   style={styles.mobileInput}
-                  placeholder="Ask me anything..."
-                  placeholderTextColor="#8A8AAE"
+                  placeholder="What can I help you find?"
+                  placeholderTextColor="#6A7A9E"
                   value={inputText}
                   onChangeText={setInputText}
                   multiline
-                  onSubmitEditing={handleSendMessage}
+                  numberOfLines={1}
+                  onSubmitEditing={() => handleSendMessage()}
+                  returnKeyType="send"
                 />
                 <TouchableOpacity
                   style={[
                     styles.mobileSendButton,
                     !inputText.trim() && styles.mobileSendButtonDisabled,
                   ]}
-                  onPress={handleSendMessage}
+                  onPress={() => handleSendMessage()}
                   disabled={!inputText.trim() || isLoading}
                 >
-                  <Ionicons name="send" size={20} color={inputText.trim() ? '#FFFFFF' : '#8A8AAE'} />
+                  <LinearGradient
+                    colors={['#4A7DFF', '#6C5CE7']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.mobileSendGradient}
+                  >
+                    <Ionicons name="send" size={20} color="#FFFFFF" />
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
             </>
           ) : (
             <View style={styles.mobileEmptyContainer}>
-              <Text style={styles.mobileEmptyIcon}>🤖</Text>
+              <Text style={styles.mobileEmptyIcon}>🔮</Text>
               <Text style={styles.mobileEmptyTitle}>No item selected</Text>
               <Text style={styles.mobileEmptySubtext}>
-                Select an opportunity to chat with AI
+                Select an opportunity to chat with muno AI
               </Text>
             </View>
           )}
-        </View>
+        </SafeAreaView>
       </KeyboardAvoidingView>
     </Modal>
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   // ============================================================
   // DESKTOP STYLES
@@ -718,16 +1094,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  aiAvatarContainer: {
+  desktopAvatarGradient: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(74,125,255,0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  aiAvatar: {
-    fontSize: 20,
+  desktopAvatar: {
+    fontSize: 18,
   },
   desktopHeaderTitle: {
     color: '#FFFFFF',
@@ -794,6 +1169,25 @@ const styles = StyleSheet.create({
     marginTop: 4,
     alignSelf: 'flex-end',
   },
+  actionContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  actionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(74, 125, 255, 0.2)',
+  },
+  actionButtonText: {
+    color: '#4A7DFF',
+    fontSize: 12,
+    fontWeight: '500',
+  },
   aiTextLine: {
     color: '#E8ECF4',
     fontSize: 14,
@@ -809,6 +1203,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     paddingLeft: 8,
+  },
+  aiBoldText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 22,
   },
   typingContainer: {
     flexDirection: 'row',
@@ -890,13 +1290,13 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   mobileBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   mobileModalContent: {
     backgroundColor: '#1A2A4F',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
@@ -906,7 +1306,7 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   mobileDragIndicator: {
-    width: 36,
+    width: 40,
     height: 4,
     borderRadius: 2,
     backgroundColor: 'rgba(255,255,255,0.2)',
@@ -915,25 +1315,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.06)',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   mobileHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  mobileAIAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(74,125,255,0.15)',
+  mobileAvatarGradient: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  mobileAIAvatarText: {
+  mobileAvatarText: {
     fontSize: 20,
   },
   mobileHeaderTitle: {
@@ -951,9 +1350,21 @@ const styles = StyleSheet.create({
   },
   mobileMessagesContainer: {
     flex: 1,
+    minHeight: 100,
   },
   mobileMessagesContent: {
     paddingBottom: 8,
+    paddingTop: 4,
+  },
+  mobileEmptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 100,
+  },
+  mobileEmptyStateText: {
+    color: '#8A8AAE',
+    fontSize: 14,
   },
   mobileMessageWrapper: {
     marginBottom: 10,
@@ -978,12 +1389,16 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 4,
   },
   mobileAIBubble: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderBottomLeftRadius: 4,
   },
   mobileAIIcon: {
     fontSize: 16,
     marginRight: 8,
+    marginTop: 1,
+  },
+  mobileMessageContent: {
+    flex: 1,
   },
   mobileMessageText: {
     fontSize: 14,
@@ -1005,7 +1420,7 @@ const styles = StyleSheet.create({
     right: 4,
   },
   mobileSuggestionsContainer: {
-    maxHeight: 40,
+    maxHeight: 42,
     marginVertical: 6,
   },
   mobileSuggestionsContent: {
@@ -1036,26 +1451,28 @@ const styles = StyleSheet.create({
   },
   mobileInput: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     color: '#FFFFFF',
     fontSize: 14,
     maxHeight: 60,
+    minHeight: 40,
   },
   mobileSendButton: {
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: 40,
+    overflow: 'hidden',
   },
   mobileSendButtonDisabled: {
     opacity: 0.4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  mobileSendGradient: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 40,
   },
   mobileEmptyContainer: {
     flex: 1,

@@ -39,13 +39,20 @@ const SignInContent = ({ navigation }: any) => {
     setIsLoading(true);
     try {
       const fullPhone = `+256${phoneNumber}`;
+      console.log('📱 Attempting to sign in with:', fullPhone);
+      
+      // ✅ FIX: Wait for sign in to complete
       await signInWithPhone(fullPhone);
       
       console.log('✅ User signed in successfully');
+      
+      // ✅ Use replace to clear the navigation stack
+      // The navigation happens after the state is updated
       navigation.replace('MainTabs');
+      
     } catch (error: any) {
       console.error('Sign in error:', error);
-      Alert.alert('Error', error.message || 'Failed to sign in.');
+      Alert.alert('Error', error.message || 'Failed to sign in. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -166,8 +173,7 @@ export const SignInScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
-  // ... (all styles remain the same as your original file)
- // ============================================================
+  // ============================================================
   // DESKTOP STYLES
   // ============================================================
   containerDesktop: {
