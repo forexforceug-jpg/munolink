@@ -13,6 +13,7 @@ import { BusinessDashboardScreen } from '../features/business/BusinessDashboardS
 import { ExploreScreen } from '../features/explore/ExploreScreen';
 import { ProfileScreen } from '../features/profile/ProfileScreen';
 import { HelpSupportScreen } from '../features/help/HelpSupportScreen';
+import { InboxScreen } from '../features/inbox/InboxScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -24,12 +25,21 @@ export type RootStackParamList = {
     results: any[];
     query: string;
     initialIndex?: number;
+    intent?: any;
+    hasResults?: boolean;
+    totalResults?: number;
+    recommendationsCount?: number;
   };
   Explore: undefined;
   BusinessRegistration: undefined;
   BusinessDashboard: undefined;
   Profile: undefined;
   HelpSupport: undefined;
+  Inbox: {
+    userId?: string;
+    userName?: string;
+    shopId?: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -52,6 +62,7 @@ export const RootNavigator = () => {
       {/* Account Screens */}
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="HelpSupport" component={HelpSupportScreen} />
+      <Stack.Screen name="Inbox" component={InboxScreen} />
       
       {/* Business Screens */}
       <Stack.Screen name="ShopProfile" component={ShopProfileScreen} />

@@ -106,25 +106,42 @@ export class SceneFactory {
   }
 
   static createGallery(opportunity: Opportunity, image: string): Scene {
-    const galleryImages = opportunity.images.slice(3, 5);
-    const hasImages = galleryImages.length > 0;
+    // Get gallery images (up to 6)
+    const galleryImages = opportunity.images.slice(3, 9); // Max 6 images
+    const videoUri = opportunity.video || null;
     const isService = opportunity.type === 'service';
+    const totalItems = galleryImages.length + (videoUri ? 1 : 0);
+
+    let title = 'Explore More';
+    let content = '';
+
+    if (totalItems > 0) {
+      if (videoUri && galleryImages.length > 0) {
+        content = `${galleryImages.length} images and 1 video`;
+      } else if (videoUri) {
+        content = '1 video';
+      } else {
+        content = `${galleryImages.length} images`;
+      }
+    } else {
+      content = isService 
+        ? `Professional ${opportunity.category} service at ${opportunity.provider.name}` 
+        : `Get this amazing ${opportunity.type} at ${opportunity.provider.name}`;
+    }
 
     return {
       id: 'gallery',
       type: 'gallery',
       image: image,
-      title: hasImages ? 'Explore More' : isService ? 'Service Highlights' : 'What You Get',
-      content: hasImages 
-        ? `Swipe to see ${galleryImages.length} more photos` 
-        : (isService 
-            ? `Professional ${opportunity.category} service at ${opportunity.provider.name}` 
-            : `Get this amazing ${opportunity.type} at ${opportunity.provider.name}`),
+      title: title,
+      content: content,
       data: {
         images: galleryImages,
+        video: videoUri,
         totalImages: opportunity.images.length,
-        hasMore: hasImages,
+        hasMore: galleryImages.length > 0,
         isService: isService,
+        totalItems: totalItems,
       },
     };
   }

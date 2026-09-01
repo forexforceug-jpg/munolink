@@ -23,7 +23,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { supabase } from '../../lib/supabase';
@@ -55,7 +54,7 @@ interface Conversation {
 }
 
 // --- Helper Functions ---
-const formatTime = (timestamp: string) => {
+const formatTime = (timestamp: string | null | undefined) => {
   if (!timestamp) return '';
   const date = new Date(timestamp);
   const now = new Date();
@@ -208,8 +207,13 @@ const GuestInboxView = ({ navigation }: any) => (
 );
 
 // --- Desktop Inbox Content ---
-const DesktopInboxContent = ({ navigation }: any) => {
+const DesktopInboxContent = ({ navigation, route }: any) => {
   const { isAuthenticated, user } = useAuth();
+  
+  const routeParams = route?.params || {};
+  const directUserId = routeParams.userId || null;
+  const directUserName = routeParams.userName || null;
+  const directShopId = routeParams.shopId || null;
   
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
@@ -221,6 +225,7 @@ const DesktopInboxContent = ({ navigation }: any) => {
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
+  const [hasOpenedDirectChat, setHasOpenedDirectChat] = useState(false);
   
   const flatListRef = useRef<FlatList>(null);
   const subscriptionRef = useRef<any>(null);
@@ -251,6 +256,7 @@ const DesktopInboxContent = ({ navigation }: any) => {
         setLoading(false);
         setConversations([]);
         setFilteredConversations([]);
+        openDirectChatIfNeeded([]);
         return;
       }
 
@@ -332,6 +338,7 @@ const DesktopInboxContent = ({ navigation }: any) => {
         setConversations(convos);
         setFilteredConversations(convos);
         setLoading(false);
+        openDirectChatIfNeeded(convos);
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
@@ -340,6 +347,57 @@ const DesktopInboxContent = ({ navigation }: any) => {
       }
     }
   }, [user?.id]);
+
+  // --- Open Direct Chat ---
+  const openDirectChatIfNeeded = useCallback((currentConversations?: Conversation[]) => {
+    if (!directUserId || !user?.id || directUserId === user.id || hasOpenedDirectChat) {
+      return;
+    }
+
+    console.log(`🔍 Opening direct chat with: ${directUserId} (${directUserName})`);
+    
+    const convos = currentConversations || conversations;
+    const existingConvo = convos.find(c => c.id === directUserId);
+    
+    if (existingConvo) {
+      setSelectedConversation(existingConvo);
+      setShowChat(true);
+      setHasOpenedDirectChat(true);
+      loadMessages(directUserId);
+    } else {
+      const newConvo: Conversation = {
+        id: directUserId,
+        name: directUserName || 'User',
+        lastMessage: 'Start chatting...',
+        time: 'Just now',
+        unread: 0,
+        online: false,
+        avatar: directUserName?.charAt(0).toUpperCase() || 'U',
+        type: 'chat',
+        isVerified: false,
+      };
+      
+      setConversations(prev => {
+        const exists = prev.find(c => c.id === directUserId);
+        if (exists) {
+          setSelectedConversation(exists);
+          setShowChat(true);
+          setHasOpenedDirectChat(true);
+          return prev;
+        }
+        setSelectedConversation(newConvo);
+        setShowChat(true);
+        setHasOpenedDirectChat(true);
+        return [newConvo, ...prev];
+      });
+      
+      setFilteredConversations(prev => {
+        const exists = prev.find(c => c.id === directUserId);
+        if (exists) return prev;
+        return [newConvo, ...prev];
+      });
+    }
+  }, [directUserId, directUserName, user?.id, hasOpenedDirectChat, conversations]);
 
   // --- Load Messages for a Conversation ---
   const loadMessages = useCallback(async (partnerId: string) => {
@@ -429,7 +487,7 @@ const DesktopInboxContent = ({ navigation }: any) => {
           id: data.id,
           from: 'me',
           text: data.text,
-          
+          time: 'Just now',
           sender_id: data.sender_id,
           receiver_id: data.receiver_id,
           is_read: data.is_read,
@@ -499,7 +557,6 @@ const DesktopInboxContent = ({ navigation }: any) => {
         filter: `sender_id=eq.${user.id}`,
       }, () => {
         if (isMounted.current) {
-          // ✅ FIX: Use a safe approach - check if id exists and is a string
           const chatId = selectedConversation?.id;
           if (chatId && typeof chatId === 'string') {
             loadMessages(chatId);
@@ -562,14 +619,6 @@ const DesktopInboxContent = ({ navigation }: any) => {
     if (conversation.id) {
       loadMessages(conversation.id);
     }
-  };
-
-  // --- Handle back from chat ---
-  const handleBack = () => {
-    setSelectedConversation(null);
-    setShowChat(false);
-    setMessages([]);
-    loadConversations();
   };
 
   // --- Filter options ---
@@ -774,8 +823,13 @@ const DesktopInboxContent = ({ navigation }: any) => {
 };
 
 // --- Mobile Inbox Content ---
-const MobileInboxContent = ({ navigation }: any) => {
+const MobileInboxContent = ({ navigation, route }: any) => {
   const { isAuthenticated, user } = useAuth();
+  
+  const routeParams = route?.params || {};
+  const directUserId = routeParams.userId || null;
+  const directUserName = routeParams.userName || null;
+  const directShopId = routeParams.shopId || null;
   
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
@@ -787,6 +841,7 @@ const MobileInboxContent = ({ navigation }: any) => {
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
+  const [hasOpenedDirectChat, setHasOpenedDirectChat] = useState(false);
   
   const flatListRef = useRef<FlatList>(null);
   const subscriptionRef = useRef<any>(null);
@@ -817,6 +872,7 @@ const MobileInboxContent = ({ navigation }: any) => {
         setLoading(false);
         setConversations([]);
         setFilteredConversations([]);
+        openDirectChatIfNeeded([]);
         return;
       }
 
@@ -893,6 +949,7 @@ const MobileInboxContent = ({ navigation }: any) => {
         setConversations(convos);
         setFilteredConversations(convos);
         setLoading(false);
+        openDirectChatIfNeeded(convos);
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
@@ -901,6 +958,57 @@ const MobileInboxContent = ({ navigation }: any) => {
       }
     }
   }, [user?.id]);
+
+  // --- Open Direct Chat ---
+  const openDirectChatIfNeeded = useCallback((currentConversations?: Conversation[]) => {
+    if (!directUserId || !user?.id || directUserId === user.id || hasOpenedDirectChat) {
+      return;
+    }
+
+    console.log(`🔍 Opening direct chat with: ${directUserId} (${directUserName})`);
+    
+    const convos = currentConversations || conversations;
+    const existingConvo = convos.find(c => c.id === directUserId);
+    
+    if (existingConvo) {
+      setSelectedConversation(existingConvo);
+      setShowChat(true);
+      setHasOpenedDirectChat(true);
+      loadMessages(directUserId);
+    } else {
+      const newConvo: Conversation = {
+        id: directUserId,
+        name: directUserName || 'User',
+        lastMessage: 'Start chatting...',
+        time: 'Just now',
+        unread: 0,
+        online: false,
+        avatar: directUserName?.charAt(0).toUpperCase() || 'U',
+        type: 'chat',
+        isVerified: false,
+      };
+      
+      setConversations(prev => {
+        const exists = prev.find(c => c.id === directUserId);
+        if (exists) {
+          setSelectedConversation(exists);
+          setShowChat(true);
+          setHasOpenedDirectChat(true);
+          return prev;
+        }
+        setSelectedConversation(newConvo);
+        setShowChat(true);
+        setHasOpenedDirectChat(true);
+        return [newConvo, ...prev];
+      });
+      
+      setFilteredConversations(prev => {
+        const exists = prev.find(c => c.id === directUserId);
+        if (exists) return prev;
+        return [newConvo, ...prev];
+      });
+    }
+  }, [directUserId, directUserName, user?.id, hasOpenedDirectChat, conversations]);
 
   // --- Load Messages for a Conversation ---
   const loadMessages = useCallback(async (partnerId: string) => {
@@ -977,7 +1085,7 @@ const MobileInboxContent = ({ navigation }: any) => {
           id: data.id,
           from: 'me',
           text: data.text,
-        
+          time: 'Just now',
           sender_id: data.sender_id,
           receiver_id: data.receiver_id,
           is_read: data.is_read,
@@ -1047,7 +1155,6 @@ const MobileInboxContent = ({ navigation }: any) => {
         filter: `sender_id=eq.${user.id}`,
       }, () => {
         if (isMounted.current) {
-          // ✅ FIX: Use a safe approach - check if id exists and is a string
           const chatId = selectedConversation?.id;
           if (chatId && typeof chatId === 'string') {
             loadMessages(chatId);
@@ -1332,7 +1439,7 @@ const MobileInboxContent = ({ navigation }: any) => {
 };
 
 // --- Main InboxScreen Component ---
-export const InboxScreen = ({ navigation }: any) => {
+export const InboxScreen = ({ navigation, route }: any) => {
   const { isDesktop } = useBreakpoint();
 
   return (
@@ -1344,14 +1451,17 @@ export const InboxScreen = ({ navigation }: any) => {
       fullWidth={true}
     >
       {isDesktop ? (
-        <DesktopInboxContent navigation={navigation} />
+        <DesktopInboxContent navigation={navigation} route={route} />
       ) : (
-        <MobileInboxContent navigation={navigation} />
+        <MobileInboxContent navigation={navigation} route={route} />
       )}
     </ResponsiveLayout>
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   // ============================================================
   // DESKTOP STYLES - DARK THEME

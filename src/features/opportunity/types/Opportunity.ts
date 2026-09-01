@@ -38,6 +38,7 @@ export interface Opportunity {
   };
   source: 'product' | 'service' | 'event';
   createdAt: string;
+  video?: string | null;
   // Service-specific fields
   duration?: string;
   duration_minutes?: number;
