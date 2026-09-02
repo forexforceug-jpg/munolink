@@ -53,19 +53,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
   });
 
+  // ============================================================
+  // ✅ FIXED: Check Auth on App Start - With Better Persistence
+  // ============================================================
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        console.log('🔍 Checking auth state...');
+        
+        // Check both storage and in-memory state
         const token = await AsyncStorage.getItem('authToken');
         const userDataStr = await AsyncStorage.getItem('userData');
         
         if (token && userDataStr) {
-          const parsedUser = JSON.parse(userDataStr);
-          setIsAuthenticated(true);
-          setIsGuest(false);
-          setUser(parsedUser);
-          console.log('✅ User authenticated via custom auth:', parsedUser);
+          try {
+            const parsedUser = JSON.parse(userDataStr);
+            console.log('✅ Found stored user:', parsedUser);
+            
+            // Also check if user exists in database
+            if (parsedUser.id) {
+              const { data: dbUser, error: dbError } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', parsedUser.id)
+                .maybeSingle();
+
+              if (dbError) {
+                console.error('Error checking user in DB:', dbError);
+              }
+
+              if (dbUser) {
+                console.log('✅ User found in database:', dbUser.id);
+                setUser(parsedUser);
+                setIsAuthenticated(true);
+                setIsGuest(false);
+                console.log('✅ Session restored successfully');
+              } else {
+                // User doesn't exist in DB, clear storage
+                console.log('⚠️ User not found in database, clearing session');
+                await AsyncStorage.removeItem('authToken');
+                await AsyncStorage.removeItem('userData');
+                setIsAuthenticated(false);
+                setIsGuest(true);
+                setUser(null);
+              }
+            } else {
+              console.log('⚠️ Invalid user data, clearing session');
+              await AsyncStorage.removeItem('authToken');
+              await AsyncStorage.removeItem('userData');
+              setIsAuthenticated(false);
+              setIsGuest(true);
+            }
+          } catch (parseError) {
+            console.error('Error parsing user data:', parseError);
+            await AsyncStorage.removeItem('authToken');
+            await AsyncStorage.removeItem('userData');
+            setIsAuthenticated(false);
+            setIsGuest(true);
+          }
         } else {
+          console.log('ℹ️ No stored auth data found');
           setIsAuthenticated(false);
           setIsGuest(true);
         }
@@ -191,100 +238,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       Alert.alert('Error', 'Failed to sign in with Google. Please try again.');
     }
   };
-// In AuthContext.tsx, fix the return type
-const signInWithPhone = async (phone: string, fullName?: string): Promise<void> => {
-  console.log('📝 Signing in with phone (custom auth):', phone);
-  console.log('📝 User name provided:', fullName || 'Not provided');
-  
-  try {
-    const cleanPhone = phone.replace(/\s/g, '');
-    const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
+
+  // ✅ FIXED: Sign In With Phone
+  const signInWithPhone = async (phone: string, fullName?: string): Promise<void> => {
+    console.log('📝 Signing in with phone (custom auth):', phone);
+    console.log('📝 User name provided:', fullName || 'Not provided');
     
-    // Check if user exists first
-    const { data: existingUser, error: checkError } = await supabase
-      .from('users')
-      .select('id, full_name, phone_number')
-      .eq('phone_number', fullPhone)
-      .maybeSingle();
-
-    let userId: string;
-    let userName: string;
-
-    if (existingUser) {
-      console.log('✅ User already exists with ID:', existingUser.id);
-      userId = existingUser.id;
-      userName = existingUser.full_name || fullName?.trim() || 'Munolink Member';
+    try {
+      const cleanPhone = phone.replace(/\s/g, '');
+      const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
       
-      if (fullName?.trim() && !existingUser.full_name) {
-        console.log('📝 Updating user name in database to:', fullName);
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({ full_name: fullName.trim() })
-          .eq('id', userId);
-          
-        if (updateError) {
-          console.error('Error updating user name:', updateError);
-        } else {
-          console.log('✅ User name updated successfully');
-          userName = fullName.trim();
-        }
-      }
-    } else {
-      userId = generateUUID();
-      userName = fullName?.trim() || 'Munolink Member';
-      
-      console.log('📝 Creating new user in database...');
-      const { error: insertError } = await supabase
+      // Check if user exists first
+      const { data: existingUser, error: checkError } = await supabase
         .from('users')
-        .insert({
-          id: userId,
-          phone_number: fullPhone,
-          full_name: userName,
-          role: 'customer',
-          wallet_balance: 0,
-          lifetime_savings: 0,
-          kyc_verified: false,
-          created_at: new Date().toISOString(),
-        });
+        .select('id, full_name, phone_number')
+        .eq('phone_number', fullPhone)
+        .maybeSingle();
 
-      if (insertError) {
-        console.error('❌ Error creating user in database:', insertError);
-        throw insertError;
+      let userId: string;
+      let userName: string;
+
+      if (existingUser) {
+        console.log('✅ User already exists with ID:', existingUser.id);
+        userId = existingUser.id;
+        userName = existingUser.full_name || fullName?.trim() || 'Munolink Member';
+        
+        if (fullName?.trim() && !existingUser.full_name) {
+          console.log('📝 Updating user name in database to:', fullName);
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({ full_name: fullName.trim() })
+            .eq('id', userId);
+            
+          if (updateError) {
+            console.error('Error updating user name:', updateError);
+          } else {
+            console.log('✅ User name updated successfully');
+            userName = fullName.trim();
+          }
+        }
+      } else {
+        userId = generateUUID();
+        userName = fullName?.trim() || 'Munolink Member';
+        
+        console.log('📝 Creating new user in database...');
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert({
+            id: userId,
+            phone_number: fullPhone,
+            full_name: userName,
+            role: 'customer',
+            wallet_balance: 0,
+            lifetime_savings: 0,
+            kyc_verified: false,
+            created_at: new Date().toISOString(),
+          });
+
+        if (insertError) {
+          console.error('❌ Error creating user in database:', insertError);
+          throw insertError;
+        }
+        console.log('✅ User created in database successfully with name:', userName);
       }
-      console.log('✅ User created in database successfully with name:', userName);
+
+      // Create user data object for session
+      const userData = {
+        id: userId,
+        phone: fullPhone,
+        full_name: userName,
+        name: userName,
+        created_at: new Date().toISOString(),
+        isVerified: true,
+        role: 'customer',
+        wallet_balance: 0,
+        lifetime_savings: 0,
+      };
+
+      // Store in AsyncStorage
+      await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+
+      // Update state
+      setUser(userData);
+      setIsAuthenticated(true);
+      setIsGuest(false);
+      
+      console.log('✅ User signed in successfully with ID:', userId, 'Name:', userName);
+      
+      return;
+    } catch (error) {
+      console.error('❌ Sign in error:', error);
+      throw error;
     }
+  };
 
-    // Create user data object for session
-    const userData = {
-      id: userId,
-      phone: fullPhone,
-      full_name: userName,
-      name: userName,
-      created_at: new Date().toISOString(),
-      isVerified: true,
-      role: 'customer',
-      wallet_balance: 0,
-      lifetime_savings: 0,
-    };
-
-    // Store in AsyncStorage
-    await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-    await AsyncStorage.setItem('userData', JSON.stringify(userData));
-
-    // Update state
-    setUser(userData);
-    setIsAuthenticated(true);
-    setIsGuest(false);
-    
-    console.log('✅ User signed in successfully with ID:', userId, 'Name:', userName);
-    
-    // ✅ Return void (don't return the user data)
-    return;
-  } catch (error) {
-    console.error('❌ Sign in error:', error);
-    throw error;
-  }
-};
   const signIn = async (userData: any): Promise<void> => {
     console.log('📝 Signing in user:', userData);
     try {
@@ -339,6 +387,7 @@ const signInWithPhone = async (phone: string, fullName?: string): Promise<void> 
     }
   };
 
+  // ✅ FIXED: Sign Out - Clear everything
   const signOut = async (): Promise<void> => {
     setIsLoading(true);
     try {

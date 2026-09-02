@@ -8,6 +8,7 @@ import {
   StyleSheet, 
   Image,
   Platform,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -253,6 +254,66 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   }, [isSavedState, saveCount, triggerHaptic, onSavePress, opportunity]);
 
+  // ============================================================
+  // ✅ SHARE FUNCTION WITH IMAGE
+  // ============================================================
+  
+  const handleSharePress = useCallback(async () => {
+    try {
+      triggerHaptic('light');
+      
+      // Get the first image from the opportunity
+      const imageUrl = opportunity.imageUrl || 
+                       opportunity.catalogImages?.[0] || 
+                       opportunity.shopLogo || 
+                       null;
+      
+      // Build the share message
+      const title = opportunity.title || 'Check this out on Munolink';
+      const price = opportunity.price ? `UGX ${opportunity.price.toLocaleString()}` : '';
+      const shop = opportunity.shopName ? `from ${opportunity.shopName}` : '';
+      const rating = opportunity.rating ? `⭐ ${opportunity.rating.toFixed(1)}` : '';
+      const area = opportunity.area ? `📍 ${opportunity.area}` : '';
+      
+      let message = `🛍️ ${title}`;
+      if (price) message += `\n💰 ${price}`;
+      if (shop) message += `\n🏪 ${shop}`;
+      if (rating) message += `\n${rating}`;
+      if (area) message += `\n${area}`;
+      message += `\n\n📱 Check it out on Munolink: https://munolink.com/item/${opportunity.id}`;
+      
+      // If there's an image, share with image URL
+      if (imageUrl) {
+        // On mobile, we can share with image
+        try {
+          // For iOS/Android, try to share with image
+          await Share.share({
+            message: message,
+            url: imageUrl, // Some platforms support URL
+          });
+        } catch (shareError) {
+          // Fallback: share without image
+          console.warn('Image share failed, sharing text only:', shareError);
+          await Share.share({
+            message: message,
+          });
+        }
+      } else {
+        // Share text only
+        await Share.share({
+          message: message,
+        });
+      }
+      
+      // Call the parent callback if provided
+      if (onSharePress) {
+        onSharePress(opportunity);
+      }
+    } catch (error) {
+      console.error('Share error:', error);
+    }
+  }, [opportunity, triggerHaptic, onSharePress]);
+
   if (!opportunity) {
     console.warn('FloatingActionRail: No opportunity provided');
     return null;
@@ -371,13 +432,13 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* Share Button */}
+      {/* Share Button - Uses the new handleSharePress */}
       <TouchableOpacity
         style={[
           styles.actionButton,
           { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
         ]}
-        onPress={() => handlePress('Share', () => onSharePress(opportunity))}
+        onPress={handleSharePress}
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.share} size={iconSize} color="#FFFFFF" />

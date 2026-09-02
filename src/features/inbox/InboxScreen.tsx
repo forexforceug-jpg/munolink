@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Image,
@@ -20,6 +19,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -534,11 +534,16 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
     }
   };
 
-  // --- Setup Real-time Subscription ---
+  // ============================================================
+  // ✅ FIXED: Setup Real-time Subscription - Only once
+  // ============================================================
   useEffect(() => {
     if (!user?.id || !isMounted.current) return;
 
+    // Create the channel
     const channel = supabase.channel('messages-channel');
+
+    // ✅ Add all callbacks BEFORE subscribing
     channel
       .on('postgres_changes', {
         event: 'INSERT',
@@ -563,10 +568,12 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
           }
           loadConversations();
         }
-      })
-      .subscribe((status) => {
-        console.log('📡 Subscription status:', status);
       });
+
+    // ✅ Then subscribe
+    channel.subscribe((status) => {
+      console.log('📡 Subscription status:', status);
+    });
 
     subscriptionRef.current = channel;
 
@@ -1132,11 +1139,16 @@ const MobileInboxContent = ({ navigation, route }: any) => {
     }
   };
 
-  // --- Setup Real-time Subscription ---
+  // ============================================================
+  // ✅ FIXED: Setup Real-time Subscription - Only once
+  // ============================================================
   useEffect(() => {
     if (!user?.id || !isMounted.current) return;
 
+    // Create the channel
     const channel = supabase.channel('messages-channel');
+
+    // ✅ Add all callbacks BEFORE subscribing
     channel
       .on('postgres_changes', {
         event: 'INSERT',
@@ -1161,10 +1173,12 @@ const MobileInboxContent = ({ navigation, route }: any) => {
           }
           loadConversations();
         }
-      })
-      .subscribe((status) => {
-        console.log('📡 Subscription status:', status);
       });
+
+    // ✅ Then subscribe
+    channel.subscribe((status) => {
+      console.log('📡 Subscription status:', status);
+    });
 
     subscriptionRef.current = channel;
 
@@ -1221,8 +1235,8 @@ const MobileInboxContent = ({ navigation, route }: any) => {
   }
 
   return (
-    <SafeAreaView style={styles.mobileContainer}>
-      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+  <SafeAreaView style={styles.mobileContainer} edges={['top']}>
+          <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
 
       {/* Header */}
       <View style={styles.mobileHeader}>

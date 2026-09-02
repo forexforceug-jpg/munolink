@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Image,
@@ -22,6 +21,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -2038,290 +2038,337 @@ const BusinessDashboardContent = ({ navigation }: any) => {
     );
   };
 
-  // --- Render Scene Manager ---
-  const renderSceneManager = () => {
-    if (!showSceneManager || !selectedOffering) return null;
+// --- Render Scene Manager ---
+const renderSceneManager = () => {
+  if (!showSceneManager || !selectedOffering) return null;
 
-    const catalogData = selectedOffering.catalog || selectedOffering.service_catalog || {};
-    const name = catalogData.name || selectedOffering.name || 'Offering';
-    const price = selectedOffering.regular_price || selectedOffering.price || 0;
-    const isProduct = selectedOffering.type === 'product';
+  const catalogData = selectedOffering.catalog || selectedOffering.service_catalog || {};
+  const name = catalogData.name || selectedOffering.name || 'Offering';
+  const price = selectedOffering.regular_price || selectedOffering.price || 0;
+  const isProduct = selectedOffering.type === 'product';
 
-    return (
-      <Modal
-        visible={showSceneManager}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowSceneManager(false)}
-      >
-        <View style={styles.sceneManagerContainer}>
-          <View style={styles.sceneManagerHeader}>
-            <TouchableOpacity onPress={() => setShowSceneManager(false)}>
-              <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-            </TouchableOpacity>
-            <Text style={styles.sceneManagerTitle}>Manage Scenes</Text>
-            <TouchableOpacity onPress={() => setShowSceneManager(false)}>
-              <Ionicons name="close" size={24} color="#1F2F5F" />
-            </TouchableOpacity>
+  return (
+    <Modal
+      visible={showSceneManager}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowSceneManager(false)}
+    >
+      <SafeAreaView style={styles.sceneManagerContainer} edges={['top', 'bottom']}>
+        <View style={styles.sceneManagerHeader}>
+          <TouchableOpacity onPress={() => setShowSceneManager(false)}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+          <Text style={styles.sceneManagerTitle}>Manage Scenes</Text>
+          <TouchableOpacity onPress={() => setShowSceneManager(false)}>
+            <Ionicons name="close" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView 
+          style={styles.sceneManagerContent} 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.sceneManagerContentContainer}
+        >
+          {/* Product/Service Info */}
+          <View style={styles.sceneManagerProduct}>
+            <View style={styles.sceneManagerTypeBadge}>
+              <Text style={styles.sceneManagerTypeBadgeText}>
+                {isProduct ? 'Product' : 'Service'}
+              </Text>
+            </View>
+            <Text style={styles.sceneManagerProductName}>{name}</Text>
+            <Text style={styles.sceneManagerProductPrice}>UGX {price.toLocaleString()}</Text>
           </View>
 
-          <ScrollView style={styles.sceneManagerContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.sceneManagerProduct}>
-              <View style={styles.sceneManagerTypeBadge}>
-                <Text style={styles.sceneManagerTypeBadgeText}>
-                  {isProduct ? 'Product' : 'Service'}
-                </Text>
-              </View>
-              <Text style={styles.sceneManagerProductName}>{name}</Text>
-              <Text style={styles.sceneManagerProductPrice}>UGX {price.toLocaleString()}</Text>
-            </View>
+          {/* Scene Images Section */}
+          <Text style={styles.sceneManagerSectionTitle}>Scene Images</Text>
+          <Text style={styles.sceneManagerSectionSubtitle}>
+            Each scene represents a different image slot for your offering
+          </Text>
 
-            <Text style={styles.sceneManagerSectionTitle}>Scene Images</Text>
-            <Text style={styles.sceneManagerSectionSubtitle}>
-              Each scene represents a different image slot for your offering
-            </Text>
-
-            {['hero', 'details', 'trust', 'gallery', 'extra'].map((sceneType) => {
-              const labels: Record<string, string> = {
-                hero: 'Hero',
-                details: 'Details',
-                trust: 'Trust',
-                gallery: 'Gallery',
-                extra: 'Extra'
-              };
-              const descriptions: Record<string, string> = {
-                hero: 'Main image shown first',
-                details: 'Product details view',
-                trust: 'Trust signals',
-                gallery: 'Multiple images',
-                extra: 'Additional image'
-              };
-              
-              return (
-                <View key={sceneType} style={styles.sceneItem}>
-                  <View style={styles.sceneItemHeader}>
-                    <View style={styles.sceneItemIcon}>
-                      <Ionicons name="image-outline" size={16} color="#4A7DFF" />
-                    </View>
-                    <View style={styles.sceneItemInfo}>
-                      <Text style={styles.sceneItemLabel}>{labels[sceneType]}</Text>
-                      <Text style={styles.sceneItemDescription}>{descriptions[sceneType]}</Text>
-                    </View>
-                    <View style={styles.sceneItemBadge}>
-                      <Text style={styles.sceneItemBadgeText}>
-                        {sceneImages[sceneType] ? 'Set' : 'Empty'}
-                      </Text>
-                    </View>
+          {['hero', 'details', 'trust', 'gallery', 'extra'].map((sceneType) => {
+            const labels: Record<string, string> = {
+              hero: 'Hero',
+              details: 'Details',
+              trust: 'Trust',
+              gallery: 'Gallery',
+              extra: 'Extra'
+            };
+            const descriptions: Record<string, string> = {
+              hero: 'Main image shown first',
+              details: 'Product details view',
+              trust: 'Trust signals',
+              gallery: 'Multiple images',
+              extra: 'Additional image'
+            };
+            
+            return (
+              <View key={sceneType} style={styles.sceneItem}>
+                <View style={styles.sceneItemHeader}>
+                  <View style={styles.sceneItemIcon}>
+                    <Ionicons name="image-outline" size={16} color="#4A7DFF" />
                   </View>
+                  <View style={styles.sceneItemInfo}>
+                    <Text style={styles.sceneItemLabel}>{labels[sceneType]}</Text>
+                    <Text style={styles.sceneItemDescription}>{descriptions[sceneType]}</Text>
+                  </View>
+                  <View style={[
+                    styles.sceneItemBadge,
+                    sceneImages[sceneType] && styles.sceneItemBadgeActive
+                  ]}>
+                    <Text style={[
+                      styles.sceneItemBadgeText,
+                      sceneImages[sceneType] && styles.sceneItemBadgeTextActive
+                    ]}>
+                      {sceneImages[sceneType] ? '✓ Set' : 'Empty'}
+                    </Text>
+                  </View>
+                </View>
 
-                  <TouchableOpacity
-                    style={styles.sceneImageContainer}
-                    onPress={async () => {
+                <TouchableOpacity
+                  style={styles.sceneImageContainer}
+                  activeOpacity={0.7}
+                  onPress={async () => {
+                    try {
+                      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                      if (status !== 'granted') {
+                        Alert.alert('Permission Required', 'Please allow access to your photos.');
+                        return;
+                      }
+
                       const result = await ImagePicker.launchImageLibraryAsync({
                         mediaTypes: ImagePicker.MediaTypeOptions.Images,
                         quality: 0.8,
                       });
                       if (!result.canceled && result.assets[0]) {
-                        updateSceneImage(sceneType, result.assets[0].uri);
+                        await updateSceneImage(sceneType, result.assets[0].uri);
                       }
-                    }}
-                  >
-                    {sceneImages[sceneType] ? (
-                      <Image source={{ uri: sceneImages[sceneType] }} style={styles.sceneImage} />
-                    ) : (
-                      <View style={styles.sceneImagePlaceholder}>
-                        <Ionicons name="image-outline" size={32} color="#8A8AAE" />
-                        <Text style={styles.sceneImagePlaceholderText}>Tap to add image</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-
-            <Text style={styles.sceneManagerSectionTitle}>Gallery Images</Text>
-            <Text style={styles.sceneManagerSectionSubtitle}>
-              Additional images for your offering
-            </Text>
-
-            <View style={styles.galleryContainer}>
-              {galleryImages.length === 0 ? (
-                <View style={styles.galleryEmpty}>
-                  <Ionicons name="images-outline" size={40} color="#8A8AAE" />
-                  <Text style={styles.galleryEmptyText}>No gallery images yet</Text>
-                </View>
-              ) : (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {galleryImages.map((uri, index) => (
-                    <View key={index} style={styles.galleryImageContainer}>
-                      <Image source={{ uri }} style={styles.galleryImage} />
-                      <TouchableOpacity 
-                        style={styles.galleryImageRemove} 
-                        onPress={() => removeGalleryImage(index)}
-                      >
-                        <Ionicons name="close" size={12} color="#FFFFFF" />
-                      </TouchableOpacity>
+                    } catch (error) {
+                      console.error('Error picking image:', error);
+                      Alert.alert('Error', 'Failed to pick image');
+                    }
+                  }}
+                >
+                  {sceneImages[sceneType] ? (
+                    <Image source={{ uri: sceneImages[sceneType] }} style={styles.sceneImage} />
+                  ) : (
+                    <View style={styles.sceneImagePlaceholder}>
+                      <Ionicons name="image-outline" size={32} color="#8A8AAE" />
+                      <Text style={styles.sceneImagePlaceholderText}>Tap to add image</Text>
                     </View>
-                  ))}
-                </View>
+                  )}
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+
+          {/* Gallery Images Section */}
+          <Text style={styles.sceneManagerSectionTitle}>Gallery Images</Text>
+          <Text style={styles.sceneManagerSectionSubtitle}>
+            Additional images for your offering
+          </Text>
+
+          <View style={styles.galleryContainer}>
+            {galleryImages.length === 0 ? (
+              <View style={styles.galleryEmpty}>
+                <Ionicons name="images-outline" size={40} color="#8A8AAE" />
+                <Text style={styles.galleryEmptyText}>No gallery images yet</Text>
+              </View>
+            ) : (
+              <View style={styles.galleryGrid}>
+                {galleryImages.map((uri, index) => (
+                  <View key={index} style={styles.galleryImageContainer}>
+                    <Image source={{ uri }} style={styles.galleryImage} />
+                    <TouchableOpacity 
+                      style={styles.galleryImageRemove} 
+                      onPress={() => removeGalleryImage(index)}
+                    >
+                      <Ionicons name="close" size={12} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          <TouchableOpacity 
+            style={styles.galleryAddButton} 
+            onPress={addGalleryImages}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="add-circle-outline" size={20} color="#4A7DFF" />
+            <Text style={styles.galleryAddText}>Add Gallery Images</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.saveScenesButton} 
+            onPress={() => {
+              Alert.alert('Success', 'Scenes updated successfully!');
+              setShowSceneManager(false);
+            }}
+            activeOpacity={0.7}
+          >
+            <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.saveScenesGradient}>
+              <Text style={styles.saveScenesButtonText}>Done</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+};
+// --- Render Business Settings ---
+const renderBusinessSettings = () => {
+  if (!showBusinessSettings) return null;
+
+  return (
+    <Modal
+      visible={showBusinessSettings}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowBusinessSettings(false)}
+    >
+      <SafeAreaView style={styles.settingsContainer} edges={['top', 'bottom']}>
+        <View style={styles.settingsHeader}>
+          <TouchableOpacity onPress={() => setShowBusinessSettings(false)}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+          <Text style={styles.settingsTitle}>Business Settings</Text>
+          <TouchableOpacity onPress={saveBusinessSettings} disabled={savingSettings}>
+            <Text style={[styles.settingsSave, savingSettings && { opacity: 0.5 }]}>
+              {savingSettings ? 'Saving...' : 'Save'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView 
+          style={styles.settingsContent} 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.settingsContentContainer}
+        >
+          {/* Branding Section */}
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsGroupTitle}>Branding</Text>
+            
+            {/* Logo Section */}
+            <View style={styles.settingsImagePicker}>
+              <Text style={styles.settingsLabel}>Logo</Text>
+              <TouchableOpacity 
+                onPress={pickLogo} 
+                style={styles.logoTouchable}
+                activeOpacity={0.7}
+              >
+                {businessSettings.logo ? (
+                  <Image 
+                    source={{ uri: businessSettings.logo }} 
+                    style={styles.settingsLogo}
+                    onError={(e) => {
+                      console.log('Logo load error:', e.nativeEvent.error);
+                    }}
+                  />
+                ) : (
+                  <View style={styles.settingsImagePlaceholder}>
+                    <Ionicons name="camera" size={24} color="#8A8AAE" />
+                    <Text style={styles.settingsImagePlaceholderText}>Add Logo</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {businessSettings.logo && (
+                <Text style={styles.previewUrlText} numberOfLines={1}>
+                  {businessSettings.logo}
+                </Text>
               )}
             </View>
 
-            <TouchableOpacity style={styles.galleryAddButton} onPress={addGalleryImages}>
-              <Ionicons name="add-circle-outline" size={20} color="#4A7DFF" />
-              <Text style={styles.galleryAddText}>Add Gallery Images</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.saveScenesButton} 
-              onPress={() => {
-                Alert.alert('Success', 'Scenes updated successfully!');
-                setShowSceneManager(false);
-              }}
-            >
-              <LinearGradient colors={['#4A7DFF', '#6C5CE7']} style={styles.saveScenesGradient}>
-                <Text style={styles.saveScenesButtonText}>Done</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </Modal>
-    );
-  };
-
-  // --- Render Business Settings ---
-  const renderBusinessSettings = () => {
-    if (!showBusinessSettings) return null;
-
-    return (
-      <Modal
-        visible={showBusinessSettings}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowBusinessSettings(false)}
-      >
-        <View style={styles.settingsContainer}>
-          <View style={styles.settingsHeader}>
-            <TouchableOpacity onPress={() => setShowBusinessSettings(false)}>
-              <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-            </TouchableOpacity>
-            <Text style={styles.settingsTitle}>Business Settings</Text>
-            <TouchableOpacity onPress={saveBusinessSettings} disabled={savingSettings}>
-              <Text style={styles.settingsSave}>
-                {savingSettings ? 'Saving...' : 'Save'}
-              </Text>
-            </TouchableOpacity>
+            {/* Banner Section */}
+            <View style={styles.settingsBannerPicker}>
+              <Text style={styles.settingsLabel}>Banner Image</Text>
+              <TouchableOpacity 
+                onPress={pickBanner} 
+                style={styles.bannerTouchable}
+                activeOpacity={0.7}
+              >
+                {businessSettings.banner ? (
+                  <Image 
+                    source={{ uri: businessSettings.banner }} 
+                    style={styles.settingsBanner}
+                    onError={(e) => {
+                      console.log('Banner load error:', e.nativeEvent.error);
+                    }}
+                  />
+                ) : (
+                  <View style={styles.settingsBannerPlaceholder}>
+                    <Ionicons name="image-outline" size={32} color="#8A8AAE" />
+                    <Text style={styles.settingsBannerPlaceholderText}>Tap to add banner image</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {businessSettings.banner && (
+                <Text style={styles.previewUrlText} numberOfLines={1}>
+                  {businessSettings.banner}
+                </Text>
+              )}
+            </View>
           </View>
 
-          <ScrollView style={styles.settingsContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.settingsGroup}>
-              <Text style={styles.settingsGroupTitle}>Branding</Text>
-              
-              {/* Logo Section */}
-              <View style={styles.settingsImagePicker}>
-                <Text style={styles.settingsLabel}>Logo</Text>
-                <TouchableOpacity onPress={pickLogo} style={styles.logoTouchable}>
-                  {businessSettings.logo ? (
-                    <Image 
-                      source={{ uri: businessSettings.logo }} 
-                      style={styles.settingsLogo}
-                      onError={(e) => {
-                        console.log('Logo load error:', e.nativeEvent.error);
-                      }}
-                    />
-                  ) : (
-                    <View style={styles.settingsImagePlaceholder}>
-                      <Ionicons name="camera" size={24} color="#8A8AAE" />
-                      <Text style={styles.settingsImagePlaceholderText}>Add Logo</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-                {businessSettings.logo && (
-                  <Text style={styles.previewUrlText} numberOfLines={1}>
-                    {businessSettings.logo}
-                  </Text>
-                )}
-              </View>
-
-              {/* Banner Section */}
-              <View style={styles.settingsBannerPicker}>
-                <Text style={styles.settingsLabel}>Banner Image</Text>
-                <TouchableOpacity onPress={pickBanner} style={styles.bannerTouchable}>
-                  {businessSettings.banner ? (
-                    <Image 
-                      source={{ uri: businessSettings.banner }} 
-                      style={styles.settingsBanner}
-                      onError={(e) => {
-                        console.log('Banner load error:', e.nativeEvent.error);
-                      }}
-                    />
-                  ) : (
-                    <View style={styles.settingsBannerPlaceholder}>
-                      <Ionicons name="image-outline" size={32} color="#8A8AAE" />
-                      <Text style={styles.settingsBannerPlaceholderText}>Tap to add banner image</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-                {businessSettings.banner && (
-                  <Text style={styles.previewUrlText} numberOfLines={1}>
-                    {businessSettings.banner}
-                  </Text>
-                )}
-              </View>
+          {/* Business Details Section */}
+          <View style={styles.settingsGroup}>
+            <Text style={styles.settingsGroupTitle}>Business Details</Text>
+            
+            <View style={styles.settingsField}>
+              <Text style={styles.settingsLabel}>Description</Text>
+              <TextInput
+                style={[styles.settingsInput, styles.settingsTextArea]}
+                placeholder="Describe your business"
+                multiline
+                numberOfLines={3}
+                value={businessSettings.description}
+                onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, description: text }))}
+                placeholderTextColor="#8A8AAE"
+              />
             </View>
 
-            <View style={styles.settingsGroup}>
-              <Text style={styles.settingsGroupTitle}>Business Details</Text>
-              
-              <View style={styles.settingsField}>
-                <Text style={styles.settingsLabel}>Description</Text>
-                <TextInput
-                  style={[styles.settingsInput, styles.settingsTextArea]}
-                  placeholder="Describe your business"
-                  multiline
-                  numberOfLines={3}
-                  value={businessSettings.description}
-                  onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, description: text }))}
-                />
-              </View>
-
-              <View style={styles.settingsField}>
-                <Text style={styles.settingsLabel}>Phone</Text>
-                <TextInput
-                  style={styles.settingsInput}
-                  placeholder="+256 700 000 000"
-                  value={businessSettings.phone}
-                  onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, phone: text }))}
-                />
-              </View>
-
-              <View style={styles.settingsField}>
-                <Text style={styles.settingsLabel}>Working Hours</Text>
-                <TextInput
-                  style={styles.settingsInput}
-                  placeholder="Mon-Fri 9AM-5PM"
-                  value={businessSettings.workingHours}
-                  onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, workingHours: text }))}
-                />
-              </View>
-
-              <View style={styles.settingsToggle}>
-                <Text style={styles.toggleLabel}>Business Open</Text>
-                <Switch
-                  value={businessSettings.isOpen}
-                  onValueChange={(value) => setBusinessSettings(prev => ({ ...prev, isOpen: value }))}
-                  trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
-                />
-              </View>
+            <View style={styles.settingsField}>
+              <Text style={styles.settingsLabel}>Phone</Text>
+              <TextInput
+                style={styles.settingsInput}
+                placeholder="+256 700 000 000"
+                value={businessSettings.phone}
+                onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, phone: text }))}
+                placeholderTextColor="#8A8AAE"
+                keyboardType="phone-pad"
+              />
             </View>
 
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        </View>
-      </Modal>
-    );
-  };
+            <View style={styles.settingsField}>
+              <Text style={styles.settingsLabel}>Working Hours</Text>
+              <TextInput
+                style={styles.settingsInput}
+                placeholder="Mon-Fri 9AM-5PM"
+                value={businessSettings.workingHours}
+                onChangeText={(text) => setBusinessSettings(prev => ({ ...prev, workingHours: text }))}
+                placeholderTextColor="#8A8AAE"
+              />
+            </View>
 
+            <View style={styles.settingsToggle}>
+              <Text style={styles.toggleLabel}>Business Open</Text>
+              <Switch
+                value={businessSettings.isOpen}
+                onValueChange={(value) => setBusinessSettings(prev => ({ ...prev, isOpen: value }))}
+                trackColor={{ false: '#E8ECF4', true: '#4A7DFF' }}
+                thumbColor={businessSettings.isOpen ? '#FFFFFF' : '#FFFFFF'}
+              />
+            </View>
+          </View>
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+};
   // ============================================================
   // 5. TABS AND LOADING STATES
   // ============================================================
@@ -2355,9 +2402,8 @@ const BusinessDashboardContent = ({ navigation }: any) => {
   }
 
   return (
-    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top', 'bottom']}> 
+         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       {isDesktop ? (
         <View style={styles.desktopHeader}>
           <Text style={styles.desktopHeaderTitle}>Business Dashboard</Text>
@@ -2435,7 +2481,7 @@ const BusinessDashboardContent = ({ navigation }: any) => {
       {renderDeleteConfirm()}
       {renderSceneManager()}
       {renderBusinessSettings()}
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -3476,6 +3522,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
   },
+  // Add to styles
+settingsContentContainer: {
+  paddingBottom: 40,
+},
+sceneManagerContentContainer: {
+  paddingBottom: 40,
+},
+sceneItemBadgeActive: {
+  backgroundColor: 'rgba(46, 204, 113, 0.15)',
+},
+sceneItemBadgeTextActive: {
+  color: '#2ECC71',
+},
+galleryGrid: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+},
   viewAllBtn: {
     paddingVertical: 10,
     alignItems: 'center',

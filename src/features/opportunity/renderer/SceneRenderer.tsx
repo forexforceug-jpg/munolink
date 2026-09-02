@@ -19,7 +19,7 @@ import { GalleryScene } from '../scenes/GalleryScene';
 import { ActionScene } from '../scenes/ActionScene';
 import { Ionicons } from '@expo/vector-icons';
 
-const { width: screenWidth } = Dimensions.get('window');
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 // ============================================================
 // TYPES
@@ -65,9 +65,11 @@ interface Props {
   inStock?: boolean;
   currency?: string;
   type?: 'product' | 'service' | 'event';
-  providerName?: string;  // ✅ Provider name for services
+  providerName?: string;
   providerId?: string;
   providerType?: 'individual' | 'institution';
+  // ✅ New prop for custom bottom position
+  bottomOffset?: number;
 }
 
 // ============================================================
@@ -96,9 +98,10 @@ export function SceneRenderer({
   inStock = true,
   currency = 'UGX',
   type = 'product',
-  providerName = '',  // ✅ Provider name prop
+  providerName = '',
   providerId = '',
   providerType = 'individual',
+  bottomOffset = 0, // ✅ Allows manual adjustment from parent
 }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progressAnim] = useState(new Animated.Value(0));
@@ -121,7 +124,15 @@ export function SceneRenderer({
   }
 
   const currentScene = scenes[currentIndex] || scenes[0];
-  const bottomPosition = isDesktop ? 30 : 100;
+  
+  // ✅ Calculate bottom position - raised higher with more padding
+  const getBottomPosition = () => {
+    let basePosition = isDesktop ? 20 : 110;
+    // Add offset if provided
+    return basePosition + bottomOffset;
+  };
+  
+  const bottomPosition = getBottomPosition();
 
   // ✅ Check if this is a service
   const isService = type === 'service' || type === 'event';
@@ -130,10 +141,8 @@ export function SceneRenderer({
   let displayName = shopName || 'Shop';
   
   if (isService) {
-    // For services: use providerName if available, then shopName, then fallback
     displayName = providerName || shopName || 'Service Provider';
   } else {
-    // For products: use shopName
     displayName = shopName || 'Shop';
   }
   
@@ -456,8 +465,14 @@ export function SceneRenderer({
         {renderScene()}
       </View>
 
-      {/* Bottom Container - Dots + Info */}
-      <View style={[styles.bottomContainer, { bottom: bottomPosition }]}>
+      {/* ✅ Bottom Container - raised higher with extra padding */}
+      <View style={[
+        styles.bottomContainer, 
+        { 
+          bottom: bottomPosition,
+          paddingBottom: 16, // ✅ Added extra padding at bottom
+        }
+      ]}>
         <View style={styles.dotsContainer}>
           {scenes.map((_, index) => (
             <TouchableOpacity
@@ -500,7 +515,6 @@ export function SceneRenderer({
           </Text>
 
           <View style={styles.metaRow}>
-            {/* ✅ Show provider name for services, shop name for products */}
             <Text style={styles.shopName}>{displayName}</Text>
             
             {rating !== null && rating !== undefined && rating > 0 && (
@@ -586,7 +600,7 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 25,
     paddingHorizontal: 16,
-    paddingBottom: 0,
+    paddingBottom: 16, // ✅ Added to styles
   },
   dotsContainer: {
     flexDirection: 'row',
@@ -610,7 +624,9 @@ const styles = StyleSheet.create({
   dotInactive: {
     width: 8,
   },
-  infoPanel: {},
+  infoPanel: {
+    // No changes needed
+  },
   title: {
     color: '#FFFFFF',
     fontSize: 20,

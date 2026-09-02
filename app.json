@@ -4,11 +4,9 @@
     "slug": "munolink",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/adaptive-icon.png",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.munolink.app"
@@ -16,7 +14,8 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#1F2F5F"
+        "backgroundColor": "#1F2F5F",
+        "monochromeImage": "./assets/adaptive-icon.png"
       },
       "package": "com.munolink.app",
       "permissions": [
@@ -44,7 +43,19 @@
           "locationAlwaysAndWhenInUsePermission": "Allow Munolink to access your location to find nearby businesses."
         }
       ],
-      "expo-splash-screen"
+       [
+        "expo-splash-screen",
+        {
+          "image": "./assets/adaptive-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "image": "./assets/adaptive-icon.png",
+            "backgroundColor": "#ffffff"
+          }
+        }
+      ]
     ],
     "updates": {
       "url": "https://u.expo.dev/66c0b4ea-66a4-4ad2-ac43-656091693882",

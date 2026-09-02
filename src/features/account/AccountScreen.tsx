@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Image,
@@ -20,6 +19,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -1118,15 +1118,14 @@ const AccountContent = ({ navigation }: any) => {
   // ============================================================
   if (loading) {
     return (
-      <View style={[styles.container, isDesktop && styles.desktopContainer]}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+    <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <Animated.View style={{ opacity: fadeAnim }}>
           <ProfileSkeleton />
           <WalletSkeleton />
           <MenuSkeleton />
           <BusinessSkeleton />
         </Animated.View>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -1135,8 +1134,8 @@ const AccountContent = ({ navigation }: any) => {
   // ============================================================
   if (!isAuthenticated) {
     return (
-      <View style={[styles.container, isDesktop && styles.desktopContainer]}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+    <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>  
+      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ScrollView 
           showsVerticalScrollIndicator={false}
           contentContainerStyle={[styles.scrollContent, isDesktop && styles.desktopScrollContent]}
@@ -1175,16 +1174,15 @@ const AccountContent = ({ navigation }: any) => {
 
           <View style={styles.bottomSpacer} />
         </ScrollView>
-      </View>
-    );
+    </SafeAreaView>    );
   }
 
   // ============================================================
   // MAIN RENDER
   // ============================================================
   return (
-    <View style={[styles.container, isDesktop && styles.desktopContainer]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+  <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>
+    <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       {isDesktop && (
         <View style={styles.desktopHeader}>
@@ -1271,8 +1269,7 @@ const AccountContent = ({ navigation }: any) => {
         onSave={saveBusinessDetails}
         uploading={savingBusiness}
       />
-    </View>
-  );
+    </SafeAreaView>  );
 };
 
 // ============================================================

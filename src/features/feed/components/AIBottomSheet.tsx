@@ -157,7 +157,6 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
     const isService = opportunity?.type === 'service';
     const category = opportunity?.category || '';
     
-    // Product suggestions
     if (isProduct) {
       return [
         { icon: '🔍', text: 'Best alternative', query: 'What are the best alternatives?' },
@@ -169,7 +168,6 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
       ];
     }
     
-    // Service suggestions
     if (isService) {
       return [
         { icon: '👥', text: 'Compare providers', query: 'Compare with other providers' },
@@ -180,7 +178,6 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
       ];
     }
     
-    // Default suggestions
     return [
       { icon: '⚖️', text: 'Compare similar', query: 'Compare this with similar' },
       { icon: '💰', text: 'Good deal?', query: 'Is this a good deal?' },
@@ -192,64 +189,136 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
   }, [opportunity]);
 
   const suggestions = getSuggestions();
-const queryMarketplace = useCallback(async (opp: Opportunity): Promise<MarketplaceData | null> => {
-  try {
-    // 1. Get similar opportunities for comparison
-    const tableName = opp.type === 'product' ? 'catalog' : 'service_catalog';
-    const categoryFilter = opp.category || '';
-    
-    let query = supabase
-      .from(tableName)
-      .select('*')
-      .limit(10);
-    
-    if (categoryFilter) {
-      query = query.eq('category', categoryFilter);
+
+  // ============================================================
+  // QUERY MARKETPLACE DATA
+  // ============================================================
+  
+  const queryMarketplace = useCallback(async (opp: Opportunity): Promise<MarketplaceData | null> => {
+    try {
+      const tableName = opp.type === 'product' ? 'catalog' : 'service_catalog';
+      const categoryFilter = opp.category || '';
+      
+      let query = supabase
+        .from(tableName)
+        .select('*')
+        .limit(10);
+      
+      if (categoryFilter) {
+        query = query.eq('category', categoryFilter);
+      }
+      
+      const { data: similarItems } = await query;
+      
+      let priceData: any[] = [];
+      const isProduct = opp.type === 'product';
+      
+      if (isProduct) {
+        const { data } = await supabase
+          .from('shop_products')
+          .select('regular_price')
+          .eq('in_stock', true)
+          .limit(20);
+        if (data) priceData = data;
+      } else {
+        const { data } = await supabase
+          .from('provider_services')
+          .select('price')
+          .eq('is_active', true)
+          .limit(20);
+        if (data) priceData = data;
+      }
+      
+      const { data: sellerData } = await supabase
+        .from('shops')
+        .select('rating, review_count, is_verified')
+        .eq('id', opp.shopId)
+        .single();
+      
+      return {
+        similarItems: similarItems || [],
+        priceData: priceData || [],
+        sellerData: sellerData || {},
+        location: opp.area || 'nearby',
+        inStock: opp.inStock !== false,
+        rating: opp.rating || 0,
+        reviewCount: opp.reviewCount || 0,
+      };
+    } catch (error) {
+      console.error('Error querying marketplace:', error);
+      return null;
     }
+  }, []);
+
+  // ============================================================
+  // UNIFIED AI TEXT RENDERER - Used by both Desktop & Mobile
+  // ============================================================
+  
+  const renderAIText = useCallback((text: string) => {
+    if (!text) return null;
     
-    const { data: similarItems } = await query;
+    const lines = text.split('\n');
+    const result: React.ReactNode[] = [];
     
-    // 2. Get price distribution - ✅ Split into separate queries to avoid type issues
-    let priceData: any[] = [];
-    const isProduct = opp.type === 'product';
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      
+      if (trimmed === '') {
+        result.push(<View key={`empty-${index}`} style={{ height: 6 }} />);
+        return;
+      }
+      
+      // Check for bold text (text between ** markers)
+      if (line.includes('**')) {
+        const parts = line.split(/\*\*(.*?)\*\*/g);
+        result.push(
+          <Text key={`bold-${index}`} style={styles.aiTextLine}>
+            {parts.map((part, i) => {
+              const isBold = i % 2 === 1;
+              return (
+                <Text key={`part-${i}`} style={isBold ? styles.aiBoldText : styles.aiTextLine}>
+                  {part}
+                </Text>
+              );
+            })}
+          </Text>
+        );
+        return;
+      }
+      
+      // Bullet points (starting with •)
+      if (trimmed.startsWith('•')) {
+        result.push(
+          <View key={`bullet-${index}`} style={styles.bulletContainer}>
+            <Text style={styles.bulletDot}>•</Text>
+            <Text style={styles.aiBulletText}>{trimmed.substring(1).trim()}</Text>
+          </View>
+        );
+        return;
+      }
+      
+      // Emoji headers (starting with emoji)
+      const emojiMatch = trimmed.match(/^([👍👋🤔🔍💰📋⭐🚚🛡️💡✅❌🟢🟡🟠📦📍🏷️⚖️🔮👥📅📊🎓🔄🛍️🏪])/);
+      if (emojiMatch) {
+        result.push(
+          <Text key={`emoji-${index}`} style={styles.aiEmojiLine}>
+            {trimmed}
+          </Text>
+        );
+        return;
+      }
+      
+      // Regular text
+      result.push(
+        <Text key={`text-${index}`} style={styles.aiTextLine}>
+          {trimmed}
+        </Text>
+      );
+    });
     
-    if (isProduct) {
-      const { data } = await supabase
-        .from('shop_products')
-        .select('regular_price')
-        .eq('in_stock', true)
-        .limit(20);
-      if (data) priceData = data;
-    } else {
-      const { data } = await supabase
-        .from('provider_services')
-        .select('price')
-        .eq('is_active', true)
-        .limit(20);
-      if (data) priceData = data;
-    }
-    
-    // 3. Get seller info
-    const { data: sellerData } = await supabase
-      .from('shops')
-      .select('rating, review_count, is_verified')
-      .eq('id', opp.shopId)
-      .single();
-    
-    return {
-      similarItems: similarItems || [],
-      priceData: priceData || [],
-      sellerData: sellerData || {},
-      location: opp.area || 'nearby',
-      inStock: opp.inStock !== false,
-      rating: opp.rating || 0,
-      reviewCount: opp.reviewCount || 0,
-    };
-  } catch (error) {
-    console.error('Error querying marketplace:', error);
-    return null;
-  }
-}, []);
+    return result;
+  }, []);
+
   // ============================================================
   // AI RESPONSE GENERATOR - With Real Data
   // ============================================================
@@ -261,10 +330,8 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
     const currency = opp.currency || 'UGX';
     const shopName = opp.shopName || 'the seller';
     
-    // Query real marketplace data
     const marketData = await queryMarketplace(opp);
     
-    // If no data, return honest response
     if (!marketData) {
       return {
         id: Date.now().toString(),
@@ -278,7 +345,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // Calculate market insights
     const prices = marketData.priceData
       .map(p => p.regular_price || p.price || 0)
       .filter(p => p > 0);
@@ -292,9 +358,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
     const priceDiff = avgPrice > 0 ? ((price - avgPrice) / avgPrice) * 100 : 0;
     const isGoodDeal = priceDiff < -10 && marketData.rating > 4.0;
     
-    // ============================================================
-    // COMPARE SIMILAR
-    // ============================================================
     if (lowerQuery.includes('compare') || lowerQuery.includes('similar') || lowerQuery.includes('alternative')) {
       const similarCount = marketData.similarItems?.length || 0;
       
@@ -321,9 +384,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // GOOD DEAL / WORTH IT
-    // ============================================================
     if (lowerQuery.includes('good deal') || lowerQuery.includes('worth') || lowerQuery.includes('value')) {
       return {
         id: Date.now().toString(),
@@ -345,9 +405,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // FEATURES / SPECIFICATIONS
-    // ============================================================
     if (lowerQuery.includes('feature') || lowerQuery.includes('spec') || lowerQuery.includes('detail')) {
       const specs = opp.specifications || {};
       const specList = Object.entries(specs)
@@ -373,9 +430,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // REVIEWS
-    // ============================================================
     if (lowerQuery.includes('review') || lowerQuery.includes('customer') || lowerQuery.includes('feedback')) {
       const rating = marketData.rating || 0;
       const reviewCount = marketData.reviewCount || 0;
@@ -397,11 +451,7 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // DELIVERY
-    // ============================================================
     if (lowerQuery.includes('delivery') || lowerQuery.includes('shipping') || lowerQuery.includes('deliver')) {
-      // Honest delivery estimation
       const estimatedDays = marketData.location === 'Kampala' || marketData.location === 'Jinja' 
         ? '1-2 business days' 
         : '2-4 business days';
@@ -426,9 +476,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // WARRANTY / GUARANTEE - HONEST RESPONSE
-    // ============================================================
     if (lowerQuery.includes('warranty') || lowerQuery.includes('guarantee') || lowerQuery.includes('return')) {
       return {
         id: Date.now().toString(),
@@ -450,9 +497,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // PRICE / COST
-    // ============================================================
     if (lowerQuery.includes('price') || lowerQuery.includes('cost') || lowerQuery.includes('expensive')) {
       return {
         id: Date.now().toString(),
@@ -474,9 +518,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
       };
     }
     
-    // ============================================================
-    // GENERAL / UNKNOWN QUERY
-    // ============================================================
     return {
       id: Date.now().toString(),
       type: 'ai',
@@ -539,7 +580,6 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
     }
   }, [opportunity, visible]);
 
-  // Reset when sheet closes
   useEffect(() => {
     if (!visible) {
       setInputText('');
@@ -567,14 +607,13 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
   }, [opportunity, contextHint]);
 
   // ============================================================
-  // HANDLE SEND MESSAGE - FIXED for suggestion bug
+  // HANDLE SEND MESSAGE
   // ============================================================
   
   const handleSendMessage = useCallback(async (customQuery?: string) => {
     const query = customQuery || inputText;
     if (!query.trim() || !opportunity) return;
 
-    // Add user message
     const userMessage: AIMessage = {
       id: Date.now().toString(),
       type: 'user',
@@ -587,12 +626,10 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
     setIsLoading(true);
 
     try {
-      // Generate AI response with real data
       const aiResponse = await generateAIResponse(query.trim(), opportunity);
       setMessages((prev) => [...prev, aiResponse]);
     } catch (error) {
       console.error('Error generating AI response:', error);
-      // Fallback response
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         type: 'ai',
@@ -618,57 +655,12 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
   }, []);
 
   // ============================================================
-  // RENDER AI MESSAGE - UNIFIED for Desktop & Mobile
+  // UNIFIED AI MESSAGE RENDERER - Used by both Desktop & Mobile
   // ============================================================
   
-  const renderAIText = useCallback((text: string) => {
-    const lines = text.split('\n');
-    return lines.map((line, index) => {
-      const isBold = line.includes('**');
-      const isBullet = line.trim().startsWith('•');
-      const isEmoji = line.trim().match(/^[👍👋🤔🔍💰📋⭐🚚🛡️💡✅❌🟢🟡🟠📦📍🏷️⚖️]/);
-      
-      if (line.trim() === '') {
-        return <View key={index} style={{ height: 4 }} />;
-      }
-      
-      let displayText = line.replace(/\*\*(.*?)\*\*/g, '$1');
-      
-      if (isEmoji && !isBullet) {
-        return (
-          <Text key={index} style={styles.aiEmojiLine}>
-            {displayText}
-          </Text>
-        );
-      }
-      
-      if (isBullet) {
-        return (
-          <Text key={index} style={styles.aiBulletPoint}>
-            {displayText}
-          </Text>
-        );
-      }
-      
-      if (isBold) {
-        return (
-          <Text key={index} style={styles.aiBoldText}>
-            {displayText}
-          </Text>
-        );
-      }
-      
-      return (
-        <Text key={index} style={styles.aiTextLine}>
-          {displayText}
-        </Text>
-      );
-    });
-  }, []);
-
   const renderAIMessage = useCallback((message: AIMessage) => {
     return (
-      <View>
+      <View style={styles.aiMessageContainer}>
         {renderAIText(message.text)}
         {message.actions && message.actions.length > 0 && (
           <View style={styles.actionContainer}>
@@ -689,22 +681,16 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
 
   const handleActionPress = (action: AIAction) => {
     console.log('Action pressed:', action);
-    // Implement navigation or other actions
     switch (action.type) {
       case 'view_seller':
-        // Navigate to seller profile
         break;
       case 'see_similar':
-        // Navigate to similar items
         break;
       case 'share':
-        // Share the opportunity
         break;
       case 'contact':
-        // Open contact seller
         break;
       case 'view_reviews':
-        // Open reviews
         break;
     }
   };
@@ -804,7 +790,7 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
                 )}
                 <View style={styles.desktopMessageContent}>
                   {message.type === 'ai' ? (
-                    <View>{renderAIMessage(message)}</View>
+                    renderAIMessage(message)
                   ) : (
                     <Text style={styles.desktopUserText}>{message.text}</Text>
                   )}
@@ -880,7 +866,7 @@ const queryMarketplace = useCallback(async (opp: Opportunity): Promise<Marketpla
   }
 
   // ============================================================
-  // MOBILE VIEW
+  // MOBILE VIEW - Uses the same renderAIMessage function
   // ============================================================
   const modalHeight = height * (isLargeScreen ? 0.75 : 0.85);
   const bottomInset = Platform.OS === 'ios' ? insets.bottom : 0;
@@ -1188,27 +1174,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
+  aiMessageContainer: {
+    flex: 1,
+    paddingVertical: 2,
+  },
   aiTextLine: {
     color: '#E8ECF4',
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 24,
+    marginBottom: 2,
   },
   aiEmojiLine: {
     color: '#E8ECF4',
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  aiBulletPoint: {
-    color: '#E8ECF4',
-    fontSize: 14,
-    lineHeight: 22,
-    paddingLeft: 8,
+    fontSize: 17,
+    lineHeight: 26,
+    marginBottom: 4,
+    fontWeight: '600',
   },
   aiBoldText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    lineHeight: 22,
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 24,
+  },
+  bulletContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 2,
+    paddingLeft: 4,
+  },
+  bulletDot: {
+    color: '#4A7DFF',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginRight: 8,
+    marginTop: 2,
+  },
+  aiBulletText: {
+    color: '#E8ECF4',
+    fontSize: 15,
+    lineHeight: 24,
+    flex: 1,
   },
   typingContainer: {
     flexDirection: 'row',
@@ -1379,37 +1385,34 @@ const styles = StyleSheet.create({
   mobileMessageBubble: {
     maxWidth: '85%',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   mobileUserBubble: {
     backgroundColor: '#4A7DFF',
     borderBottomRightRadius: 4,
   },
   mobileAIBubble: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderBottomLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   mobileAIIcon: {
-    fontSize: 16,
-    marginRight: 8,
-    marginTop: 1,
+    fontSize: 18,
+    marginRight: 10,
+    marginTop: 2,
   },
   mobileMessageContent: {
     flex: 1,
   },
-  mobileMessageText: {
-    fontSize: 14,
-    lineHeight: 20,
-    flex: 1,
-  },
   mobileUserText: {
     color: '#FFFFFF',
-  },
-  mobileAIText: {
-    color: '#E8ECF4',
+    fontSize: 15,
+    lineHeight: 22,
   },
   mobileMessageTime: {
     color: 'rgba(255,255,255,0.3)',

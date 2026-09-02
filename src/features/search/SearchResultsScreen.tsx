@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   FlatList,
   Dimensions,
@@ -14,6 +13,7 @@ import {
   useWindowDimensions,
   ScrollView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
@@ -686,8 +686,8 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   const hasDirectResults = totalResults > 0;
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+  <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+          <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       {/* Header */}
       <View style={styles.header}>

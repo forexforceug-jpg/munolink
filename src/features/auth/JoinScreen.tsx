@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   Dimensions,
@@ -16,6 +15,7 @@ import {
   Alert,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -130,7 +130,7 @@ const JoinContent = ({ navigation }: any) => {
       const fullPhone = `+256${phone}`;
       
       console.log('📝 Verifying OTP for phone (custom auth):', fullPhone);
-      console.log('📝 User name being passed:', fullName);  // ✅ Debug log
+      console.log('📝 User name being passed:', fullName);
       
       // ✅ Pass the fullName to signInWithPhone
       await signInWithPhone(fullPhone, fullName);
@@ -459,7 +459,7 @@ const JoinContent = ({ navigation }: any) => {
   );
 
   return (
-    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
@@ -490,7 +490,7 @@ const JoinContent = ({ navigation }: any) => {
           {step === 3 && renderStep3()}
         </View>
       </KeyboardAvoidingView>
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -516,7 +516,6 @@ export const JoinScreen = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
-  // ... (all styles remain the same as your original file)
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',

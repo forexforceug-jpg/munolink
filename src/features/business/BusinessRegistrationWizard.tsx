@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
@@ -21,6 +20,7 @@ import {
   FlatList,
   Switch,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -591,8 +591,8 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
     const categories = businessType ? CATEGORIES[businessType] || [] : [];
 
     return (
-      <View style={[styles.stepContainer, isDesktop && styles.stepContainerDesktop]}>
-        <StepIcon icon="grid-outline" step={2} total={4} isDesktop={isDesktop} />
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+      <StepIcon icon="grid-outline" step={2} total={4} isDesktop={isDesktop} />
         
         <Text style={[styles.customStepTitle, isDesktop && styles.customStepTitleDesktop]}>
           Great! What do you specialize in?
@@ -612,7 +612,7 @@ const BusinessRegistrationWizardContent = ({ navigation }: any) => {
             />
           ))}
         </View>
-      </View>
+      </SafeAreaView>
     );
   };
 

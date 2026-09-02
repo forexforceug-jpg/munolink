@@ -1,53 +1,66 @@
 // src/features/explore/ExploreScreen.tsx
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   ScrollView,
   FlatList,
   Dimensions,
   StatusBar,
+  useWindowDimensions,
   Image,
   ActivityIndicator,
   Animated,
   Modal,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { SceneEngine, OpportunityFormatter, SceneRenderer } from '../opportunity';
+import { FloatingActionRail } from '../feed/components/FloatingActionRail';
+import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
+import { AIBottomSheet } from '../feed/components/AIBottomSheet';
+import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
+import { SimpleDetailsModal } from '../feed/components/SimpleDetailsModal';
+import { Opportunity as RawOpportunity } from '../../services/feed.service';
+import * as Haptics from 'expo-haptics';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 
 const { width, height } = Dimensions.get('window');
 
-// --- Mock Data ---
-const mockProducts = [
-  { id: '1', title: 'Samsung Galaxy S25', shop: 'TechWorld Kampala', price: 2850000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=S25', rating: 4.8, category: 'Electronics', type: 'product' },
-  { id: '2', title: 'iPhone 16 Pro Max', shop: 'City Electronics', price: 3200000, image: 'https://via.placeholder.com/200/6B94FF/FFFFFF?text=iPhone', rating: 4.9, category: 'Electronics', type: 'product' },
-  { id: '3', title: 'MacBook Air M3', shop: 'TechWorld Kampala', price: 4500000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=MacBook', rating: 4.7, category: 'Electronics', type: 'product' },
-  { id: '4', title: 'Phone Repair Service', shop: 'QuickFix Mobile', price: 75000, image: 'https://via.placeholder.com/200/6B94FF/FFFFFF?text=Repair', rating: 4.5, category: 'Services', type: 'service' },
-  { id: '5', title: 'Sony WH-1000XM5', shop: 'AudioWorld', price: 850000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=Sony', rating: 4.9, category: 'Electronics', type: 'product' },
-  { id: '6', title: 'Home Cleaning Service', shop: 'CleanHome Ltd', price: 120000, image: 'https://via.placeholder.com/200/6B94FF/FFFFFF?text=Cleaning', rating: 4.3, category: 'Services', type: 'service' },
-  { id: '7', title: 'Mechanic Service', shop: 'QuickFix Auto', price: 150000, image: 'https://via.placeholder.com/200/6B94FF/FFFFFF?text=Mechanic', rating: 4.5, category: 'Services', type: 'service' },
-  { id: '8', title: 'Dell XPS 16', shop: 'TechWorld Kampala', price: 4800000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=Dell', rating: 4.6, category: 'Electronics', type: 'product' },
-  { id: '9', title: 'Sofa Set', shop: 'Furniture Hub', price: 2500000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=Sofa', rating: 4.4, category: 'Furniture', type: 'product' },
-  { id: '10', title: 'Dining Table', shop: 'Furniture Hub', price: 1800000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=Table', rating: 4.2, category: 'Furniture', type: 'product' },
-  { id: '11', title: 'Electrician Service', shop: 'Power Solutions', price: 80000, image: 'https://via.placeholder.com/200/6B94FF/FFFFFF?text=Electrician', rating: 4.7, category: 'Services', type: 'service' },
-  { id: '12', title: 'Hotel Room - Deluxe', shop: 'Jinja Heights Hotel', price: 350000, image: 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=Hotel', rating: 4.8, category: 'Hospitality', type: 'service' },
-];
+// --- Types ---
+interface ExploreItem extends RawOpportunity {
+  type: 'product' | 'service';
+  image: string;
+  shopName: string;
+  price: number;
+  rating: number;
+  category: string;
+  providerName?: string;
+}
 
-// --- Filter Categories ---
-const filterCategories = [
+// --- Filter Categories (Dynamic from DB) ---
+const DEFAULT_CATEGORIES = [
   { key: 'all', label: 'All' },
   { key: 'products', label: 'Products' },
   { key: 'services', label: 'Services' },
   { key: 'electronics', label: 'Electronics' },
-  { key: 'furniture', label: 'Furniture' },
+  { key: 'fashion', label: 'Fashion' },
+  { key: 'groceries', label: 'Groceries' },
+  { key: 'construction', label: 'Construction' },
+  { key: 'automotive', label: 'Automotive' },
+  { key: 'health', label: 'Health' },
+  { key: 'education', label: 'Education' },
   { key: 'hospitality', label: 'Hospitality' },
 ];
 
@@ -60,11 +73,11 @@ const sortOptions = [
 
 // --- Sub-components ---
 
-// Filter Chip
 const FilterChip = ({ label, selected, onPress, count }: any) => (
   <TouchableOpacity
     style={[styles.filterChip, selected && styles.filterChipActive]}
     onPress={onPress}
+    activeOpacity={0.7}
   >
     <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
       {label}
@@ -77,155 +90,401 @@ const FilterChip = ({ label, selected, onPress, count }: any) => (
   </TouchableOpacity>
 );
 
-// Product/Service Card
-const ItemCard = ({ item, isDesktop }: any) => {
-  const isService = item.type === 'service';
-  const cardWidth = isDesktop ? (width - 120 - 48) / 4 - 12 : (width - 48) / 2 - 8;
+// Grid Result Card
+const GridResultCard = React.memo(({ item, onPress }: any) => {
+  const imageUrl = item.image || item.imageUrl || '';
+  const displayName = item.type === 'service' ? item.providerName || item.shopName : item.shopName;
 
   return (
-    <TouchableOpacity
-      style={[
-        styles.itemCard,
-        isDesktop && styles.itemCardDesktop,
-        { width: cardWidth }
-      ]}
+    <TouchableOpacity 
+      style={styles.gridCard} 
+      onPress={() => onPress(item)}
       activeOpacity={0.8}
     >
-      <Image source={{ uri: item.image }} style={[styles.itemImage, isDesktop && styles.itemImageDesktop]} />
-      <View style={styles.itemInfo}>
-        <Text style={styles.itemTitle} numberOfLines={1}>{item.title}</Text>
-        <Text style={styles.itemShop} numberOfLines={1}>{item.shop}</Text>
-        <Text style={styles.itemPrice}>UGX {item.price.toLocaleString()}</Text>
-        <View style={styles.itemFooter}>
-          <Text style={styles.itemRating}>⭐ {item.rating}</Text>
-          {isService ? (
-            <View style={styles.serviceBadge}>
-              <Text style={styles.serviceBadgeText}>Book</Text>
-            </View>
-          ) : (
-            <View style={styles.inStockBadge}>
-              <Text style={styles.inStockBadgeText}>In Stock</Text>
-            </View>
-          )}
+      <Image 
+        source={{ uri: imageUrl || 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=No+Image' }} 
+        style={styles.gridImage}
+        resizeMode="cover"
+      />
+      <View style={styles.gridOverlay}>
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.85)']}
+          style={styles.gridGradient}
+        />
+        <View style={styles.gridInfo}>
+          <Text style={styles.gridTitle} numberOfLines={1}>{item.title || 'Item'}</Text>
+          <Text style={styles.gridPrice}>UGX {item.price?.toLocaleString() || '0'}</Text>
+          <View style={styles.gridFooter}>
+            <Text style={styles.gridShop} numberOfLines={1}>{displayName || 'Shop'}</Text>
+            {item.rating && item.rating > 0 && (
+              <Text style={styles.gridRating}>⭐ {item.rating.toFixed(1)}</Text>
+            )}
+          </View>
         </View>
       </View>
     </TouchableOpacity>
   );
-};
+});
 
-// --- Main ExploreScreen Component ---
+// ============================================================
+// MAIN EXPLORE CONTENT
+// ============================================================
+
 const ExploreContent = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
-  const [items, setItems] = useState(mockProducts);
-  const [filteredItems, setFilteredItems] = useState(mockProducts);
+  const { user } = useAuth();
+  const { height, width } = useWindowDimensions();
+
+  const [items, setItems] = useState<ExploreItem[]>([]);
+  const [filteredItems, setFilteredItems] = useState<ExploreItem[]>([]);
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [selectedSort, setSelectedSort] = useState('relevance');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [showSortModal, setShowSortModal] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
+  const [selectedItem, setSelectedItem] = useState<ExploreItem | null>(null);
+  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  
+  // Modal states
+  const [selectedOpportunity, setSelectedOpportunity] = useState<ExploreItem | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showReviewsModal, setShowReviewsModal] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const flatListRef = useRef<FlatList>(null);
   const searchInputRef = useRef<TextInput>(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  // Apply filters and sorting
-  const applyFilters = useCallback(() => {
+  // ============================================================
+  // FETCH CATEGORIES
+  // ============================================================
+  const fetchCategories = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('name, slug')
+        .eq('is_active', true)
+        .order('name', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const categoryOptions = [
+          { key: 'all', label: 'All' },
+          { key: 'products', label: 'Products' },
+          { key: 'services', label: 'Services' },
+          ...data.map((cat: any) => ({
+            key: cat.slug || cat.name.toLowerCase().replace(/\s+/g, '_'),
+            label: cat.name,
+          })),
+        ];
+        setCategories(categoryOptions);
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  }, []);
+
+  // ============================================================
+  // FETCH DATA
+  // ============================================================
+  const fetchData = useCallback(async () => {
     setIsLoading(true);
-    
-    setTimeout(() => {
-      let result = [...items];
+    try {
+      // Fetch products with shop info
+      const { data: productsData, error: productsError } = await supabase
+        .from('shop_products')
+        .select('*, catalog: catalog_id(*), shop: shop_id(id, name, rating)')
+        .eq('in_stock', true)
+        .order('created_at', { ascending: false })
+        .limit(50);
 
-      // Filter by category/type
-      if (selectedFilter !== 'all') {
-        if (selectedFilter === 'products') {
-          result = result.filter(item => item.type === 'product');
-        } else if (selectedFilter === 'services') {
-          result = result.filter(item => item.type === 'service');
-        } else {
-          result = result.filter(item => item.category === selectedFilter);
-        }
+      let allItems: ExploreItem[] = [];
+
+      if (!productsError && productsData) {
+        const productItems = productsData.map((p: any) => ({
+          id: p.catalog_id,
+          title: p.catalog?.name || 'Product',
+          shopName: p.shop?.name || 'Shop',
+          shopId: p.shop_id,
+          price: p.regular_price || 0,
+          currency: 'UGX',
+          image: p.catalog?.images?.[0] || '',
+          catalogImages: p.catalog?.images || [],
+          description: p.catalog?.description || '',
+          specifications: p.catalog?.specifications || {},
+          rating: p.shop?.rating || 0,
+          reviewCount: 0,
+          area: null,
+          inStock: p.in_stock !== false,
+          category: p.catalog?.category || 'Uncategorized',
+          type: 'product' as const,
+          imageUrl: p.catalog?.images?.[0] || '',
+          shopLogo: null,
+        }));
+        allItems = [...allItems, ...productItems];
       }
 
-      // Filter by search query
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        result = result.filter(item =>
-          item.title.toLowerCase().includes(query) ||
-          item.shop.toLowerCase().includes(query) ||
-          item.category.toLowerCase().includes(query)
+      // Fetch services with user/provider info
+      const { data: servicesData, error: servicesError } = await supabase
+        .from('provider_services')
+        .select('*, service: service_id(*), user: user_id(id, full_name)')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!servicesError && servicesData) {
+        const serviceItems = servicesData.map((s: any) => ({
+          id: s.service_id,
+          title: s.service?.name || 'Service',
+          shopName: s.user?.full_name || 'Provider',
+          providerName: s.user?.full_name || 'Provider',
+          shopId: s.user_id,
+          price: s.price || 0,
+          currency: 'UGX',
+          image: s.service?.images?.[0] || '',
+          catalogImages: s.service?.images || [],
+          description: s.service?.description || '',
+          specifications: s.service?.specifications || {},
+          rating: 0,
+          reviewCount: 0,
+          area: null,
+          inStock: s.is_active !== false,
+          category: s.service?.category || 'Uncategorized',
+          type: 'service' as const,
+          imageUrl: s.service?.images?.[0] || '',
+          shopLogo: null,
+          duration: s.service?.duration || null,
+        }));
+        allItems = [...allItems, ...serviceItems];
+      }
+
+      // Shuffle and set
+      const shuffled = allItems.sort(() => Math.random() - 0.5);
+      setItems(shuffled);
+      setFilteredItems(shuffled);
+    } catch (error) {
+      console.error('Error fetching explore data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    fetchCategories();
+  }, [fetchData, fetchCategories]);
+
+  // ============================================================
+  // FILTERS AND SORTING
+  // ============================================================
+  const applyFilters = useCallback(() => {
+    let result = [...items];
+
+    // Filter by category
+    if (selectedFilter !== 'all') {
+      if (selectedFilter === 'products') {
+        result = result.filter(item => item.type === 'product');
+      } else if (selectedFilter === 'services') {
+        result = result.filter(item => item.type === 'service');
+      } else {
+        result = result.filter(item => 
+          item.category?.toLowerCase().replace(/\s+/g, '_') === selectedFilter ||
+          item.category?.toLowerCase() === selectedFilter
         );
       }
+    }
 
-      // Sort
-      switch (selectedSort) {
-        case 'price_low':
-          result.sort((a, b) => a.price - b.price);
-          break;
-        case 'price_high':
-          result.sort((a, b) => b.price - a.price);
-          break;
-        case 'rating':
-          result.sort((a, b) => b.rating - a.rating);
-          break;
-        default:
-          // relevance - keep original order
-          break;
-      }
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter(item =>
+        item.title?.toLowerCase().includes(query) ||
+        item.shopName?.toLowerCase().includes(query) ||
+        item.category?.toLowerCase().includes(query)
+      );
+    }
 
-      setFilteredItems(result);
-      
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
+    // Sort
+    switch (selectedSort) {
+      case 'price_low':
+        result.sort((a, b) => (a.price || 0) - (b.price || 0));
+        break;
+      case 'price_high':
+        result.sort((a, b) => (b.price || 0) - (a.price || 0));
+        break;
+      case 'rating':
+        result.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+        break;
+      default:
+        break;
+    }
 
-      setIsLoading(false);
-    }, 300);
+    setFilteredItems(result);
   }, [items, selectedFilter, selectedSort, searchQuery]);
 
   useEffect(() => {
     applyFilters();
   }, [applyFilters]);
 
-  // Get category counts
-  const getCategoryCounts = () => {
-    const counts: Record<string, number> = {};
-    items.forEach(item => {
-      const key = item.type === 'product' ? item.category : item.type + 's';
-      counts[key] = (counts[key] || 0) + 1;
-    });
-    return counts;
-  };
+  // ============================================================
+  // HANDLERS
+  // ============================================================
+  const handleItemPress = useCallback((item: ExploreItem) => {
+    Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedItem(item);
+    setViewMode('fullscreen');
+  }, []);
 
-  const categoryCounts = getCategoryCounts();
+  const handleBackToGrid = useCallback(() => {
+    setViewMode('grid');
+    setSelectedItem(null);
+  }, []);
 
-  // Render grid
-  const renderItem = ({ item }: { item: any }) => (
-    <ItemCard item={item} isDesktop={isDesktop} />
-  );
+  // ============================================================
+  // FULLSCREEN RENDER
+  // ============================================================
+  const renderFullScreenItem = useCallback((item: ExploreItem) => {
+    if (!item) return null;
 
-  // Render list view
-  const renderListItem = ({ item }: { item: any }) => (
-    <TouchableOpacity style={styles.listItem} activeOpacity={0.8}>
-      <Image source={{ uri: item.image }} style={styles.listItemImage} />
-      <View style={styles.listItemInfo}>
-        <Text style={styles.listItemTitle}>{item.title}</Text>
-        <Text style={styles.listItemShop}>{item.shop}</Text>
-        <Text style={styles.listItemPrice}>UGX {item.price.toLocaleString()}</Text>
-        <View style={styles.listItemFooter}>
-          <Text style={styles.listItemRating}>⭐ {item.rating}</Text>
-          <View style={[styles.listItemBadge, item.type === 'service' ? styles.serviceBadge : styles.inStockBadge]}>
-            <Text style={styles.listItemBadgeText}>
-              {item.type === 'service' ? 'Book' : 'In Stock'}
-            </Text>
-          </View>
+    const isSaved = savedItemsMap[item.id] || false;
+
+    const normalizedOpportunity = OpportunityFormatter.format(item);
+    const engine = new SceneEngine(normalizedOpportunity);
+    const scenes = engine.compose();
+
+    const cardWidth = isDesktop ? 420 : width;
+    const cardHeight = isDesktop ? height : height;
+
+    return (
+      <View
+        style={{
+          height: cardHeight,
+          width: cardWidth,
+          paddingVertical: 0,
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        }}
+      >
+        <SceneRenderer
+          key={item.id}
+          scenes={scenes}
+          title={item.title || 'Item'}
+          price={item.price || 0}
+          shopName={item.type === 'service' ? item.providerName || item.shopName : item.shopName}
+          rating={item.rating ?? undefined}
+          area={item.area ?? undefined}
+          inStock={item.inStock}
+          currency={item.currency || 'UGX'}
+          isDesktop={isDesktop}
+          providerName={item.type === 'service' ? item.providerName || item.shopName : undefined}
+          type={item.type}
+          onPrimaryAction={() => {
+            navigation.navigate('ShopProfile', {
+              shopId: item.shopId,
+              shopName: item.shopName,
+            });
+          }}
+          onShare={() => {
+            Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+          }}
+          onSave={() => {
+            if (!user?.id) return;
+            Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+            const currentSaved = savedItemsMap[item.id] || false;
+            const newSaved = !currentSaved;
+            setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
+          }}
+          onShowMore={() => {
+            Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+            setSelectedOpportunity(item);
+            setShowDetailsModal(true);
+          }}
+          onSceneChange={(index) => {
+            if (__DEV__) {
+              console.log('Scene changed to:', index);
+            }
+          }}
+          width={cardWidth}
+          height={cardHeight}
+          autoPlay={false}
+          autoPlayInterval={9000}
+          resetKey={item.id}
+        />
+
+        <View style={styles.actionRailWrapper}>
+          <FloatingActionRail
+            key={`rail-${item.id}`}
+            opportunity={item}
+            onShopPress={(shopId) => {
+              navigation.navigate('ShopProfile', {
+                shopId,
+                shopName: item.shopName,
+              });
+            }}
+            onReviewsPress={(productId) => {
+              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+              setShowReviewsModal(true);
+            }}
+            onDirectionsPress={() => {
+              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+              setShowDirectionsModal(true);
+            }}
+            onSharePress={() => {
+              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            onAIPress={() => {
+              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Heavy);
+              setSelectedOpportunity(item);
+              setShowAIModal(true);
+            }}
+            onSavePress={() => {
+              if (!user?.id) return;
+              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+              const currentSaved = savedItemsMap[item.id] || false;
+              const newSaved = !currentSaved;
+              setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
+            }}
+            isSaved={isSaved}
+            savedCount={item.savedCount || 0}
+            shareCount={item.shareCount || 0}
+            reviewCount={item.reviewCount || 0}
+            distance={item.distance || 0}
+            shopLogo={item.shopLogo || null}
+          />
         </View>
       </View>
-    </TouchableOpacity>
-  );
+    );
+  }, [isDesktop, width, height, navigation, user?.id, savedItemsMap]);
 
-  // Sort Modal
+  // ============================================================
+  // MODAL HANDLERS
+  // ============================================================
+  const handleCloseAI = useCallback(() => {
+    setShowAIModal(false);
+    setSelectedOpportunity(null);
+  }, []);
+
+  const handleCloseDirections = useCallback(() => {
+    setShowDirectionsModal(false);
+    setSelectedOpportunity(null);
+  }, []);
+
+  const handleCloseReviews = useCallback(() => {
+    setShowReviewsModal(false);
+    setSelectedOpportunity(null);
+  }, []);
+
+  const handleCloseDetails = useCallback(() => {
+    setShowDetailsModal(false);
+    setSelectedOpportunity(null);
+  }, []);
+
+  // ============================================================
+  // SORT MODAL
+  // ============================================================
   const renderSortModal = () => (
     <Modal
       visible={showSortModal}
@@ -234,11 +493,16 @@ const ExploreContent = ({ navigation }: any) => {
       onRequestClose={() => setShowSortModal(false)}
     >
       <View style={styles.modalOverlay}>
+        <TouchableOpacity 
+          style={styles.modalBackdrop} 
+          activeOpacity={1} 
+          onPress={() => setShowSortModal(false)} 
+        />
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Sort By</Text>
             <TouchableOpacity onPress={() => setShowSortModal(false)}>
-              <Ionicons name="close" size={24} color="#1F2F5F" />
+              <Ionicons name="close" size={24} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
           {sortOptions.map((option) => (
@@ -269,15 +533,112 @@ const ExploreContent = ({ navigation }: any) => {
     </Modal>
   );
 
+  // ============================================================
+  // LOADING / EMPTY STATES
+  // ============================================================
+  if (isLoading) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centered]} edges={['top']}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+        <ActivityIndicator size="large" color="#4A7DFF" />
+        <Text style={styles.loadingText}>Loading explore...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  // ============================================================
+  // FULLSCREEN VIEW
+  // ============================================================
+  if (viewMode === 'fullscreen' && selectedItem) {
+    const allItems = filteredItems;
+    const currentIndex = allItems.findIndex(item => item.id === selectedItem.id);
+    const initialIndex = currentIndex !== -1 ? currentIndex : 0;
+
+    return (
+      <GestureHandlerRootView style={styles.container}>
+        <BottomSheetModalProvider>
+          <View style={styles.container}>
+            <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+
+            <TouchableOpacity style={styles.backButton} onPress={handleBackToGrid}>
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+              <Text style={styles.backButtonText}>Back to explore</Text>
+            </TouchableOpacity>
+
+            <FlatList
+              ref={flatListRef}
+              data={allItems}
+              renderItem={({ item }) => (
+                <View style={{ height: height, width: width }}>
+                  {renderFullScreenItem(item)}
+                </View>
+              )}
+              keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
+              pagingEnabled={!isDesktop}
+              showsVerticalScrollIndicator={false}
+              snapToInterval={height}
+              snapToAlignment="start"
+              decelerationRate="fast"
+              initialScrollIndex={initialIndex}
+              getItemLayout={(data, index) => ({
+                length: height,
+                offset: height * index,
+                index,
+              })}
+              removeClippedSubviews={true}
+              maxToRenderPerBatch={isDesktop ? 3 : 1}
+              windowSize={isDesktop ? 5 : 2}
+              scrollEventThrottle={32}
+            />
+
+            <SimpleDetailsModal
+              visible={showDetailsModal}
+              opportunity={selectedOpportunity}
+              onClose={handleCloseDetails}
+            />
+
+            <ReviewsBottomSheet
+              visible={showReviewsModal}
+              productId={selectedOpportunity?.id || ''}
+              productTitle={selectedOpportunity?.title || ''}
+              onClose={handleCloseReviews}
+            />
+
+            <AIBottomSheet
+              visible={showAIModal}
+              opportunity={selectedOpportunity}
+              contextHint={`Explore item: ${selectedOpportunity?.title}`}
+              onClose={handleCloseAI}
+              isDesktopView={isDesktop}
+            />
+
+            <DirectionsBottomSheet
+              visible={showDirectionsModal}
+              opportunity={selectedOpportunity}
+              onClose={handleCloseDirections}
+              isDesktopView={isDesktop}
+            />
+          </View>
+        </BottomSheetModalProvider>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // ============================================================
+  // GRID VIEW
+  // ============================================================
+  const numColumns = isDesktop ? 4 : 2;
+  const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
+
   return (
-    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       {/* Desktop Header */}
       {isDesktop && (
         <View style={styles.desktopHeader}>
           <Text style={styles.desktopHeaderTitle}>Explore</Text>
-          <Text style={styles.desktopHeaderSubtitle}>Discover products and services near you</Text>
+          <Text style={styles.desktopHeaderSubtitle}>Discover products and services</Text>
         </View>
       )}
 
@@ -288,7 +649,7 @@ const ExploreContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* Search Bar */}
+      {/* Search Bar - Fixed Height */}
       <View style={[styles.searchContainer, isDesktop && styles.searchContainerDesktop]}>
         <View style={styles.searchInputWrapper}>
           <Ionicons name="search-outline" size={20} color="#8A8AAE" />
@@ -307,97 +668,79 @@ const ExploreContent = ({ navigation }: any) => {
             </TouchableOpacity>
           )}
         </View>
-        {isDesktop && (
-          <TouchableOpacity
-            style={styles.sortButtonDesktop}
-            onPress={() => setShowSortModal(true)}
-          >
-            <Ionicons name="options-outline" size={20} color="#4A7DFF" />
-            <Text style={styles.sortButtonDesktopText}>Sort</Text>
-          </TouchableOpacity>
-        )}
-        {!isDesktop && (
-          <TouchableOpacity
-            style={styles.sortButton}
-            onPress={() => setShowSortModal(true)}
-          >
-            <Ionicons name="options-outline" size={24} color="#4A7DFF" />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.sortButton}
+          onPress={() => setShowSortModal(true)}
+        >
+          <Ionicons name="options-outline" size={24} color="#4A7DFF" />
+        </TouchableOpacity>
       </View>
 
-      {/* Filter Chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterContainer}
-        contentContainerStyle={styles.filterContent}
-      >
-        {filterCategories.map((filter) => {
-          const count = filter.key === 'all' ? items.length :
-                       filter.key === 'products' ? items.filter(i => i.type === 'product').length :
-                       filter.key === 'services' ? items.filter(i => i.type === 'service').length :
-                       items.filter(i => i.category === filter.key).length;
-          return (
-            <FilterChip
-              key={filter.key}
-              label={filter.label}
-              selected={selectedFilter === filter.key}
-              count={count}
-              onPress={() => setSelectedFilter(filter.key)}
-            />
-          );
-        })}
-      </ScrollView>
+      {/* Filter Chips - Fixed Height ScrollView */}
+      <View style={styles.filterContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterContent}
+        >
+          {categories.map((filter) => {
+            const count = filter.key === 'all' ? items.length :
+                         filter.key === 'products' ? items.filter(i => i.type === 'product').length :
+                         filter.key === 'services' ? items.filter(i => i.type === 'service').length :
+                         items.filter(i => i.category?.toLowerCase().replace(/\s+/g, '_') === filter.key || 
+                                   i.category?.toLowerCase() === filter.key).length;
+            return (
+              <FilterChip
+                key={filter.key}
+                label={filter.label}
+                selected={selectedFilter === filter.key}
+                count={count}
+                onPress={() => setSelectedFilter(filter.key)}
+              />
+            );
+          })}
+        </ScrollView>
+      </View>
 
-      {/* Results Count and Sort */}
+      {/* Results Count - Fixed Height */}
       <View style={styles.resultsHeader}>
         <Text style={styles.resultsCount}>
           {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
         </Text>
-        {isDesktop && (
-          <TouchableOpacity
-            style={styles.sortTriggerDesktop}
-            onPress={() => setShowSortModal(true)}
-          >
-            <Ionicons name="swap-vertical-outline" size={16} color="#4A7DFF" />
-            <Text style={styles.sortTriggerText}>
-              Sort: {sortOptions.find(s => s.key === selectedSort)?.label}
-            </Text>
-          </TouchableOpacity>
-        )}
       </View>
 
-      {/* Results Grid/List */}
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4A7DFF" />
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
-      ) : filteredItems.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="search-outline" size={64} color="#8A8AAE" />
-          <Text style={styles.emptyTitle}>No results found</Text>
-          <Text style={styles.emptySubtext}>Try adjusting your filters or search terms</Text>
-        </View>
-      ) : (
-        <Animated.FlatList
-          data={filteredItems}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          numColumns={isDesktop ? 4 : 2}
-          contentContainerStyle={[styles.gridContent, isDesktop && styles.gridContentDesktop]}
-          showsVerticalScrollIndicator={false}
-          columnWrapperStyle={isDesktop ? styles.columnWrapper : undefined}
-        />
-      )}
+      {/* Grid - Takes remaining space */}
+      <FlatList
+        key={gridKey}
+        data={filteredItems}
+        renderItem={({ item }) => (
+          <GridResultCard item={item} onPress={handleItemPress} />
+        )}
+        keyExtractor={(item, index) => `explore-${item.id}-${index}`}
+        numColumns={numColumns}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.gridContainer}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        initialNumToRender={8}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="search-outline" size={48} color="#8A8AAE" />
+            <Text style={styles.emptyTitle}>No results found</Text>
+            <Text style={styles.emptySubtext}>Try adjusting your filters or search terms</Text>
+          </View>
+        }
+      />
 
       {renderSortModal()}
-    </View>
+    </SafeAreaView>
   );
 };
 
-// --- Main Component (Wrapped with ResponsiveLayout) ---
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
 export const ExploreScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -414,19 +757,35 @@ export const ExploreScreen = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// STYLES - DARK THEME
+// ============================================================
 const styles = StyleSheet.create({
-  // ============================================================
-  // DESKTOP STYLES
-  // ============================================================
+  container: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+  },
   containerDesktop: {
-    backgroundColor: '#F8F9FC',
+    backgroundColor: '#0D0D1A',
     padding: 24,
   },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 12,
+  },
+
+  // Desktop Header
   desktopHeader: {
     marginBottom: 20,
   },
   desktopHeaderTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 32,
     fontWeight: 'bold',
   },
@@ -435,129 +794,92 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 4,
   },
-  searchContainerDesktop: {
-    paddingHorizontal: 0,
-    backgroundColor: 'transparent',
-    flexDirection: 'row',
-    gap: 12,
-  },
-  sortButtonDesktop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  sortButtonDesktopText: {
-    color: '#4A7DFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  sortTriggerDesktop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#F5F7FA',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  sortTriggerText: {
-    color: '#4A7DFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  gridContentDesktop: {
-    padding: 0,
-    gap: 16,
-  },
-  columnWrapper: {
-    gap: 16,
-  },
-  itemCardDesktop: {
-    marginBottom: 0,
-  },
-  itemImageDesktop: {
-    height: 160,
-  },
 
-  // ============================================================
-  // MOBILE STYLES
-  // ============================================================
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FC',
-  },
+  // Mobile Header
   header: {
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    backgroundColor: '#0D0D1A',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#1F2F5F',
+    color: '#FFFFFF',
   },
+
+  // Search
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    paddingVertical: 10,
+    backgroundColor: '#0D0D1A',
     gap: 10,
+    minHeight: 56,
+  },
+  searchContainerDesktop: {
+    paddingHorizontal: 0,
   },
   searchInputWrapper: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F7FA',
-    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    minHeight: 44,
   },
   searchInput: {
     flex: 1,
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 14,
     padding: 0,
   },
   sortButton: {
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: '#F5F7FA',
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
+
+  // Filters
   filterContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#0D0D1A',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    minHeight: 48,
+    maxHeight: 56,
   },
   filterContent: {
     paddingHorizontal: 16,
     gap: 8,
+    alignItems: 'center',
   },
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: '#E8ECF4',
+    borderColor: 'rgba(255,255,255,0.08)',
     gap: 4,
+    minHeight: 32,
   },
   filterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderColor: '#4A7DFF',
   },
   filterChipText: {
@@ -581,107 +903,103 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: 'bold',
   },
+
+  // Results
   resultsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    backgroundColor: '#0D0D1A',
     borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    minHeight: 36,
   },
   resultsCount: {
     color: '#8A8AAE',
-    fontSize: 13,
+    fontSize: 12,
   },
-  gridContent: {
+
+  // Grid
+  gridContainer: {
     padding: 8,
-    gap: 8,
+    paddingBottom: 20,
   },
-  itemCard: {
+  gridCard: {
     flex: 1,
-    margin: 4,
-    backgroundColor: '#FFFFFF',
+    margin: 6,
     borderRadius: 12,
     overflow: 'hidden',
+    backgroundColor: '#1A1A2E',
+    position: 'relative',
+    aspectRatio: 0.9,
     borderWidth: 1,
-    borderColor: '#E8ECF4',
+    borderColor: 'rgba(255,255,255,0.05)',
   },
-  itemImage: {
+  gridImage: {
     width: '100%',
-    height: 120,
+    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
-  itemInfo: {
+  gridOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '60%',
+  },
+  gridGradient: {
+    width: '100%',
+    height: '100%',
+  },
+  gridInfo: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: 10,
   },
-  itemTitle: {
-    color: '#1F2F5F',
+  gridTitle: {
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
   },
-  itemShop: {
-    color: '#8A8AAE',
-    fontSize: 11,
+  gridPrice: {
+    color: '#4A7DFF',
+    fontSize: 13,
+    fontWeight: '700',
     marginTop: 2,
   },
-  itemPrice: {
-    color: '#4A7DFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  itemFooter: {
+  gridFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 4,
   },
-  itemRating: {
+  gridShop: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    flex: 1,
+  },
+  gridRating: {
     color: '#F1C40F',
     fontSize: 11,
   },
-  serviceBadge: {
-    backgroundColor: 'rgba(108, 92, 231, 0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  serviceBadgeText: {
-    color: '#6C5CE7',
-    fontSize: 9,
-    fontWeight: '500',
-  },
-  inStockBadge: {
-    backgroundColor: 'rgba(46, 204, 113, 0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  inStockBadgeText: {
-    color: '#2ECC71',
-    fontSize: 9,
-    fontWeight: '500',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  loadingText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 12,
-  },
+
+  // Empty State
   emptyContainer: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
   },
   emptyTitle: {
-    color: '#1F2F5F',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
     marginTop: 12,
@@ -691,69 +1009,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
   },
-  // List View Styles
-  listItem: {
+
+  // Fullscreen
+  backButton: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 10,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E8ECF4',
-  },
-  listItemImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  listItemInfo: {
-    flex: 1,
-  },
-  listItemTitle: {
-    color: '#1F2F5F',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  listItemShop: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  listItemPrice: {
-    color: '#4A7DFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  listItemFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 4,
+    zIndex: 60,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
   },
-  listItemRating: {
-    color: '#F1C40F',
-    fontSize: 12,
-  },
-  listItemBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  listItemBadgeText: {
-    fontSize: 9,
+  backButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
     fontWeight: '500',
   },
+  actionRailWrapper: {
+    position: 'absolute',
+    right: 16,
+    top: '50%',
+    transform: [{ translateY: -150 }],
+    zIndex: 50,
+  },
+
   // Modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFill,
+  },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1A1A2E',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -765,13 +1059,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E8ECF4',
+    borderBottomColor: 'rgba(255,255,255,0.05)',
     marginBottom: 16,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#1F2F5F',
+    color: '#FFFFFF',
   },
   sortOption: {
     flexDirection: 'row',
@@ -780,13 +1074,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F2F5',
+    borderBottomColor: 'rgba(255,255,255,0.03)',
   },
   sortOptionActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.05)',
+    backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
   sortOptionText: {
-    color: '#1F2F5F',
+    color: '#E8ECF4',
     fontSize: 16,
   },
   sortOptionTextActive: {

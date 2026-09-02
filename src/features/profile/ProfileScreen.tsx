@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Image,
@@ -15,6 +14,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -251,8 +251,7 @@ const ProfileContent = ({ navigation }: any) => {
   const avatarDisplayUrl = avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName || 'User')}&background=4A7DFF&color=fff&size=200`;
 
   return (
-    <View style={[styles.container, isDesktop && styles.desktopContainer]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       {/* Header */}
       <View style={styles.header}>
@@ -329,7 +328,7 @@ const ProfileContent = ({ navigation }: any) => {
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 };
 

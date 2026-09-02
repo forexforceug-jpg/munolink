@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Image,
@@ -17,6 +16,7 @@ import {
   Linking,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../lib/supabase';
@@ -640,8 +640,7 @@ const handleChatPress = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color="#4A7DFF" />
+    <SafeAreaView style={[styles.container, styles.centered]} edges={['top']}>        <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading profile...</Text>
       </SafeAreaView>
     );

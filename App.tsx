@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+// App.tsx
+
+import React, { useEffect, useState, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
@@ -8,9 +10,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { AuthProvider } from './src/context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { View, Text, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, Alert, Platform, Image } from 'react-native';
 import * as Updates from 'expo-updates';
 import * as SplashScreen from 'expo-splash-screen';
+import { Ionicons } from '@expo/vector-icons';
 
 // Keep splash screen visible while we initialize
 SplashScreen.preventAutoHideAsync();
@@ -21,13 +24,13 @@ export default function App() {
   const [isResetting, setIsResetting] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [appIsReady, setAppIsReady] = useState(false);
 
   // ============================================================
   // CHECK FOR OTA UPDATES
   // ============================================================
   const checkForUpdates = async () => {
     try {
-      // Only check for updates in production builds
       if (!__DEV__) {
         const update = await Updates.checkForUpdateAsync();
         
@@ -35,94 +38,137 @@ export default function App() {
           console.log('📦 Update available!');
           setUpdateAvailable(true);
           
-          // Show update prompt
-          Alert.alert(
-            'Update Available',
-            'A new version of Munolink is available. Would you like to update now?',
-            [
-              { 
-                text: 'Later', 
-                style: 'cancel',
-                onPress: () => {
-                  setUpdateAvailable(false);
-                }
-              },
-              {
-                text: 'Update',
-                onPress: async () => {
-                  setIsUpdating(true);
-                  try {
-                    await Updates.fetchUpdateAsync();
-                    await Updates.reloadAsync();
-                  } catch (error) {
-                    console.error('Update failed:', error);
-                    Alert.alert('Update Failed', 'Please try again later.');
-                    setIsUpdating(false);
+          setTimeout(() => {
+            Alert.alert(
+              'Update Available',
+              'A new version of Munolink is available. Would you like to update now?',
+              [
+                { 
+                  text: 'Later', 
+                  style: 'cancel',
+                  onPress: () => {
+                    setUpdateAvailable(false);
                   }
                 },
-              },
-            ]
-          );
+                {
+                  text: 'Update',
+                  onPress: async () => {
+                    setIsUpdating(true);
+                    try {
+                      await Updates.fetchUpdateAsync();
+                      await Updates.reloadAsync();
+                    } catch (error) {
+                      console.error('Update failed:', error);
+                      Alert.alert('Update Failed', 'Please try again later.');
+                      setIsUpdating(false);
+                    }
+                  },
+                },
+              ]
+            );
+          }, 1000);
         } else {
           console.log('✅ App is up to date');
         }
       }
     } catch (error) {
       console.error('Error checking for updates:', error);
-      // Don't block the app if update check fails
     }
   };
 
   // ============================================================
-  // RESET AUTH DATA (if needed)
+  // LOAD RESOURCES
+  // ============================================================
+  const loadResources = useCallback(async () => {
+    try {
+      // Simulate loading time (minimum 2 seconds to show splash screen)
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await resetAuth();
+      await checkForUpdates();
+      return true;
+    } catch (error) {
+      console.error('Error loading resources:', error);
+      return false;
+    }
+  }, []);
+
+  // ============================================================
+  // RESET AUTH DATA
   // ============================================================
   const resetAuth = async () => {
     try {
-      // Clear ALL auth-related data
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
       console.log('🗑️ All auth data cleared');
     } catch (error) {
       console.error('Error clearing auth:', error);
-    } finally {
-      setIsResetting(false);
-      
-      // Check for updates after auth reset
-      await checkForUpdates();
-      
-      // Hide splash screen
-      await SplashScreen.hideAsync();
     }
   };
 
   // ============================================================
-  // EFFECTS
+  // INITIALIZE APP
   // ============================================================
   useEffect(() => {
-    resetAuth();
-  }, []);
+    async function initializeApp() {
+      try {
+        await loadResources();
+        setAppIsReady(true);
+        
+        // Hide splash screen after a short delay
+        setTimeout(async () => {
+          await SplashScreen.hideAsync();
+          setIsResetting(false);
+        }, 300);
+      } catch (error) {
+        console.error('Error initializing app:', error);
+        await SplashScreen.hideAsync();
+        setIsResetting(false);
+        setAppIsReady(true);
+      }
+    }
+
+    initializeApp();
+  }, [loadResources]);
 
   // ============================================================
-  // LOADING STATES
+  // LOADING STATES - Show splash icon instead of text
   // ============================================================
   
-  // Initial reset state
-  if (isResetting) {
+  if (isResetting || !appIsReady) {
+    // Try to load the splash icon
+    let SplashIcon = null;
+    try {
+      SplashIcon = require('./assets/adaptive-icon.png');
+    } catch (e) {
+      // Fallback if splash-icon.png doesn't exist
+      SplashIcon = null;
+    }
+
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1F2F5F' }}>
-        <ActivityIndicator size="large" color="#4A7DFF" />
-        <Text style={{ color: '#FFFFFF', marginTop: 12 }}>Loading...</Text>
+        <StatusBar style="light" />
+        {SplashIcon ? (
+          <Image 
+            source={SplashIcon} 
+            style={{ width: 120, height: 120, resizeMode: 'contain' }}
+          />
+        ) : (
+          // Fallback text if icon not found
+          <Text style={{ fontSize: 48, color: '#FFFFFF', fontWeight: 'bold', marginBottom: 12 }}>🛍️</Text>
+        )}
+        <Text style={{ color: '#FFFFFF', marginTop: 12, fontWeight: '600', fontSize: 18 }}>Munolink</Text>
+        <ActivityIndicator size="small" color="#4A7DFF" style={{ marginTop: 16 }} />
       </View>
     );
   }
 
-  // Update download state
   if (isUpdating) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1F2F5F' }}>
+        <StatusBar style="light" />
         <ActivityIndicator size="large" color="#4A7DFF" />
-        <Text style={{ color: '#FFFFFF', marginTop: 12 }}>Downloading update...</Text>
-        <Text style={{ color: '#8A8AAE', marginTop: 4, fontSize: 12 }}>Please wait</Text>
+        <Text style={{ color: '#FFFFFF', marginTop: 12, fontWeight: '600' }}>Updating Munolink</Text>
+        <Text style={{ color: '#8A8AAE', marginTop: 4, fontSize: 12 }}>Please wait...</Text>
       </View>
     );
   }
@@ -131,7 +177,7 @@ export default function App() {
   // MAIN APP
   // ============================================================
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#1F2F5F' }}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <SafeAreaProvider>

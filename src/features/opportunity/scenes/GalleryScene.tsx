@@ -1,6 +1,6 @@
 // src/features/opportunity/scenes/GalleryScene.tsx
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,12 +13,29 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  FlatList,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { Scene } from '../types/Scene';
+
+// ✅ Safely import expo-av with error handling
+let Video: any = null;
+let ResizeMode: any = null;
+let AVPlaybackStatus: any = null;
+let VideoAvailable = false;
+
+try {
+  const expoAv = require('expo-av');
+  Video = expoAv.Video;
+  ResizeMode = expoAv.ResizeMode;
+  AVPlaybackStatus = expoAv.AVPlaybackStatus;
+  VideoAvailable = true;
+} catch (e) {
+  console.warn('⚠️ expo-av not available, video support disabled');
+}
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -26,6 +43,7 @@ interface GalleryItem {
   type: 'image' | 'video';
   uri: string;
   thumbnail?: string;
+  id?: string;
 }
 
 interface Props {
@@ -58,27 +76,41 @@ export function GalleryScene({
 
   const [selectedItem, setSelectedItem] = useState<GalleryItem | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [videoStatus, setVideoStatus] = useState<AVPlaybackStatus | null>(null);
+  const [videoStatus, setVideoStatus] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
-  const videoRef = useRef<Video>(null);
+  const [hasError, setHasError] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const videoRef = useRef<any>(null);
 
   // Get gallery items from scene data
   const galleryImages = (scene.data?.images || []) as string[];
   const videoUri = scene.data?.video || null;
 
-  // Build gallery items list
+  // Build gallery items list - only add video if expo-av is available
   const items: GalleryItem[] = [
-    ...galleryImages.map((uri: string) => ({ type: 'image' as const, uri })),
+    ...galleryImages.map((uri: string, index: number) => ({ 
+      type: 'image' as const, 
+      uri,
+      id: `image-${index}`,
+    })),
   ];
 
-  if (videoUri) {
-    items.push({ type: 'video' as const, uri: videoUri });
+  // Only add video if expo-av is available
+  if (videoUri && VideoAvailable) {
+    items.push({ type: 'video' as const, uri: videoUri, id: 'video-0' });
   }
 
   const totalImages = galleryImages.length;
-  const hasVideo = !!videoUri;
+  const hasVideo = !!videoUri && VideoAvailable;
   const canAddImage = totalImages < MAX_IMAGES;
-  const canAddVideo = !hasVideo;
+  const canAddVideo = !hasVideo && VideoAvailable;
+
+  // --- Error boundary ---
+  useEffect(() => {
+    if (hasError) {
+      console.warn('GalleryScene encountered an error, showing fallback');
+    }
+  }, [hasError]);
 
   // --- Handle Image Upload ---
   const handleAddImage = async () => {
@@ -115,7 +147,7 @@ export function GalleryScene({
 
   // --- Handle Video Upload ---
   const handleAddVideo = async () => {
-    if (!editable || !onAddVideo) return;
+    if (!editable || !onAddVideo || !VideoAvailable) return;
     if (hasVideo) {
       Alert.alert('Video Exists', 'You can only add one video.');
       return;
@@ -164,15 +196,12 @@ export function GalleryScene({
     }
   };
 
-  // --- Handle Item Press ---
+  // --- Handle Item Press - Open in Modal ---
   const handleItemPress = (item: GalleryItem, index: number) => {
-    if (item.type === 'image') {
-      setSelectedItem(item);
-      setModalVisible(true);
-    } else if (item.type === 'video') {
-      setSelectedItem(item);
-      setModalVisible(true);
-    }
+    // ✅ Prevent event bubbling to parent
+    setSelectedItem(item);
+    setModalVisible(true);
+    setVideoError(false);
   };
 
   // --- Handle Remove Item ---
@@ -188,11 +217,45 @@ export function GalleryScene({
     );
   };
 
+  // --- Render Video Thumbnail ---
+  const renderVideoThumbnail = (uri: string, size: number) => {
+    if (!VideoAvailable) {
+      return (
+        <View style={[styles.videoThumbnailCard, { width: size, height: size }]}>
+          <Ionicons name="videocam-outline" size={32} color="#8A8AAE" />
+          <Text style={styles.videoUnavailableText}>Video unavailable</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={[styles.videoThumbnailCard, { width: size, height: size }]}>
+        <Video
+          source={{ uri }}
+          style={styles.videoThumbnailPlayer}
+          resizeMode={ResizeMode?.COVER || 'cover'}
+          shouldPlay={false}
+          isLooping={false}
+          onError={(error: any) => {
+            console.warn('Video error:', error);
+            setVideoError(true);
+          }}
+        />
+        <View style={styles.videoPlayOverlayGrid}>
+          <View style={styles.videoPlayButtonCircle}>
+            <Ionicons name="play" size={24} color="#FFFFFF" />
+          </View>
+          <Text style={styles.videoBadgeText}>Video</Text>
+        </View>
+      </View>
+    );
+  };
+
   // --- Render Modal ---
   const renderModal = () => {
     if (!selectedItem) return null;
 
-    const isVideo = selectedItem.type === 'video';
+    const isVideo = selectedItem.type === 'video' && VideoAvailable;
 
     return (
       <Modal
@@ -203,56 +266,139 @@ export function GalleryScene({
           setModalVisible(false);
           setSelectedItem(null);
           if (videoRef.current) {
-            videoRef.current.pauseAsync();
+            try {
+              videoRef.current.pauseAsync();
+            } catch (e) {
+              // Ignore
+            }
           }
         }}
       >
-        <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setModalVisible(false);
+            setSelectedItem(null);
+            if (videoRef.current) {
+              try {
+                videoRef.current.pauseAsync();
+              } catch (e) {
+                // Ignore
+              }
+            }
+          }}
+        >
           <TouchableOpacity
             style={styles.modalCloseButton}
             onPress={() => {
               setModalVisible(false);
               setSelectedItem(null);
               if (videoRef.current) {
-                videoRef.current.pauseAsync();
+                try {
+                  videoRef.current.pauseAsync();
+                } catch (e) {
+                  // Ignore
+                }
               }
             }}
           >
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
 
-          {isVideo ? (
-            <View style={styles.modalVideoContainer}>
-              <Video
-                ref={videoRef}
-                source={{ uri: selectedItem.uri }}
-                style={styles.modalVideo}
-                useNativeControls
-                resizeMode={ResizeMode.CONTAIN}
-                isLooping={false}
-                onPlaybackStatusUpdate={(status: AVPlaybackStatus) => setVideoStatus(status)}
-              />
-              {videoStatus?.isLoaded && !videoStatus?.isPlaying && (
-                <TouchableOpacity
-                  style={styles.videoPlayButton}
-                  onPress={() => {
-                    if (videoRef.current) {
-                      videoRef.current.playAsync();
-                    }
-                  }}
-                >
-                  <Ionicons name="play-circle" size={64} color="rgba(255,255,255,0.8)" />
-                </TouchableOpacity>
-              )}
-            </View>
-          ) : (
-            <Image
-              source={{ uri: selectedItem.uri }}
-              style={styles.modalImage}
-              resizeMode="contain"
-            />
+          {items.length > 1 && (
+            <>
+              <TouchableOpacity
+                style={styles.modalCounter}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  const currentIndex = items.findIndex(item => item.id === selectedItem.id);
+                  if (currentIndex > 0) {
+                    setSelectedItem(items[currentIndex - 1]);
+                    setVideoError(false);
+                  }
+                }}
+              >
+                <Ionicons name="chevron-back" size={24} color="rgba(255,255,255,0.5)" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalCounterRight}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  const currentIndex = items.findIndex(item => item.id === selectedItem.id);
+                  if (currentIndex < items.length - 1) {
+                    setSelectedItem(items[currentIndex + 1]);
+                    setVideoError(false);
+                  }
+                }}
+              >
+                <Ionicons name="chevron-forward" size={24} color="rgba(255,255,255,0.5)" />
+              </TouchableOpacity>
+            </>
           )}
-        </View>
+
+          <View style={styles.modalContentWrapper}>
+            {isVideo && VideoAvailable ? (
+              <View style={styles.modalVideoContainer}>
+                <Video
+                  ref={videoRef}
+                  source={{ uri: selectedItem.uri }}
+                  style={styles.modalVideo}
+                  useNativeControls
+                  resizeMode={ResizeMode?.CONTAIN || 'contain'}
+                  isLooping={false}
+                  onPlaybackStatusUpdate={(status: any) => setVideoStatus(status)}
+                  onError={(error: any) => {
+                    console.warn('Modal video error:', error);
+                    setVideoError(true);
+                  }}
+                />
+                {videoStatus?.isLoaded && !videoStatus?.isPlaying && (
+                  <TouchableOpacity
+                    style={styles.videoPlayButton}
+                    onPress={() => {
+                      if (videoRef.current) {
+                        try {
+                          videoRef.current.playAsync();
+                        } catch (e) {
+                          // Ignore
+                        }
+                      }
+                    }}
+                  >
+                    <Ionicons name="play-circle" size={64} color="rgba(255,255,255,0.8)" />
+                  </TouchableOpacity>
+                )}
+                {videoError && (
+                  <View style={styles.videoErrorOverlay}>
+                    <Ionicons name="alert-circle-outline" size={48} color="#E74C3C" />
+                    <Text style={styles.videoErrorText}>Failed to play video</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <Image
+                source={{ uri: selectedItem.uri }}
+                style={styles.modalImage}
+                resizeMode="contain"
+                onError={() => {
+                  console.warn('Failed to load image in modal');
+                }}
+              />
+            )}
+          </View>
+
+          {/* Modal bottom info */}
+          <View style={styles.modalBottomInfo}>
+            <Text style={styles.modalItemCount}>
+              {items.findIndex(item => item.id === selectedItem.id) + 1} / {items.length}
+            </Text>
+            <Text style={styles.modalItemType}>
+              {isVideo ? '🎬 Video' : '🖼️ Image'}
+            </Text>
+          </View>
+        </TouchableOpacity>
       </Modal>
     );
   };
@@ -269,7 +415,7 @@ export function GalleryScene({
             onPress={handleAddImage}
             disabled={uploading}
           >
-            <Ionicons name="images-outline" size={24} color="#FFFFFF" />
+            <Ionicons name="images-outline" size={20} color="#FFFFFF" />
             <Text style={styles.addButtonText}>
               Add Image ({totalImages}/{MAX_IMAGES})
             </Text>
@@ -281,7 +427,7 @@ export function GalleryScene({
             onPress={handleAddVideo}
             disabled={uploading}
           >
-            <Ionicons name="videocam-outline" size={24} color="#FFFFFF" />
+            <Ionicons name="videocam-outline" size={20} color="#FFFFFF" />
             <Text style={styles.addButtonText}>Add Video</Text>
           </TouchableOpacity>
         )}
@@ -295,6 +441,73 @@ export function GalleryScene({
     );
   };
 
+  // --- Calculate grid item size ---
+  const getGridItemSize = () => {
+    const numColumns = 3;
+    const padding = 8;
+    const totalPadding = padding * (numColumns + 1);
+    const itemSize = (containerWidth - totalPadding) / numColumns;
+    return Math.min(itemSize, 200);
+  };
+
+  // --- Render Grid Item ---
+  const renderGridItem = ({ item, index }: { item: GalleryItem; index: number }) => {
+    const itemSize = getGridItemSize();
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.gridCard,
+          {
+            width: itemSize,
+            height: itemSize,
+            margin: 4,
+          }
+        ]}
+        onPress={() => handleItemPress(item, index)}
+        activeOpacity={0.8}
+      >
+        {item.type === 'image' ? (
+          <Image
+            source={{ uri: item.uri }}
+            style={styles.gridCardImage}
+            resizeMode="cover"
+            onError={() => console.warn('Failed to load image')}
+          />
+        ) : (
+          renderVideoThumbnail(item.uri, itemSize)
+        )}
+        
+        {editable && (
+          <TouchableOpacity
+            style={styles.removeButtonGrid}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleRemoveItem(index);
+            }}
+          >
+            <Ionicons name="close-circle" size={22} color="#E74C3C" />
+          </TouchableOpacity>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  // --- Error fallback ---
+  if (hasError) {
+    return (
+      <View style={[styles.container, { 
+        width: containerWidth, 
+        height: containerHeight,
+        justifyContent: 'center',
+        alignItems: 'center',
+      }]}>
+        <Ionicons name="image-outline" size={48} color="#8A8AAE" />
+        <Text style={styles.errorText}>Gallery unavailable</Text>
+      </View>
+    );
+  }
+
   // --- Render Empty State ---
   if (items.length === 0 && !editable) {
     return (
@@ -307,171 +520,66 @@ export function GalleryScene({
     );
   }
 
-  // --- Layout Logic ---
-  const itemCount = items.length;
-
-  // For 1 item: full width, aspect ratio 16:9
-  if (itemCount === 1) {
-    return (
-      <View style={[styles.container, { width: containerWidth, height: containerHeight }]}>
-        <TouchableOpacity
-          style={styles.singleItem}
-          onPress={() => handleItemPress(items[0], 0)}
-          activeOpacity={0.9}
-        >
-          {items[0].type === 'image' ? (
-            <Image
-              source={{ uri: items[0].uri }}
-              style={styles.singleImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={styles.videoThumbnail}>
-              <Video
-                ref={videoRef}
-                source={{ uri: items[0].uri }}
-                style={styles.videoThumbnailPlayer}
-                resizeMode={ResizeMode.COVER}
-                shouldPlay={false}
-              />
-              <View style={styles.videoPlayOverlay}>
-                <Ionicons name="play-circle" size={48} color="#FFFFFF" />
-              </View>
-            </View>
-          )}
-          {editable && (
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleRemoveItem(0);
-              }}
-            >
-              <Ionicons name="close-circle" size={24} color="#E74C3C" />
-            </TouchableOpacity>
-          )}
-        </TouchableOpacity>
-        {editable && renderAddButtons()}
-        {renderModal()}
-      </View>
-    );
-  }
-
-  // For 2 items: side by side, each 50% width
-  if (itemCount === 2) {
-    return (
-      <View style={[styles.container, { width: containerWidth, height: containerHeight }]}>
-        <View style={styles.twoColumnContainer}>
-          {items.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.twoColumnItem}
-              onPress={() => handleItemPress(item, index)}
-              activeOpacity={0.9}
-            >
-              {item.type === 'image' ? (
-                <Image
-                  source={{ uri: item.uri }}
-                  style={styles.twoColumnImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={styles.videoThumbnailSmall}>
-                  <Video
-                    source={{ uri: item.uri }}
-                    style={styles.videoThumbnailSmallPlayer}
-                    resizeMode={ResizeMode.COVER}
-                    shouldPlay={false}
-                  />
-                  <View style={styles.videoPlayOverlaySmall}>
-                    <Ionicons name="play-circle" size={32} color="#FFFFFF" />
-                  </View>
-                </View>
-              )}
-              {editable && (
-                <TouchableOpacity
-                  style={styles.removeButtonSmall}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    handleRemoveItem(index);
-                  }}
-                >
-                  <Ionicons name="close-circle" size={20} color="#E74C3C" />
-                </TouchableOpacity>
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-        {editable && renderAddButtons()}
-        {renderModal()}
-      </View>
-    );
-  }
-
-  // For 3+ items: grid layout
+  // --- Main Grid Layout ---
   return (
-    <View style={[styles.container, { width: containerWidth, height: containerHeight }]}>
+    <View 
+      style={[styles.container, { width: containerWidth, height: containerHeight }]}
+      // ✅ Prevent parent PanResponder from capturing touches
+      onStartShouldSetResponder={() => true}
+      onResponderTerminationRequest={() => false}
+    >
       <ScrollView
         contentContainerStyle={styles.gridScrollContent}
         showsVerticalScrollIndicator={false}
+        // ✅ Prevent scroll events from bubbling
+        scrollEventThrottle={16}
       >
-        <View style={styles.gridContainer}>
-          {items.map((item, index) => {
-            const isFirst = index === 0 && itemCount === 3;
-            const gridStyle = isFirst
-              ? styles.gridItemLarge
-              : styles.gridItemSmall;
-
-            return (
+        {items.length > 0 ? (
+          <View style={styles.gridContainer}>
+            {items.map((item, index) => renderGridItem({ item, index }))}
+          </View>
+        ) : (
+          <View style={styles.emptyState}>
+            <Ionicons name="images-outline" size={48} color="#8A8AAE" />
+            <Text style={styles.emptyText}>No gallery items</Text>
+          </View>
+        )}
+        
+        {editable && (
+          <View style={styles.editableAddContainer}>
+            {canAddImage && (
               <TouchableOpacity
-                key={index}
-                style={[styles.gridItem, gridStyle]}
-                onPress={() => handleItemPress(item, index)}
-                activeOpacity={0.9}
+                style={[styles.addCard, styles.addImageCard]}
+                onPress={handleAddImage}
+                disabled={uploading}
               >
-                {item.type === 'image' ? (
-                  <Image
-                    source={{ uri: item.uri }}
-                    style={styles.gridImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={styles.videoThumbnailGrid}>
-                    <Video
-                      source={{ uri: item.uri }}
-                      style={styles.videoThumbnailGridPlayer}
-                      resizeMode={ResizeMode.COVER}
-                      shouldPlay={false}
-                    />
-                    <View style={styles.videoPlayOverlayGrid}>
-                      <Ionicons name="play-circle" size={32} color="#FFFFFF" />
-                    </View>
-                  </View>
-                )}
-                {editable && (
-                  <TouchableOpacity
-                    style={styles.removeButtonGrid}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleRemoveItem(index);
-                    }}
-                  >
-                    <Ionicons name="close-circle" size={20} color="#E74C3C" />
-                  </TouchableOpacity>
-                )}
-                {index === 0 && itemCount > 3 && (
-                  <View style={styles.imageCountBadge}>
-                    <Text style={styles.imageCountText}>
-                      +{itemCount - 1}
-                    </Text>
-                  </View>
-                )}
+                <Ionicons name="add-circle-outline" size={32} color="#4A7DFF" />
+                <Text style={styles.addCardText}>Add Image</Text>
+                <Text style={styles.addCardSubtext}>{totalImages}/{MAX_IMAGES}</Text>
               </TouchableOpacity>
-            );
-          })}
-        </View>
-        {editable && renderAddButtons()}
+            )}
+            {canAddVideo && (
+              <TouchableOpacity
+                style={[styles.addCard, styles.addVideoCard]}
+                onPress={handleAddVideo}
+                disabled={uploading}
+              >
+                <Ionicons name="videocam-outline" size={32} color="#E74C3C" />
+                <Text style={styles.addCardText}>Add Video</Text>
+                <Text style={styles.addCardSubtext}>Max 30MB, 2min</Text>
+              </TouchableOpacity>
+            )}
+            {uploading && (
+              <View style={styles.uploadingIndicator}>
+                <ActivityIndicator size="small" color="#4A7DFF" />
+                <Text style={styles.uploadingText}>Uploading...</Text>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
+
+      {/* Modal for fullscreen view */}
       {renderModal()}
     </View>
   );
@@ -497,98 +605,45 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 8,
   },
-
-  // Single item
-  singleItem: {
-    flex: 1,
-    position: 'relative',
-  },
-  singleImage: {
-    width: '100%',
-    height: '100%',
-  },
-  videoThumbnail: {
-    flex: 1,
-    position: 'relative',
-  },
-  videoThumbnailPlayer: {
-    width: '100%',
-    height: '100%',
-  },
-  videoPlayOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+  errorText: {
+    color: '#8A8AAE',
+    fontSize: 16,
+    marginTop: 8,
   },
 
-  // Two column
-  twoColumnContainer: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  twoColumnItem: {
-    flex: 1,
-    position: 'relative',
-    margin: 1,
-  },
-  twoColumnImage: {
-    width: '100%',
-    height: '100%',
-  },
-  videoThumbnailSmall: {
-    flex: 1,
-    position: 'relative',
-  },
-  videoThumbnailSmallPlayer: {
-    width: '100%',
-    height: '100%',
-  },
-  videoPlayOverlaySmall: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-
-  // Grid
+  // Grid Layout
   gridScrollContent: {
-    flexGrow: 1,
+    padding: 8,
+    paddingBottom: 20,
   },
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+    paddingTop: 8,
   },
-  gridItem: {
+  gridCard: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     position: 'relative',
-    padding: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
-  gridItemLarge: {
-    width: '100%',
-    aspectRatio: 16 / 9,
-  },
-  gridItemSmall: {
-    width: '50%',
-    aspectRatio: 1,
-  },
-  gridImage: {
+  gridCardImage: {
     width: '100%',
     height: '100%',
   },
-  videoThumbnailGrid: {
-    flex: 1,
+
+  // Video Thumbnail
+  videoThumbnailCard: {
     position: 'relative',
+    backgroundColor: '#1A1A2E',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  videoThumbnailGridPlayer: {
+  videoThumbnailPlayer: {
     width: '100%',
     height: '100%',
   },
@@ -602,24 +657,78 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.3)',
   },
-
-  // Badge
-  imageCountBadge: {
+  videoPlayButtonCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoBadgeText: {
     position: 'absolute',
-    bottom: 8,
-    right: 8,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  imageCountText: {
+    bottom: 6,
+    right: 6,
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '600',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  videoUnavailableText: {
+    color: '#8A8AAE',
+    fontSize: 10,
+    marginTop: 4,
   },
 
-  // Add buttons
+  // Remove button on grid items
+  removeButtonGrid: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 12,
+    padding: 2,
+  },
+
+  // Add buttons (editable mode)
+  editableAddContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+    gap: 8,
+  },
+  addCard: {
+    width: '48%',
+    minWidth: 100,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    minHeight: 80,
+  },
+  addImageCard: {
+    borderColor: '#4A7DFF',
+  },
+  addVideoCard: {
+    borderColor: '#E74C3C',
+  },
+  addCardText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  addCardSubtext: {
+    color: '#8A8AAE',
+    fontSize: 10,
+    marginTop: 2,
+  },
   addButtonsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -664,29 +773,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
-  // Remove buttons
-  removeButton: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 12,
-  },
-  removeButtonSmall: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 10,
-  },
-  removeButtonGrid: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 10,
-  },
-
   // Modal
   modalOverlay: {
     flex: 1,
@@ -700,6 +786,32 @@ const styles = StyleSheet.create({
     right: 20,
     zIndex: 10,
     padding: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+  },
+  modalCounter: {
+    position: 'absolute',
+    top: '50%',
+    left: 16,
+    zIndex: 10,
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 20,
+  },
+  modalCounterRight: {
+    position: 'absolute',
+    top: '50%',
+    right: 16,
+    zIndex: 10,
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 20,
+  },
+  modalContentWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
   },
   modalImage: {
     width: '100%',
@@ -723,5 +835,40 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  videoErrorOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  videoErrorText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 8,
+  },
+  modalBottomInfo: {
+    position: 'absolute',
+    bottom: 40,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  modalItemCount: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  modalItemType: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

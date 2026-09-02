@@ -1,5 +1,5 @@
 // src/features/search/SearchScreen.tsx
-
+import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
@@ -15,7 +15,7 @@ import {
   Alert,
   useWindowDimensions,
   FlatList,
-  SafeAreaView,
+  
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -841,8 +841,8 @@ const SearchContent = ({ navigation }: any) => {
   }
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+  <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}> 
+       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       {/* Header with Back Button */}
       <View style={styles.headerContainer}>

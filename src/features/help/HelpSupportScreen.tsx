@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
@@ -13,6 +12,7 @@ import {
   Alert,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
@@ -109,13 +109,13 @@ const FAQS: FAQItem[] = [
     id: '14',
     category: 'General',
     question: 'How do I contact customer support?',
-    answer: 'You can contact customer support through the Help & Support screen. We offer support via email (aijukasti@gmail.com), phone (+256 769345264), and live chat. Our team typically responds within 24 hours.',
+    answer: 'You can contact customer support through the Help & Support screen. We offer support via email (munolinkug@gmail.com), phone (+256 769345264), and live chat. Our team typically responds within 24 hours.',
   },
   {
     id: '15',
     category: 'General',
     question: 'How do I report a problem?',
-    answer: 'To report a problem, use the live chat feature in the Help & Support section, or send us an email at aijukasti@gmail.com with details about the issue. We will investigate and get back to you promptly.',
+    answer: 'To report a problem, use the live chat feature in the Help & Support section, or send us an email at munolinkug@gmail.com with details about the issue. We will investigate and get back to you promptly.',
   },
 ];
 
@@ -181,7 +181,7 @@ const HelpSupportContent = ({ navigation }: any) => {
       id: 'email', 
       icon: 'mail-outline', 
       label: 'Email Support', 
-      subtitle: 'aijukasti@gmail.com',
+      subtitle: 'munolinkug@gmail.com',
       color: '#2ECC71',
     },
     { 
@@ -202,7 +202,7 @@ const HelpSupportContent = ({ navigation }: any) => {
 
   const handleOptionPress = (id: string) => {
     if (id === 'email') {
-      Linking.openURL('mailto:aijukasti@gmail.com').catch(() => {
+      Linking.openURL('mailto:munolinkug@gmail.com').catch(() => {
         Alert.alert('Error', 'Could not open email app');
       });
     } else if (id === 'phone') {
@@ -210,7 +210,7 @@ const HelpSupportContent = ({ navigation }: any) => {
         Alert.alert('Error', 'Could not open phone app');
       });
     } else if (id === 'chat') {
-      Alert.alert('Live Chat', 'Chat support will be available soon. In the meantime, please email us at aijukasti@gmail.com');
+      Alert.alert('Live Chat', 'Chat support will be available soon. In the meantime, please email us at munolinkug@gmail.com');
     } else {
       Alert.alert('Coming Soon', `${id} support will be available soon.`);
     }
@@ -225,9 +225,7 @@ const HelpSupportContent = ({ navigation }: any) => {
     : FAQS.filter(faq => faq.category === selectedCategory);
 
   return (
-    <View style={[styles.container, isDesktop && styles.desktopContainer]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
+    <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -259,7 +257,7 @@ const HelpSupportContent = ({ navigation }: any) => {
 
         {/* Support Options */}
         <Text style={styles.sectionTitle}>Contact Support</Text>
-        <View style={styles.supportOptionsRow}>
+        <SafeAreaView style={styles.supportOptionsRow} edges={['top']}>
           {supportOptions.map((option) => (
             <TouchableOpacity
               key={option.id}
@@ -274,7 +272,7 @@ const HelpSupportContent = ({ navigation }: any) => {
               <Text style={styles.supportOptionSubtitle}>{option.subtitle}</Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </SafeAreaView>
 
         {/* FAQ Section */}
         <View style={styles.faqSection}>
@@ -353,7 +351,7 @@ const HelpSupportContent = ({ navigation }: any) => {
         {/* Version Info */}
         <Text style={styles.versionText}>Munolink v1.0.0</Text>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 };
 

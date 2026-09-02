@@ -28,8 +28,9 @@ export class SceneEngine {
       SceneFactory.createHero(this.opportunity, getImageForScene(0)),
       SceneFactory.createDetails(this.opportunity, getImageForScene(1)),
       SceneFactory.createTrust(this.opportunity, getImageForScene(2)),
-      SceneFactory.createGallery(this.opportunity, getImageForScene(3)),
-      SceneFactory.createAction(this.opportunity, getImageForScene(4)),
+      SceneFactory.createAction(this.opportunity, getImageForScene(3)),
+      SceneFactory.createGallery(this.opportunity, getImageForScene(4)),
+      
     ];
   }
 }

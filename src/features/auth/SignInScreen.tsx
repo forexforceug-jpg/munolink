@@ -5,7 +5,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   TextInput,
   Dimensions,
@@ -15,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -59,7 +59,7 @@ const SignInContent = ({ navigation }: any) => {
   };
 
   return (
-    <View style={[styles.container, isDesktop && styles.containerDesktop]}>
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       <KeyboardAvoidingView
@@ -147,7 +147,7 @@ const SignInContent = ({ navigation }: any) => {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-    </View>
+    </SafeAreaView>
   );
 };
 

@@ -14,7 +14,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   Text,
-  SafeAreaView,
   TouchableOpacity,
   Share,
   useWindowDimensions,
@@ -25,6 +24,7 @@ import {
   ViewabilityConfig,
   ViewToken,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { FloatingActionRail } from './components/FloatingActionRail';
 import { useFeedStore } from '../../store/feedStore';
@@ -915,44 +915,36 @@ const renderItem = useCallback(
     // If applying recommendations, show a simple loading state
     if (isApplyingRecommendations) {
       return (
-        <View style={[styles.centered, { height }]}>
-          <ActivityIndicator size="large" color="#4A7DFF" />
+      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>          <ActivityIndicator size="large" color="#4A7DFF" />
           <Text style={[styles.loadingText, { fontSize: width < 380 ? 14 : 16 }]}>
             Personalizing your feed...
           </Text>
-        </View>
-      );
+      </SafeAreaView>      );
     }
 
     // Show beautiful skeleton loading
     return (
-      <View style={[styles.container, { height }]}>
-        <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={[styles.container, { height }]} edges={['top']}>        <SafeAreaView style={{ flex: 1 }}>
           <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
           <FeedListSkeleton isDesktop={isDesktop} />
         </SafeAreaView>
-      </View>
-    );
+    </SafeAreaView>    );
   }
 
   if (error) {
     return (
-      <View style={[styles.centered, { height }]}>
-        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>Error loading feed</Text>
+    <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>Error loading feed</Text>
         <Text style={[styles.errorSubtext, { fontSize: width < 380 ? 12 : 14 }]}>{error}</Text>
-      </View>
-    );
+    </SafeAreaView>    );
   }
 
   if (uniqueOpportunities.length === 0) {
     return (
-      <View style={[styles.centered, { height }]}>
-        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>No opportunities found</Text>
+    <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>No opportunities found</Text>
         <Text style={[styles.emptySubtext, { fontSize: width < 380 ? 12 : 14 }]}>
           Check back later for new deals!
         </Text>
-      </View>
-    );
+    </SafeAreaView>    );
   }
 
   // --- Main Render ---

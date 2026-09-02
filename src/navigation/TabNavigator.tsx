@@ -14,7 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
 import { FeedScreen } from '../features/feed/FeedScreen';
-import { HubScreen } from '../features/hub/HubScreen';
+import { ExploreScreen } from '../features/explore/ExploreScreen';
 import { PayScreen } from '../features/pay/PayScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
 import { AccountScreen } from '../features/account/AccountScreen';
@@ -58,7 +58,6 @@ const CustomTabBarButton = ({ children, onPress }: any) => {
             size={iconSize} 
             color="#FFFFFF" 
             style={{ 
-              // ✅ Ensure icon is centered and sharp
               textShadowColor: 'transparent',
               shadowColor: 'transparent',
             }} 
@@ -74,7 +73,6 @@ const CustomTabBarButton = ({ children, onPress }: any) => {
 const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }: any) => {
   const iconColor = focused ? '#4A7DFF' : 'rgba(255,255,255,0.6)';
   
-  // ✅ Larger base icon size for sharper display
   const baseIconSize = isSmallDevice ? 22 : (isMediumDevice ? 24 : 26);
   const iconSize = getIconSize(baseIconSize);
   
@@ -85,11 +83,9 @@ const TabIcon = ({ focused, icon, label, isPay = false, iconType = 'Ionicons' }:
     const commonProps = { 
       size: iconSize, 
       color: iconColor,
-      // ✅ These help with icon rendering quality
       style: {
         textShadowColor: 'transparent',
         shadowColor: 'transparent',
-        // ✅ Ensures the icon is rendered at exact size
         width: iconSize,
         height: iconSize,
       }
@@ -147,7 +143,7 @@ export const TabNavigator = () => {
         }}
       >
         <Tab.Screen name="Discover" component={FeedScreen} />
-        <Tab.Screen name="Hub" component={HubScreen} />
+        <Tab.Screen name="Explore" component={ExploreScreen} />
         <Tab.Screen name="Pay" component={PayScreen} />
         <Tab.Screen name="Inbox" component={InboxScreen} />
         <Tab.Screen name="Account" component={AccountScreen} />
@@ -184,14 +180,14 @@ export const TabNavigator = () => {
       />
       
       <Tab.Screen
-        name="Hub"
-        component={HubScreen}
+        name="Explore"
+        component={ExploreScreen}
         options={{
           tabBarIcon: ({ focused }) => (
             <TabIcon 
               focused={focused} 
               icon="grid-outline" 
-              label="Hub" 
+              label="Explore" 
               iconType="Ionicons" 
             />
           ),
@@ -257,13 +253,8 @@ const styles = StyleSheet.create({
     height: Platform.OS === 'ios' ? 80 : 70,
     paddingBottom: Platform.OS === 'ios' ? 20 : 10,
     paddingTop: 8,
-    backgroundColor: 'transparent',
-    borderTopWidth: 0,
-    shadowColor: 'transparent',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    elevation: 0,
+    // ✅ Changed to opaque color
+    backgroundColor: '#1A2A4F', // Solid dark blue instead of rgba
   },
   tabBarBackground: {
     position: 'absolute',
@@ -271,15 +262,16 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: Platform.OS === 'ios' ? 80 : 70,
-    backgroundColor: 'rgba(26, 42, 79, 0.55)',
+    // ✅ Changed to opaque color
+    backgroundColor: '#1A2A4F', // Solid dark blue
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.05)',
     ...Platform.select({
       ios: {
-        backgroundColor: 'rgba(26, 42, 79, 0.45)',
+        backgroundColor: '#1A2A4F',
       },
       android: {
-        backgroundColor: 'rgba(26, 42, 79, 0.60)',
+        backgroundColor: '#1A2A4F',
       },
     }),
   },
@@ -295,7 +287,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    // ✅ Ensure icons are centered
     minWidth: 40,
     minHeight: 40,
   },
