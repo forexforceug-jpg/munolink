@@ -1,3 +1,5 @@
+// src/features/feed/components/ReviewsBottomSheet.tsx
+
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
@@ -11,9 +13,12 @@ import {
   FlatList,
   Dimensions,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -22,27 +27,28 @@ interface ReviewsBottomSheetProps {
   productId: string;
   productTitle?: string;
   onClose: () => void;
- panelWidth?: number;  // ← NEW
+  panelWidth?: number;
   isDesktopView?: boolean;
 }
 
-interface Review {
+interface Comment {
   id: string;
-  rating: number;
-  comment: string;
+  user_id: string;
+  post_id: string;
+  content: string;
+  images: string[];
+  parent_id: string | null;
+  helpful_count: number;
+  is_edited: boolean;
+  is_approved: boolean;
   created_at: string;
-  customer_name: string;
-  customer_avatar?: string;
-  is_verified?: boolean;
-  helpful_count?: number;
-  images?: string[];
-  purchase_date?: string;
-  service_booked?: string;
-  product_variation?: string;
-}
-
-interface RatingDistribution {
-  [key: number]: number;
+  updated_at: string;
+  user?: {
+    id: string;
+    full_name: string;
+    avatar_url: string;
+  };
+  replies?: Comment[];
 }
 
 export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
@@ -52,47 +58,18 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
   onClose,
   isDesktopView = false,
 }) => {
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [filteredReviews, setFilteredReviews] = useState<Review[]>([]);
-  const [averageRating, setAverageRating] = useState(0);
-  const [totalReviews, setTotalReviews] = useState(0);
-  const [ratingDistribution, setRatingDistribution] = useState<RatingDistribution>({});
+  const { user } = useAuth();
+  
+  const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [userRating, setUserRating] = useState(0);
-  const [userComment, setUserComment] = useState('');
+  const [newComment, setNewComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [replyTo, setReplyTo] = useState<Comment | null>(null);
 
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Mock AI-generated summary
-  const getAISummary = () => {
-    const summaries = [
-      "Customers consistently praise the camera quality, fast delivery, and seller responsiveness.",
-      "Users love the product quality, affordable pricing, and excellent customer support.",
-      "Highly rated for reliability, performance, and value for money.",
-      "Customers recommend this for its durability, ease of use, and great features.",
-      "Positive feedback on product quality, fast shipping, and professional service.",
-    ];
-    return summaries[Math.floor(Math.random() * summaries.length)];
-  };
-
-  const [aiSummary] = useState(getAISummary());
-
-  const filterOptions = [
-    { key: 'all', label: 'All' },
-    { key: 'photos', label: 'Photos' },
-    { key: 'videos', label: 'Videos' },
-    { key: '5star', label: '5★' },
-    { key: '4star', label: '4★' },
-    { key: 'helpful', label: 'Most Helpful' },
-    { key: 'newest', label: 'Newest' },
-    { key: 'verified', label: 'Verified Buyers' },
-    { key: 'nearby', label: 'Nearby Customers' },
-  ];
-
-  const fetchReviews = useCallback(async () => {
+  const fetchComments = useCallback(async () => {
     if (!productId) {
       setLoading(false);
       return;
@@ -102,86 +79,68 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     setError(null);
 
     try {
-      console.log('📱 Fetching reviews for product:', productId);
+      console.log('📱 Fetching comments for post:', productId);
 
-      const { data: reviewsData, error: reviewsError } = await supabase
-        .from('reviews')
-        .select('id, rating, comment, created_at, customer_id')
-        .eq('business_id', productId)
-        .order('created_at', { ascending: false })
-        .limit(50);
+      // ✅ Use 'as any' to bypass TypeScript type checking for the comments table
+      const { data: commentsData, error: commentsError } = await (supabase
+        .from('comments' as any)
+        .select(`
+          *,
+          user:user_id (
+            id,
+            full_name,
+            avatar_url
+          )
+        `)
+        .eq('post_id', productId)
+        .is('parent_id', null)
+        .order('created_at', { ascending: false }) as any);
 
-      if (reviewsError) {
-        console.error('❌ Reviews fetch error:', reviewsError);
-        throw reviewsError;
+      if (commentsError) {
+        console.error('❌ Comments fetch error:', commentsError);
+        throw commentsError;
       }
 
-      console.log('📱 Reviews found:', reviewsData?.length || 0);
+      console.log('📱 Comments found:', commentsData?.length || 0);
 
-      if (!reviewsData || reviewsData.length === 0) {
-        setReviews([]);
-        setFilteredReviews([]);
-        setAverageRating(0);
-        setTotalReviews(0);
-        setRatingDistribution({});
+      if (!commentsData || commentsData.length === 0) {
+        setComments([]);
         setLoading(false);
         return;
       }
 
-      const customerIds = reviewsData
-        .map(r => r.customer_id)
-        .filter((id): id is string => id !== null && id !== undefined);
+      // Fetch replies for each comment
+      const commentsWithReplies = await Promise.all(
+        commentsData.map(async (comment: any) => {
+          const { data: repliesData, error: repliesError } = await (supabase
+            .from('comments' as any)
+            .select(`
+              *,
+              user:user_id (
+                id,
+                full_name,
+                avatar_url
+              )
+            `)
+            .eq('parent_id', comment.id)
+            .order('created_at', { ascending: true }) as any);
 
-      let customerMap: Record<string, string> = {};
-
-      if (customerIds.length > 0) {
-        try {
-          const { data: usersData, error: usersError } = await supabase
-            .from('users')
-            .select('id, phone_number')
-            .in('id', customerIds);
-
-          if (!usersError && usersData) {
-            customerMap = usersData.reduce((acc: Record<string, string>, user: any) => {
-              acc[user.id] = user.phone_number || 'Customer';
-              return acc;
-            }, {});
+          if (repliesError) {
+            console.error('❌ Replies fetch error:', repliesError);
+            return { ...comment, replies: [] };
           }
-        } catch (err) {
-          console.warn('⚠️ Could not fetch users:', err);
-        }
-      }
 
-      const formattedReviews: Review[] = reviewsData.map((item: any, index: number) => ({
-        id: item.id,
-        rating: item.rating,
-        comment: item.comment || 'No comment provided',
-        created_at: item.created_at,
-        customer_name: customerMap[item.customer_id] || `User ${index + 1}`,
-        is_verified: Math.random() > 0.3,
-        helpful_count: Math.floor(Math.random() * 50) + 1,
-        purchase_date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
-        images: Math.random() > 0.7 ? ['https://via.placeholder.com/100'] : [],
-      }));
+          return {
+            ...comment,
+            replies: repliesData || [],
+          };
+        })
+      );
 
-      setReviews(formattedReviews);
-      setFilteredReviews(formattedReviews);
-
-      const sum = formattedReviews.reduce((acc, r) => acc + r.rating, 0);
-      const avg = sum / formattedReviews.length;
-      setAverageRating(avg);
-      setTotalReviews(formattedReviews.length);
-
-      const distribution: RatingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      formattedReviews.forEach(r => {
-        if (distribution[r.rating] !== undefined) {
-          distribution[r.rating]++;
-        }
-      });
-      setRatingDistribution(distribution);
+      setComments(commentsWithReplies);
     } catch (error: any) {
-      console.error('❌ Error fetching reviews:', error);
-      setError(error.message || 'Failed to load reviews');
+      console.error('❌ Error fetching comments:', error);
+      setError(error.message || 'Failed to load comments');
     } finally {
       setLoading(false);
     }
@@ -189,52 +148,89 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
 
   useEffect(() => {
     if (visible && productId) {
-      fetchReviews();
+      fetchComments();
     }
-  }, [visible, productId, fetchReviews]);
+  }, [visible, productId, fetchComments]);
 
-  const applyFilter = useCallback((filterKey: string) => {
-    setActiveFilter(filterKey);
-    let filtered = [...reviews];
-
-    switch (filterKey) {
-      case 'photos':
-        filtered = filtered.filter(r => r.images && r.images.length > 0);
-        break;
-      case '5star':
-        filtered = filtered.filter(r => r.rating === 5);
-        break;
-      case '4star':
-        filtered = filtered.filter(r => r.rating === 4);
-        break;
-      case 'verified':
-        filtered = filtered.filter(r => r.is_verified);
-        break;
-      case 'helpful':
-        filtered = filtered.sort((a, b) => (b.helpful_count || 0) - (a.helpful_count || 0));
-        break;
-      case 'newest':
-        filtered = filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        break;
-      default:
-        break;
+  const handleSubmitComment = async () => {
+    if (!user) {
+      return;
     }
 
-    setFilteredReviews(filtered);
-  }, [reviews]);
+    if (!newComment.trim()) {
+      return;
+    }
 
-  const getBarWidth = (count: number) => {
-    const max = Math.max(...Object.values(ratingDistribution));
-    return max > 0 ? (count / max) * 100 : 0;
+    setIsSubmitting(true);
+
+    try {
+      const commentData: any = {
+        user_id: user.id,
+        post_id: productId,
+        content: newComment.trim(),
+        images: [],
+        is_approved: true,
+      };
+
+      if (replyTo) {
+        commentData.parent_id = replyTo.id;
+      }
+
+      const { data, error: insertError } = await (supabase
+        .from('comments' as any)
+        .insert(commentData)
+        .select(`
+          *,
+          user:user_id (
+            id,
+            full_name,
+            avatar_url
+          )
+        `)
+        .single() as any);
+
+      if (insertError) {
+        console.error('❌ Error posting comment:', insertError);
+        throw insertError;
+      }
+
+      if (data) {
+        if (replyTo) {
+          setComments(prev => prev.map(comment => 
+            comment.id === replyTo.id 
+              ? { ...comment, replies: [...(comment.replies || []), data] }
+              : comment
+          ));
+          setReplyTo(null);
+        } else {
+          setComments(prev => [data, ...prev]);
+        }
+        setNewComment('');
+      }
+
+      console.log('✅ Comment posted successfully');
+    } catch (error) {
+      console.error('❌ Error posting comment:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const renderStars = (rating: number, size: number = 14) => {
-    return '⭐'.repeat(Math.round(rating));
+  const handleReplyPress = (comment: Comment) => {
+    setReplyTo(replyTo?.id === comment.id ? null : comment);
   };
 
   const formatDate = (dateString: string) => {
     try {
       const date = new Date(dateString);
+      const now = new Date();
+      const diff = now.getTime() - date.getTime();
+      
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+      if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+      if (diff < 172800000) return 'Yesterday';
+      if (diff < 604800000) return `${Math.floor(diff / 86400000)}d`;
       return date.toLocaleDateString('en-UG', {
         year: 'numeric',
         month: 'short',
@@ -245,268 +241,169 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     }
   };
 
-  const handleSubmitReview = async () => {
-    if (userRating === 0 || !userComment.trim()) {
-      return;
-    }
+  const renderComment = ({ item, depth = 0 }: { item: Comment; depth?: number }) => {
+    const isReply = depth > 0;
+    const userFullName = item.user?.full_name || 'User';
+    const userAvatar = item.user?.avatar_url || null;
+    const initial = userFullName.charAt(0).toUpperCase();
 
-    setIsSubmitting(true);
-    try {
-      const newReview: Review = {
-        id: `temp-${Date.now()}`,
-        rating: userRating,
-        comment: userComment,
-        created_at: new Date().toISOString(),
-        customer_name: 'You',
-        is_verified: true,
-        helpful_count: 0,
-      };
-
-      const updatedReviews = [newReview, ...reviews];
-      setReviews(updatedReviews);
-      setFilteredReviews(updatedReviews);
-
-      const sum = updatedReviews.reduce((acc, r) => acc + r.rating, 0);
-      setAverageRating(sum / updatedReviews.length);
-      setTotalReviews(updatedReviews.length);
-
-      setUserRating(0);
-      setUserComment('');
-
-      console.log('✅ Review submitted successfully');
-    } catch (error) {
-      console.error('❌ Error submitting review:', error);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const renderReviewCard = ({ item }: { item: Review }) => (
-    <View style={styles.reviewCard}>
-      <View style={styles.reviewHeader}>
-        <View style={styles.userAvatar}>
-          <Text style={styles.userAvatarText}>
-            {item.customer_name.charAt(0).toUpperCase()}
-          </Text>
-        </View>
-        <View style={styles.userInfo}>
-          <View style={styles.userNameRow}>
-            <Text style={styles.userName}>{item.customer_name}</Text>
-            {item.is_verified && (
-              <View style={styles.verifiedBadge}>
-                <Text style={styles.verifiedText}>✓</Text>
-              </View>
+    return (
+      <View 
+        style={[
+          styles.commentCard,
+          isReply && styles.replyCard,
+          { marginLeft: isReply ? 24 : 0 }
+        ]}
+      >
+        <View style={styles.commentHeader}>
+          <View style={styles.userAvatar}>
+            {userAvatar ? (
+              <Image source={{ uri: userAvatar }} style={styles.userAvatarImage} />
+            ) : (
+              <Text style={styles.userAvatarText}>{initial}</Text>
             )}
           </View>
-          <Text style={styles.reviewDate}>{formatDate(item.created_at)}</Text>
+          <View style={styles.userInfo}>
+            <Text style={styles.userName}>{userFullName}</Text>
+            <Text style={styles.commentDate}>{formatDate(item.created_at)}</Text>
+          </View>
+          {item.is_edited && (
+            <Text style={styles.editedBadge}>Edited</Text>
+          )}
         </View>
-        <Text style={styles.reviewRating}>{renderStars(item.rating)}</Text>
+
+        <Text style={styles.commentContent}>{item.content}</Text>
+
+        {item.images && item.images.length > 0 && (
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.commentImages}
+          >
+            {item.images.map((img, i) => (
+              <Image key={i} source={{ uri: img }} style={styles.commentImage} />
+            ))}
+          </ScrollView>
+        )}
+
+        <View style={styles.commentFooter}>
+          <TouchableOpacity 
+            style={styles.replyButton}
+            onPress={() => handleReplyPress(item)}
+          >
+            <Ionicons name="chatbubble-outline" size={14} color="#8A8AAE" />
+            <Text style={styles.replyButtonText}>Reply</Text>
+          </TouchableOpacity>
+          
+          {item.helpful_count > 0 && (
+            <TouchableOpacity style={styles.helpfulButton}>
+              <Ionicons name="thumbs-up-outline" size={14} color="#8A8AAE" />
+              <Text style={styles.helpfulText}>{item.helpful_count}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {item.replies && item.replies.length > 0 && (
+          <View style={styles.repliesContainer}>
+            {item.replies.map((reply) => (
+              <View key={reply.id}>
+                {renderComment({ item: reply, depth: depth + 1 })}
+              </View>
+            ))}
+          </View>
+        )}
       </View>
-
-      {item.purchase_date && (
-        <Text style={styles.purchaseDate}>
-          Purchased: {formatDate(item.purchase_date)}
-        </Text>
-      )}
-
-      <Text style={styles.reviewComment}>{item.comment}</Text>
-
-      {item.images && item.images.length > 0 && (
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.reviewImages}
-        >
-          {item.images.map((img, i) => (
-            <Image key={i} source={{ uri: img }} style={styles.reviewImage} />
-          ))}
-        </ScrollView>
-      )}
-
-      <View style={styles.reviewFooter}>
-        <TouchableOpacity style={styles.helpfulButton}>
-          <Ionicons name="thumbs-up-outline" size={14} color="#8A8AAE" />
-          <Text style={styles.helpfulText}>Helpful ({item.helpful_count || 0})</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const AIInsightCard = ({ text }: { text: string }) => (
-    <View style={styles.aiInsightCard}>
-      <Ionicons name="sparkles" size={16} color="#4A7DFF" />
-      <Text style={styles.aiInsightText}>🤖 {text}</Text>
-    </View>
-  );
-
-  const getAIInsights = () => {
-    const insights = [
-      "87% of reviewers mention fast delivery",
-      "Most buyers recommend this for photography",
-      "Customers rate installation 4.9/5",
-      "94% of customers would buy again",
-      "Top mention: excellent value for money",
-    ];
-    return insights[Math.floor(Math.random() * insights.length)];
+    );
   };
 
+  const CommentInput = () => (
+    <View style={styles.commentInputContainer}>
+      <TextInput
+        style={styles.commentInput}
+        placeholder={replyTo ? `Reply to ${replyTo.user?.full_name || 'User'}...` : "Write a comment..."}
+        placeholderTextColor="#8A8AAE"
+        multiline
+        value={newComment}
+        onChangeText={setNewComment}
+        maxLength={500}
+      />
+      {replyTo && (
+        <TouchableOpacity 
+          style={styles.cancelReplyButton}
+          onPress={() => setReplyTo(null)}
+        >
+          <Text style={styles.cancelReplyText}>Cancel</Text>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity
+        style={[
+          styles.sendButton,
+          (!newComment.trim() || isSubmitting) && styles.sendButtonDisabled,
+        ]}
+        onPress={handleSubmitComment}
+        disabled={!newComment.trim() || isSubmitting}
+      >
+        <Ionicons 
+          name="send" 
+          size={20} 
+          color={newComment.trim() && !isSubmitting ? '#4A7DFF' : '#8A8AAE'} 
+        />
+      </TouchableOpacity>
+    </View>
+  );
+
   // ============================================================
-  // DESKTOP VIEW - Render content directly (no Modal wrapper)
+  // DESKTOP VIEW
   // ============================================================
   if (isDesktopView) {
     return (
       <View style={styles.desktopContainer}>
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopTitle}>
+            {productTitle ? `Comments on ${productTitle}` : 'Comments'}
+          </Text>
+          <Text style={styles.desktopCommentCount}>{comments.length} comments</Text>
+        </View>
+
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#4A7DFF" />
-            <Text style={styles.loadingText}>Loading reviews...</Text>
+            <Text style={styles.loadingText}>Loading comments...</Text>
           </View>
         ) : error ? (
           <View style={styles.errorContainer}>
             <Text style={styles.errorIcon}>⚠️</Text>
-            <Text style={styles.errorTitle}>Could not load reviews</Text>
+            <Text style={styles.errorTitle}>Could not load comments</Text>
             <Text style={styles.errorSubtext}>{error}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchReviews}>
+            <TouchableOpacity style={styles.retryButton} onPress={fetchComments}>
               <Text style={styles.retryButtonText}>Try Again</Text>
             </TouchableOpacity>
           </View>
         ) : (
-          <ScrollView 
-            ref={scrollViewRef}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.desktopScrollContent}
-          >
-            {/* Header */}
-            <View style={styles.desktopHeader}>
-              <Text style={styles.desktopTitle}>
-                {productTitle ? `Reviews for ${productTitle}` : 'Reviews'}
-              </Text>
-              <Text style={styles.desktopReviewCount}>{totalReviews} reviews</Text>
-            </View>
-
-            {/* Rating Summary */}
-            <View style={styles.ratingSummary}>
-              <View style={styles.ratingLeft}>
-                <Text style={styles.averageRating}>{averageRating.toFixed(1)}</Text>
-                <Text style={styles.stars}>{renderStars(averageRating, 18)}</Text>
-                <Text style={styles.totalReviews}>{totalReviews} reviews</Text>
-              </View>
-              <View style={styles.ratingRight}>
-                <Text style={styles.aiSummary}>🤖 {aiSummary}</Text>
-              </View>
-            </View>
-
-            {/* Rating Distribution */}
-            <View style={styles.distributionContainer}>
-              {[5, 4, 3, 2, 1].map((star) => (
-                <View key={star} style={styles.distributionRow}>
-                  <Text style={styles.distributionLabel}>{star}★</Text>
-                  <View style={styles.distributionBar}>
-                    <View 
-                      style={[
-                        styles.distributionFill,
-                        { width: `${getBarWidth(ratingDistribution[star] || 0)}%` }
-                      ]} 
-                    />
-                  </View>
-                  <Text style={styles.distributionCount}>
-                    {ratingDistribution[star] || 0}
-                  </Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Filter Chips */}
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              style={styles.filterContainer}
-              contentContainerStyle={styles.filterContent}
-            >
-              {filterOptions.map((filter) => (
-                <TouchableOpacity
-                  key={filter.key}
-                  style={[
-                    styles.filterChip,
-                    activeFilter === filter.key && styles.filterChipActive,
-                  ]}
-                  onPress={() => applyFilter(filter.key)}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      activeFilter === filter.key && styles.filterChipTextActive,
-                    ]}
-                  >
-                    {filter.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            {/* Write a Review */}
-            <View style={styles.writeReviewContainer}>
-              <Text style={styles.writeReviewTitle}>Write a Review</Text>
-              <View style={styles.starSelector}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <TouchableOpacity
-                    key={star}
-                    onPress={() => setUserRating(star)}
-                  >
-                    <Text style={[styles.starSelectorIcon, userRating >= star && styles.starSelectorActive]}>
-                      {userRating >= star ? '⭐' : '☆'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <TextInput
-                style={styles.reviewInput}
-                placeholder="Describe your experience..."
-                placeholderTextColor="#8A8AAE"
-                multiline
-                numberOfLines={3}
-                value={userComment}
-                onChangeText={setUserComment}
-              />
-              <View style={styles.reviewActions}>
-                <TouchableOpacity style={styles.attachButton}>
-                  <Ionicons name="camera-outline" size={20} color="#4A7DFF" />
-                  <Text style={styles.attachButtonText}>Attach Photos</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.postButton,
-                    (userRating === 0 || !userComment.trim() || isSubmitting) && styles.postButtonDisabled,
-                  ]}
-                  onPress={handleSubmitReview}
-                  disabled={userRating === 0 || !userComment.trim() || isSubmitting}
-                >
-                  <Text style={styles.postButtonText}>
-                    {isSubmitting ? 'Posting...' : 'Post Review'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* AI Insight */}
-            <AIInsightCard text={getAIInsights()} />
-
-            {/* Reviews List */}
+          <>
+            <CommentInput />
             <FlatList
-              data={filteredReviews}
-              renderItem={renderReviewCard}
+              data={comments}
+              renderItem={({ item }) => renderComment({ item, depth: 0 })}
               keyExtractor={(item, index) => `${item.id}-${index}`}
-              scrollEnabled={false}
-              contentContainerStyle={styles.reviewsList}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.commentsList}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="chatbubble-outline" size={48} color="#8A8AAE" />
+                  <Text style={styles.emptyTitle}>No comments yet</Text>
+                  <Text style={styles.emptySubtext}>Be the first to comment!</Text>
+                </View>
+              }
             />
-          </ScrollView>
+          </>
         )}
       </View>
     );
   }
 
   // ============================================================
-  // MOBILE VIEW - Use Modal
+  // MOBILE VIEW
   // ============================================================
   return (
     <Modal
@@ -515,167 +412,64 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.modalOverlay}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.modalOverlay}
+      >
         <View style={styles.modalContent}>
-          {/* Drag Indicator */}
           <View style={styles.dragIndicatorContainer}>
             <View style={styles.dragIndicator} />
           </View>
 
-          {/* Close Button */}
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <Ionicons name="close" size={24} color="#8A8AAE" />
           </TouchableOpacity>
 
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Comments</Text>
+            {productTitle && (
+              <Text style={styles.modalProductTitle} numberOfLines={1}>
+                {productTitle}
+              </Text>
+            )}
+            <Text style={styles.modalCommentCount}>{comments.length} comments</Text>
+          </View>
+
           {loading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#4A7DFF" />
-              <Text style={styles.loadingText}>Loading reviews...</Text>
+              <Text style={styles.loadingText}>Loading comments...</Text>
             </View>
           ) : error ? (
             <View style={styles.errorContainer}>
               <Text style={styles.errorIcon}>⚠️</Text>
-              <Text style={styles.errorTitle}>Could not load reviews</Text>
+              <Text style={styles.errorTitle}>Could not load comments</Text>
               <Text style={styles.errorSubtext}>{error}</Text>
-              <TouchableOpacity style={styles.retryButton} onPress={fetchReviews}>
+              <TouchableOpacity style={styles.retryButton} onPress={fetchComments}>
                 <Text style={styles.retryButtonText}>Try Again</Text>
               </TouchableOpacity>
             </View>
           ) : (
-            <ScrollView 
-              ref={scrollViewRef}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.scrollContent}
-            >
-              {/* Header */}
-              <View style={styles.header}>
-                <Text style={styles.title}>Reviews</Text>
-                {productTitle && (
-                  <Text style={styles.productTitle} numberOfLines={1}>
-                    {productTitle}
-                  </Text>
-                )}
-              </View>
-
-              {/* Rating Summary */}
-              <View style={styles.ratingSummary}>
-                <View style={styles.ratingLeft}>
-                  <Text style={styles.averageRating}>{averageRating.toFixed(1)}</Text>
-                  <Text style={styles.stars}>{renderStars(averageRating, 18)}</Text>
-                  <Text style={styles.totalReviews}>{totalReviews} reviews</Text>
-                </View>
-                <View style={styles.ratingRight}>
-                  <Text style={styles.aiSummary}>🤖 {aiSummary}</Text>
-                </View>
-              </View>
-
-              {/* Rating Distribution */}
-              <View style={styles.distributionContainer}>
-                {[5, 4, 3, 2, 1].map((star) => (
-                  <View key={star} style={styles.distributionRow}>
-                    <Text style={styles.distributionLabel}>{star}★</Text>
-                    <View style={styles.distributionBar}>
-                      <View 
-                        style={[
-                          styles.distributionFill,
-                          { width: `${getBarWidth(ratingDistribution[star] || 0)}%` }
-                        ]} 
-                      />
-                    </View>
-                    <Text style={styles.distributionCount}>
-                      {ratingDistribution[star] || 0}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              {/* Filter Chips */}
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.filterContainer}
-                contentContainerStyle={styles.filterContent}
-              >
-                {filterOptions.map((filter) => (
-                  <TouchableOpacity
-                    key={filter.key}
-                    style={[
-                      styles.filterChip,
-                      activeFilter === filter.key && styles.filterChipActive,
-                    ]}
-                    onPress={() => applyFilter(filter.key)}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        activeFilter === filter.key && styles.filterChipTextActive,
-                      ]}
-                    >
-                      {filter.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              {/* Write a Review */}
-              <View style={styles.writeReviewContainer}>
-                <Text style={styles.writeReviewTitle}>Write a Review</Text>
-                <View style={styles.starSelector}>
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <TouchableOpacity
-                      key={star}
-                      onPress={() => setUserRating(star)}
-                    >
-                      <Text style={[styles.starSelectorIcon, userRating >= star && styles.starSelectorActive]}>
-                        {userRating >= star ? '⭐' : '☆'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <TextInput
-                  style={styles.reviewInput}
-                  placeholder="Describe your experience..."
-                  placeholderTextColor="#8A8AAE"
-                  multiline
-                  numberOfLines={3}
-                  value={userComment}
-                  onChangeText={setUserComment}
-                />
-                <View style={styles.reviewActions}>
-                  <TouchableOpacity style={styles.attachButton}>
-                    <Ionicons name="camera-outline" size={20} color="#4A7DFF" />
-                    <Text style={styles.attachButtonText}>Attach Photos</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.postButton,
-                      (userRating === 0 || !userComment.trim() || isSubmitting) && styles.postButtonDisabled,
-                    ]}
-                    onPress={handleSubmitReview}
-                    disabled={userRating === 0 || !userComment.trim() || isSubmitting}
-                  >
-                    <Text style={styles.postButtonText}>
-                      {isSubmitting ? 'Posting...' : 'Post Review'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* AI Insight */}
-              <AIInsightCard text={getAIInsights()} />
-
-              {/* Reviews List */}
+            <>
               <FlatList
-                data={filteredReviews}
-                renderItem={renderReviewCard}
+                data={comments}
+                renderItem={({ item }) => renderComment({ item, depth: 0 })}
                 keyExtractor={(item, index) => `${item.id}-${index}`}
-                scrollEnabled={false}
-                contentContainerStyle={styles.reviewsList}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.commentsList}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Ionicons name="chatbubble-outline" size={48} color="#8A8AAE" />
+                    <Text style={styles.emptyTitle}>No comments yet</Text>
+                    <Text style={styles.emptySubtext}>Be the first to comment!</Text>
+                  </View>
+                }
               />
-            </ScrollView>
+              <CommentInput />
+            </>
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -688,9 +482,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#1A1A2E',
     paddingHorizontal: 12,
-  },
-  desktopScrollContent: {
-    paddingBottom: 20,
   },
   desktopHeader: {
     flexDirection: 'row',
@@ -706,12 +497,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  desktopReviewCount: {
+  desktopCommentCount: {
     color: '#8A8AAE',
     fontSize: 12,
   },
+
   // ============================================================
-  // MOBILE STYLES (Modal)
+  // MOBILE STYLES
   // ============================================================
   modalOverlay: {
     flex: 1,
@@ -723,8 +515,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     height: height * 0.85,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
   },
   dragIndicatorContainer: {
     alignItems: 'center',
@@ -744,6 +536,28 @@ const styles = StyleSheet.create({
     zIndex: 10,
     padding: 4,
   },
+  modalHeader: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  modalProductTitle: {
+    color: '#8A8AAE',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  modalCommentCount: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+
   // ============================================================
   // SHARED STYLES
   // ============================================================
@@ -790,276 +604,108 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  scrollContent: {
-    paddingBottom: 20,
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
   },
-  header: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 12,
-  },
-  title: {
+  emptyTitle: {
     color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
   },
-  productTitle: {
+  emptySubtext: {
     color: '#8A8AAE',
     fontSize: 14,
-    marginTop: 2,
+    marginTop: 4,
   },
-  ratingSummary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    gap: 12,
+
+  commentsList: {
+    paddingBottom: 8,
   },
-  ratingLeft: {
-    alignItems: 'center',
-  },
-  averageRating: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  stars: {
-    fontSize: 18,
-    marginVertical: 2,
-  },
-  totalReviews: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  ratingRight: {
-    flex: 1,
-  },
-  aiSummary: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  distributionContainer: {
+  commentCard: {
     backgroundColor: 'rgba(255,255,255,0.02)',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 12,
-  },
-  distributionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 3,
-  },
-  distributionLabel: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    width: 30,
-  },
-  distributionBar: {
-    flex: 1,
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 3,
-    marginHorizontal: 8,
-  },
-  distributionFill: {
-    height: '100%',
-    backgroundColor: '#F1C40F',
-    borderRadius: 3,
-  },
-  distributionCount: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    width: 30,
-    textAlign: 'right',
-  },
-  filterContainer: {
-    marginBottom: 12,
-  },
-  filterContent: {
-    gap: 8,
-  },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-    marginRight: 6,
-  },
-  filterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.2)',
-    borderColor: '#4A7DFF',
-  },
-  filterChipText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  filterChipTextActive: {
-    color: '#4A7DFF',
-  },
-  writeReviewContainer: {
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-  },
-  writeReviewTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
     marginBottom: 8,
   },
-  starSelector: {
-    flexDirection: 'row',
-    gap: 4,
-    marginBottom: 8,
-  },
-  starSelectorIcon: {
-    fontSize: 28,
-    color: '#8A8AAE',
-  },
-  starSelectorActive: {
-    color: '#F1C40F',
-  },
-  reviewInput: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 8,
-    padding: 10,
-    color: '#FFFFFF',
-    fontSize: 14,
-    minHeight: 60,
-    textAlignVertical: 'top',
-    marginBottom: 8,
-  },
-  reviewActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  attachButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  attachButtonText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-  },
-  postButton: {
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
+  replyCard: {
+    backgroundColor: 'rgba(255,255,255,0.01)',
+    borderLeftWidth: 2,
+    borderLeftColor: 'rgba(74,125,255,0.3)',
     borderRadius: 8,
   },
-  postButtonDisabled: {
-    opacity: 0.4,
-  },
-  postButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  aiInsightCard: {
+  commentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 125, 255, 0.05)',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(74, 125, 255, 0.1)',
-  },
-  aiInsightText: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    marginLeft: 8,
-    flex: 1,
-  },
-  reviewsList: {
-    paddingBottom: 20,
-  },
-  reviewCard: {
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-  },
-  reviewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   userAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(74, 125, 255, 0.2)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(74,125,255,0.15)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
+    overflow: 'hidden',
+  },
+  userAvatarImage: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
   },
   userAvatarText: {
     color: '#4A7DFF',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
   },
   userInfo: {
     flex: 1,
   },
-  userNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   userName: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
   },
-  verifiedBadge: {
-    backgroundColor: '#4A7DFF',
-    borderRadius: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    marginLeft: 6,
-  },
-  verifiedText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: 'bold',
-  },
-  reviewDate: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 1,
-  },
-  reviewRating: {
-    fontSize: 14,
-  },
-  purchaseDate: {
+  commentDate: {
     color: '#8A8AAE',
     fontSize: 11,
-    marginBottom: 4,
   },
-  reviewComment: {
+  editedBadge: {
     color: '#8A8AAE',
+    fontSize: 10,
+    marginLeft: 8,
+  },
+  commentContent: {
+    color: '#E8ECF4',
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 6,
   },
-  reviewImages: {
+  commentImages: {
     marginBottom: 6,
   },
-  reviewImage: {
+  commentImage: {
     width: 60,
     height: 60,
     borderRadius: 6,
     marginRight: 6,
   },
-  reviewFooter: {
+  commentFooter: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+  },
+  replyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  replyButtonText: {
+    color: '#8A8AAE',
+    fontSize: 12,
   },
   helpfulButton: {
     flexDirection: 'row',
@@ -1069,5 +715,48 @@ const styles = StyleSheet.create({
   helpfulText: {
     color: '#8A8AAE',
     fontSize: 12,
+  },
+  repliesContainer: {
+    marginTop: 6,
+  },
+
+  commentInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: '#1A2A4F',
+  },
+  commentInput: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    color: '#FFFFFF',
+    fontSize: 14,
+    maxHeight: 80,
+    minHeight: 36,
+  },
+  cancelReplyButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  cancelReplyText: {
+    color: '#E74C3C',
+    fontSize: 12,
+  },
+  sendButton: {
+    padding: 8,
+    borderRadius: 20,
+    minWidth: 36,
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    opacity: 0.4,
   },
 });

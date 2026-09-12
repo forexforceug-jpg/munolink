@@ -1,6 +1,6 @@
 // src/features/feed/components/DirectionsBottomSheet.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,19 +9,17 @@ import {
   Modal,
   ScrollView,
   Dimensions,
-  Image,
   Linking,
   Platform,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Opportunity } from '../../../services/feed.service';
 
 const { width, height } = Dimensions.get('window');
 
 interface DirectionsBottomSheetProps {
-  visible?: boolean;  // Made optional for desktop view
+  visible?: boolean;
   opportunity: Opportunity | null;
   onClose: () => void;
   isDesktopView?: boolean;
@@ -30,7 +28,7 @@ interface DirectionsBottomSheetProps {
 
 interface TransportOption {
   id: string;
-  icon: string;
+  icon: any;
   label: string;
   description: string;
   color: string;
@@ -47,6 +45,7 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
   const [loading, setLoading] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [distance, setDistance] = useState<string>('Calculating...');
+  const [distanceKm, setDistanceKm] = useState<number>(0);
 
   useEffect(() => {
     if ((visible || isDesktopView) && opportunity) {
@@ -54,22 +53,41 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
     }
   }, [visible, isDesktopView, opportunity]);
 
-  const calculateDistance = () => {
+  const calculateDistance = useCallback(() => {
     setLoading(true);
+    
+    // If opportunity has distance from feedService, use it
+    if (opportunity?.distance !== undefined && opportunity.distance > 0) {
+      const dist = opportunity.distance;
+      setDistanceKm(dist);
+      if (dist < 1) {
+        setDistance(`${Math.round(dist * 1000)}m`);
+      } else if (dist < 10) {
+        setDistance(`${dist.toFixed(1)}km`);
+      } else {
+        setDistance(`${Math.round(dist)}km`);
+      }
+      setLoading(false);
+      return;
+    }
+    
+    // Fallback: Use area or random distance
     setTimeout(() => {
       const distances = ['1.2 km', '2.5 km', '0.8 km', '3.1 km', '1.8 km'];
       const randomDistance = distances[Math.floor(Math.random() * distances.length)];
       setDistance(randomDistance);
+      setDistanceKm(parseFloat(randomDistance));
       setLoading(false);
     }, 800);
-  };
+  }, [opportunity]);
 
-  const openMaps = (provider: 'google' | 'apple' | 'waze') => {
+  const openMaps = useCallback((provider: 'google' | 'apple' | 'waze') => {
     if (!opportunity) return;
 
-    const destination = encodeURIComponent(
-      `${opportunity.shopName}, ${opportunity.area || 'Jinja, Uganda'}`
-    );
+    // Use userFullName as destination name, fallback to area
+    const destinationName = opportunity.userFullName || 'Location';
+    const destinationArea = opportunity.area || 'Jinja, Uganda';
+    const destination = encodeURIComponent(`${destinationName}, ${destinationArea}`);
     
     let url = '';
 
@@ -90,46 +108,51 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
     setSelectedOption(provider);
     
     Linking.openURL(url).catch(() => {
+      // Fallback to Google Maps web
       Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`);
     });
-  };
+  }, [opportunity]);
 
-  const getTransportOptions = (): TransportOption[] => [
-    {
-      id: 'driving',
-      icon: 'car-outline',
-      label: 'Driving',
-      description: `~${distance}`,
-      color: '#4A7DFF',
-      action: () => openMaps('google'),
-    },
-    {
-      id: 'walking',
-      icon: 'walk-outline',
-      label: 'Walking',
-      description: `~${parseFloat(distance) * 3} min`,
-      color: '#2ECC71',
-      action: () => openMaps('google'),
-    },
-    {
-      id: 'transit',
-      icon: 'bus-outline',
-      label: 'Public Transit',
-      description: 'Available nearby',
-      color: '#F1C40F',
-      action: () => openMaps('google'),
-    },
-    {
-      id: 'bicycle',
-      icon: 'bicycle-outline',
-      label: 'Bicycle',
-      description: `~${parseFloat(distance) * 1.5} min`,
-      color: '#E67E22',
-      action: () => openMaps('google'),
-    },
-  ];
+  const getTransportOptions = useCallback((): TransportOption[] => {
+    const distanceNum = distanceKm || parseFloat(distance) || 1;
+    
+    return [
+      {
+        id: 'driving',
+        icon: 'car-outline',
+        label: 'Driving',
+        description: `~${distance}`,
+        color: '#4A7DFF',
+        action: () => openMaps('google'),
+      },
+      {
+        id: 'walking',
+        icon: 'walk-outline',
+        label: 'Walking',
+        description: `~${Math.round(distanceNum * 12)} min`,
+        color: '#2ECC71',
+        action: () => openMaps('google'),
+      },
+      {
+        id: 'transit',
+        icon: 'bus-outline',
+        label: 'Public Transit',
+        description: 'Available nearby',
+        color: '#F1C40F',
+        action: () => openMaps('google'),
+      },
+      {
+        id: 'bicycle',
+        icon: 'bicycle-outline',
+        label: 'Bicycle',
+        description: `~${Math.round(distanceNum * 4)} min`,
+        color: '#E67E22',
+        action: () => openMaps('google'),
+      },
+    ];
+  }, [distance, distanceKm, openMaps]);
 
-  const getMapAppOptions = (): TransportOption[] => [
+  const getMapAppOptions = useCallback((): TransportOption[] => [
     {
       id: 'google_maps',
       icon: 'logo-google',
@@ -154,10 +177,13 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
       color: '#33CCFF',
       action: () => openMaps('waze'),
     },
-  ];
+  ], [openMaps]);
 
   const transportOptions = getTransportOptions();
   const mapAppOptions = getMapAppOptions();
+
+  const displayName = opportunity?.userFullName || 'User';
+  const displayArea = opportunity?.area || 'Jinja, Uganda';
 
   // ============================================================
   // DESKTOP VIEW
@@ -180,17 +206,17 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
             <View style={styles.shopInfoCard}>
               <View style={styles.shopIconContainer}>
                 <Text style={styles.shopIconText}>
-                  {opportunity.shopName?.charAt(0).toUpperCase() || 'S'}
+                  {displayName.charAt(0).toUpperCase()}
                 </Text>
               </View>
               <View style={styles.shopInfoContent}>
-                <Text style={styles.shopName}>{opportunity.shopName}</Text>
+                <Text style={styles.shopName}>{displayName}</Text>
                 <Text style={styles.shopAddress}>
-                  {opportunity.area || 'Jinja, Uganda'}
+                  {displayArea}
                 </Text>
                 <View style={styles.distanceBadge}>
                   <Ionicons name="location-outline" size={12} color="#4A7DFF" />
-                  <Text style={styles.distanceText}>{distance}</Text>
+                  <Text style={styles.distanceText}>{loading ? 'Calculating...' : distance}</Text>
                 </View>
               </View>
             </View>
@@ -207,7 +233,7 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
                   onPress={option.action}
                 >
                   <View style={[styles.optionIconContainer, { backgroundColor: option.color + '20' }]}>
-                    <Ionicons name={option.icon as any} size={24} color={option.color} />
+                    <Ionicons name={option.icon} size={24} color={option.color} />
                   </View>
                   <Text style={styles.optionLabel}>{option.label}</Text>
                   <Text style={styles.optionDescription}>{option.description}</Text>
@@ -224,7 +250,7 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
                   onPress={app.action}
                 >
                   <View style={[styles.mapAppIconContainer, { backgroundColor: app.color + '20' }]}>
-                    <Ionicons name={app.icon as any} size={24} color={app.color} />
+                    <Ionicons name={app.icon} size={24} color={app.color} />
                   </View>
                   <Text style={styles.mapAppLabel}>{app.label}</Text>
                   <Text style={styles.mapAppDescription}>{app.description}</Text>
@@ -277,20 +303,20 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>📍 Directions</Text>
                 <Text style={styles.modalSubtitle}>
-                  Get directions to {opportunity.shopName}
+                  Get directions to {displayName}
                 </Text>
               </View>
 
               <View style={styles.shopInfoCard}>
                 <View style={styles.shopIconContainer}>
                   <Text style={styles.shopIconText}>
-                    {opportunity.shopName?.charAt(0).toUpperCase() || 'S'}
+                    {displayName.charAt(0).toUpperCase()}
                   </Text>
                 </View>
                 <View style={styles.shopInfoContent}>
-                  <Text style={styles.shopName}>{opportunity.shopName}</Text>
+                  <Text style={styles.shopName}>{displayName}</Text>
                   <Text style={styles.shopAddress}>
-                    {opportunity.area || 'Jinja, Uganda'}
+                    {displayArea}
                   </Text>
                   {loading ? (
                     <View style={styles.loadingDistance}>
@@ -318,7 +344,7 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
                     onPress={option.action}
                   >
                     <View style={[styles.optionIconContainer, { backgroundColor: option.color + '20' }]}>
-                      <Ionicons name={option.icon as any} size={24} color={option.color} />
+                      <Ionicons name={option.icon} size={24} color={option.color} />
                     </View>
                     <Text style={styles.optionLabel}>{option.label}</Text>
                     <Text style={styles.optionDescription}>{option.description}</Text>
@@ -335,7 +361,7 @@ export const DirectionsBottomSheet: React.FC<DirectionsBottomSheetProps> = ({
                     onPress={app.action}
                   >
                     <View style={[styles.mapAppIconContainer, { backgroundColor: app.color + '20' }]}>
-                      <Ionicons name={app.icon as any} size={24} color={app.color} />
+                      <Ionicons name={app.icon} size={24} color={app.color} />
                     </View>
                     <Text style={styles.mapAppLabel}>{app.label}</Text>
                     <Text style={styles.mapAppDescription}>{app.description}</Text>

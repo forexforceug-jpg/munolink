@@ -4,10 +4,11 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { Alert } from 'react-native';
+import { Alert, Modal as RNModal } from 'react-native';
+import { supabase } from '../../lib/supabase';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { SceneEngine, OpportunityFormatter, SceneRenderer } from '../opportunity';
+import { SceneRenderer, BehavioralEvent } from '../opportunity/renderer/SceneRenderer';
 import { GuestPromptCard } from './components/GuestPromptCard';
 import {
   View,
@@ -28,19 +29,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { FloatingActionRail } from './components/FloatingActionRail';
 import { useFeedStore } from '../../store/feedStore';
-import { feedService, Opportunity as RawOpportunity } from '../../services/feed.service';
+import { feedService, Opportunity } from '../../services/feed.service';
 import { BottomSheetModal, BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { ReviewsBottomSheet } from './components/ReviewsBottomSheet';
 import { AIBottomSheet } from './components/AIBottomSheet';
 import { DirectionsBottomSheet } from './components/DirectionsBottomSheet';
-import { SimpleDetailsModal } from './components/SimpleDetailsModal';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { recommendationService } from '../../services/recommendation.service';
 import { mapItemType } from '../../utils/typeHelpers';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
-import { locationService } from '../../services/location.service';
+import { locationService, UserLocation } from '../../services/location.service';
+import { LocationPicker } from './components/LocationPicker';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -64,17 +65,16 @@ const FEATURED_COUNT = 14;
 const GUEST_PROMPT_THRESHOLD = 3;
 const VIEWABILITY_CONFIG: ViewabilityConfig = {
   itemVisiblePercentThreshold: 50,
-  minimumViewTime: 300, // ✅ Increased to prevent rapid firing
+  minimumViewTime: 300,
 };
 
 // ============================================================
-// 🎨 LOADING SKELETON COMPONENTS (Inline)
+// 🎨 LOADING SKELETON COMPONENTS
 // ============================================================
 
-// Shimmer Animation Hook
 const useShimmer = () => {
   const shimmer = useSharedValue(0);
-  
+
   useEffect(() => {
     shimmer.value = withRepeat(
       withSequence(
@@ -85,16 +85,16 @@ const useShimmer = () => {
       true
     );
   }, []);
-  
+
   return shimmer;
 };
 
 // Skeleton Card Component
 const FeedSkeletonCard: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false }) => {
   const shimmer = useShimmer();
-  
+
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: 0.3 + (shimmer.value * 0.4),
+    opacity: 0.3 + shimmer.value * 0.4,
   }));
 
   const cardWidth = isDesktop ? 420 : screenWidth;
@@ -102,10 +102,7 @@ const FeedSkeletonCard: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false
 
   return (
     <View style={[styles.skeletonCard, { width: cardWidth, height: cardHeight }]}>
-      {/* Background */}
       <View style={styles.skeletonBackground} />
-      
-      {/* Shimmer Overlay */}
       <Animated.View style={[styles.skeletonShimmerOverlay, animatedStyle]}>
         <LinearGradient
           colors={[
@@ -118,41 +115,28 @@ const FeedSkeletonCard: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false
           style={styles.skeletonShimmerGradient}
         />
       </Animated.View>
-
-      {/* Content Placeholders */}
       <View style={styles.skeletonContent}>
-        {/* Image Placeholder */}
         <View style={styles.skeletonImage}>
           <View style={styles.skeletonImageShimmer} />
         </View>
-
-        {/* Title Placeholder */}
         <View style={styles.skeletonTitleContainer}>
           <View style={styles.skeletonTitle} />
           <View style={[styles.skeletonTitle, { width: '60%' }]} />
         </View>
-
-        {/* Price & Rating Placeholder */}
         <View style={styles.skeletonPriceContainer}>
           <View style={[styles.skeletonPrice, { width: 120 }]} />
           <View style={[styles.skeletonRating, { width: 80 }]} />
         </View>
-
-        {/* Shop Info Placeholder */}
         <View style={styles.skeletonShopContainer}>
           <View style={styles.skeletonShopIcon} />
           <View style={[styles.skeletonShopName, { width: 100 }]} />
         </View>
-
-        {/* Bottom Action Buttons Placeholder */}
         <View style={styles.skeletonActionContainer}>
           <View style={styles.skeletonActionButton} />
           <View style={styles.skeletonActionButton} />
           <View style={styles.skeletonActionButton} />
         </View>
       </View>
-
-      {/* Floating Action Rail Placeholder */}
       <View style={[styles.skeletonRail, isDesktop && styles.skeletonRailDesktop]}>
         <View style={styles.skeletonRailButton} />
         <View style={styles.skeletonRailButton} />
@@ -160,8 +144,6 @@ const FeedSkeletonCard: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false
         <View style={styles.skeletonRailButton} />
         <View style={styles.skeletonRailButton} />
       </View>
-
-      {/* Desktop Navigation Arrows Placeholder */}
       {isDesktop && (
         <View style={styles.skeletonNavArrows}>
           <View style={styles.skeletonNavArrow} />
@@ -173,9 +155,9 @@ const FeedSkeletonCard: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false
 };
 
 // Main Feed Skeleton
-const FeedSkeleton: React.FC<{ count?: number; isDesktop?: boolean }> = ({ 
-  count = 1, 
-  isDesktop = false 
+const FeedSkeleton: React.FC<{ count?: number; isDesktop?: boolean }> = ({
+  count = 1,
+  isDesktop = false,
 }) => {
   return (
     <View style={styles.skeletonContainer}>
@@ -189,26 +171,22 @@ const FeedSkeleton: React.FC<{ count?: number; isDesktop?: boolean }> = ({
 // List Skeleton (with Top Bar)
 const FeedListSkeleton: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false }) => {
   const shimmer = useShimmer();
-  
+
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: 0.3 + (shimmer.value * 0.4),
+    opacity: 0.3 + shimmer.value * 0.4,
   }));
 
-  // Don't show top bar on desktop (ResponsiveLayout handles it)
   if (isDesktop) {
     return <FeedSkeleton isDesktop={true} />;
   }
 
   return (
     <View style={styles.skeletonListContainer}>
-      {/* Top Bar Skeleton */}
       <View style={styles.skeletonTopBar}>
         <View style={styles.skeletonLogo} />
         <View style={styles.skeletonLocation} />
         <View style={styles.skeletonSearch} />
       </View>
-
-      {/* Shimmer on Top Bar */}
       <Animated.View style={[styles.skeletonTopBarShimmer, animatedStyle]}>
         <LinearGradient
           colors={[
@@ -221,8 +199,6 @@ const FeedListSkeleton: React.FC<{ isDesktop?: boolean }> = ({ isDesktop = false
           style={styles.skeletonShimmerGradient}
         />
       </Animated.View>
-
-      {/* Main Content Skeleton */}
       <FeedSkeletonCard isDesktop={false} />
     </View>
   );
@@ -240,17 +216,19 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
 
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
-
-  // Location state
+  // Location state with picker
   const [userLocation, setUserLocation] = useState<string>('Detecting...');
   const [isLocationLoading, setIsLocationLoading] = useState(true);
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<UserLocation | null>(null);
+  const [selectedLocationLabel, setSelectedLocationLabel] = useState<string>('');
 
   // Track saved items per opportunity
   const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
 
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [selectedProductTitle, setSelectedProductTitle] = useState<string>('');
-  const [selectedOpportunity, setSelectedOpportunity] = useState<RawOpportunity | null>(null);
+  const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
@@ -262,9 +240,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const [contextPanelView, setContextPanelView] = useState<'details' | 'reviews' | 'directions' | null>(null);
   const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false);
   const [hasAppliedRecommendations, setHasAppliedRecommendations] = useState(false);
-
-  // ✅ Track if we've already tracked the current view to prevent duplicates
   const trackedViewRef = useRef<string>('');
+
+  // ✅ NEW: Track opportunity open time for accurate close event
+  const oppOpenTimeRef = useRef<number>(Date.now());
+  const lastOpenOpportunityIdRef = useRef<string | null>(null);
 
   const {
     opportunities,
@@ -277,12 +257,16 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     setError,
   } = useFeedStore();
 
+  // ✅ FIX: Use queryFn with proper signature - wrap in arrow function
   const { data, isLoading: queryLoading, error: queryError } = useQuery({
     queryKey: ['opportunities'],
-    queryFn: feedService.getOpportunities,
+    queryFn: () => feedService.getOpportunities(),
   });
 
-  // --- Get Real Location ---
+  // ============================================================
+  // LOCATION HANDLING
+  // ============================================================
+
   useEffect(() => {
     const getLocation = async () => {
       try {
@@ -291,18 +275,84 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         if (location) {
           const locationString = locationService.formatLocation(location);
           setUserLocation(locationString);
+          setSelectedLocation(location);
+          setSelectedLocationLabel(locationString);
         } else {
-          setUserLocation('Jinja, Uganda');
+          const defaultLoc = 'Jinja, Uganda';
+          setUserLocation(defaultLoc);
+          setSelectedLocationLabel(defaultLoc);
         }
       } catch (error) {
         console.error('Error getting location:', error);
         setUserLocation('Jinja, Uganda');
+        setSelectedLocationLabel('Jinja, Uganda');
       } finally {
         setIsLocationLoading(false);
       }
     };
     getLocation();
   }, []);
+
+  const getLocationDisplay = useCallback(() => {
+    if (isLocationLoading) {
+      return 'Detecting...';
+    }
+
+    if (selectedLocation) {
+      const details = locationService.getDetailedLocationDisplay(selectedLocation);
+      return details.primary || userLocation;
+    }
+
+    return userLocation || 'Jinja, Uganda';
+  }, [isLocationLoading, selectedLocation, userLocation]);
+
+  const handleLocationSelect = useCallback(
+    (location: UserLocation | null, label: string) => {
+      console.log('📍 Location selected:', label);
+
+      if (location) {
+        setSelectedLocation(location);
+        setSelectedLocationLabel(label);
+        setUserLocation(label);
+
+        if (data && data.length > 0) {
+          setIsApplyingRecommendations(true);
+          setHasAppliedRecommendations(false);
+
+          const applyWithLocation = async () => {
+            try {
+              let result: Opportunity[] = [];
+
+              if (user?.id) {
+                result = await recommendationService.getPersonalizedRecommendations(
+                  data,
+                  user.id,
+                  location
+                );
+              } else {
+                result = recommendationService.getNewUserRecommendations(data, location);
+              }
+
+              setOpportunities(result);
+              setHasAppliedRecommendations(true);
+            } catch (error) {
+              console.error('Error refreshing recommendations:', error);
+              setOpportunities(data);
+            } finally {
+              setIsApplyingRecommendations(false);
+            }
+          };
+
+          applyWithLocation();
+        }
+      } else {
+        setUserLocation(label);
+        setSelectedLocationLabel(label);
+        setSelectedLocation(null);
+      }
+    },
+    [data, user?.id, setOpportunities]
+  );
 
   // --- Memoized Values ---
   const uniqueOpportunities = useMemo(() => {
@@ -334,13 +384,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     setLoading(queryLoading);
   }, [queryError, queryLoading, setError, setLoading]);
 
-  // Reset recommendation flag when data changes
   useEffect(() => {
     setHasAppliedRecommendations(false);
-    trackedViewRef.current = ''; // Reset tracked view when data changes
+    trackedViewRef.current = '';
   }, [data]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       setHasAppliedRecommendations(false);
@@ -353,7 +401,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       const applyRecommendations = async () => {
         setIsApplyingRecommendations(true);
         try {
-          let result: RawOpportunity[] = [];
+          let result: Opportunity[] = [];
 
           if (user?.id) {
             console.log('👤 Getting personalized recommendations for user:', user.id);
@@ -361,13 +409,9 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
 
             if (result.length > 0) {
               for (const item of result.slice(0, 3)) {
-                // ✅ Silent tracking - don't await to avoid blocking
-                recommendationService.trackInteraction(
-                  user.id,
-                  item.id,
-                  'view',
-                  mapItemType(item.type)
-                ).catch(() => {});
+                recommendationService
+                  .trackInteraction(user.id, item.id, 'view', mapItemType(item.type))
+                  .catch(() => {});
               }
             }
           } else {
@@ -390,12 +434,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     }
   }, [data, user?.id, isApplyingRecommendations, hasAppliedRecommendations, setOpportunities]);
 
-  // --- Track View - Only track when opportunity changes ---
+  // --- Track View ---
   const trackOpportunityView = useCallback(
-    async (opportunity: RawOpportunity) => {
-      // ✅ Skip if already tracked this opportunity
+    async (opportunity: Opportunity) => {
       if (trackedViewRef.current === opportunity.id) return;
-      
+
       if (user?.id) {
         try {
           trackedViewRef.current = opportunity.id;
@@ -406,7 +449,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             mapItemType(opportunity.type)
           );
         } catch (error) {
-          // Silently fail - don't break the UI
           if (__DEV__) {
             console.log('⚠️ Tracking view failed:', error);
           }
@@ -423,20 +465,60 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     }
   }, [swipeCount, isAuthenticated, isGuest]);
 
-  // --- Viewable Items Handler - Fixed to prevent duplicate tracking ---
-  const viewableItemsChangedRef = useRef<((info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => void) | null>(null);
+  // ============================================================
+  // ✅ FIX: Viewable Items Handler — now owns opportunity_open/close tracking
+  // ============================================================
+
+  const viewabilityConfigRef = useRef(VIEWABILITY_CONFIG);
+
+  const onViewableItemsChangedRef = useRef<
+    | ((info: {
+        viewableItems: ViewToken<Opportunity>[];
+        changed: ViewToken<Opportunity>[];
+      }) => void)
+    | null
+  >(null);
 
   useEffect(() => {
-    viewableItemsChangedRef.current = (info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => {
+    onViewableItemsChangedRef.current = (info: {
+      viewableItems: ViewToken<Opportunity>[];
+      changed: ViewToken<Opportunity>[];
+    }) => {
       const { viewableItems } = info;
       if (!viewableItems || viewableItems.length === 0) return;
 
       const firstItem = viewableItems[0];
       const index = firstItem.index;
-      
+
       if (index === null || index === undefined) return;
-      if (index === currentIndex) return; // ✅ Skip if same index
+      if (index === currentIndex) return;
       if (index < 0 || index >= uniqueOpportunities.length) return;
+
+      const nextOpp = uniqueOpportunities[index];
+      const prevOpp = uniqueOpportunities[currentIndex];
+
+      // ✅ Emit opportunity_close for the one we're leaving
+      if (prevOpp && lastOpenOpportunityIdRef.current === prevOpp.id) {
+        const timeSpent = Date.now() - oppOpenTimeRef.current;
+        const closeEvent: BehavioralEvent = {
+          type: 'opportunity_close',
+          timeSpent,
+        };
+        if (__DEV__) console.log('📊 Behavioral Event:', closeEvent);
+      }
+
+      // ✅ Emit opportunity_open for the one we're entering
+      if (nextOpp) {
+        oppOpenTimeRef.current = Date.now();
+        lastOpenOpportunityIdRef.current = nextOpp.id;
+        const openEvent: BehavioralEvent = {
+          type: 'opportunity_open',
+          sceneIndex: 0,
+          sceneType: 'media',
+          source: 'swipe',
+        };
+        if (__DEV__) console.log('📊 Behavioral Event:', openEvent);
+      }
 
       setCurrentIndex(index);
 
@@ -444,22 +526,50 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         setSwipeCount((prev) => prev + 1);
       }
 
-      const item = uniqueOpportunities[index];
-      if (item) {
-        trackOpportunityView(item);
+      if (nextOpp) {
+        trackOpportunityView(nextOpp);
       }
       setContextPanelView(null);
     };
-  }, [currentIndex, uniqueOpportunities, isAuthenticated, isGuest, trackOpportunityView, setCurrentIndex]);
+  }, [
+    currentIndex,
+    uniqueOpportunities,
+    isAuthenticated,
+    isGuest,
+    trackOpportunityView,
+    setCurrentIndex,
+  ]);
 
   const handleViewableItemsChanged = useCallback(
-    (info: { viewableItems: ViewToken<RawOpportunity>[]; changed: ViewToken<RawOpportunity>[] }) => {
-      if (viewableItemsChangedRef.current) {
-        viewableItemsChangedRef.current(info);
+    (info: {
+      viewableItems: ViewToken<Opportunity>[];
+      changed: ViewToken<Opportunity>[];
+    }) => {
+      if (onViewableItemsChangedRef.current) {
+        onViewableItemsChangedRef.current(info);
       }
     },
     []
   );
+
+  // ✅ NEW: Fire initial opportunity_open once the feed first renders
+  useEffect(() => {
+    if (uniqueOpportunities.length > 0 && lastOpenOpportunityIdRef.current === null) {
+      const firstOpp = uniqueOpportunities[currentIndex];
+      if (firstOpp) {
+        lastOpenOpportunityIdRef.current = firstOpp.id;
+        oppOpenTimeRef.current = Date.now();
+        if (__DEV__) {
+          console.log('📊 Behavioral Event:', {
+            type: 'opportunity_open',
+            sceneIndex: 0,
+            sceneType: 'media',
+            source: 'tap',
+          });
+        }
+      }
+    }
+  }, [uniqueOpportunities, currentIndex]);
 
   // --- Action Handlers ---
   const handleReviewsPress = useCallback(
@@ -478,7 +588,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   );
 
   const handleSharePress = useCallback(
-    async (opportunity: RawOpportunity) => {
+    async (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       try {
         if (user?.id) {
@@ -489,7 +599,10 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             mapItemType(opportunity.type)
           );
         }
-        const message = `🛍️ Check out ${opportunity.title}\n\n🏪 ${opportunity.shopName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${opportunity.area || 'Available nearby'}\n\nDownload Munolink to discover more!`;
+        const userDisplayName = opportunity.userFullName || 'User';
+        const message = `🛍️ Check out ${opportunity.title}\n\n👤 ${userDisplayName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${
+          opportunity.area || 'Available nearby'
+        }\n\nDownload Munolink to discover more!`;
         await Share.share({
           message: message,
           title: opportunity.title,
@@ -501,26 +614,14 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     [user?.id]
   );
 
-  const handleDirectionsPress = useCallback(
-    (shopName: string, area: string) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      console.log(`📍 Directions to ${shopName} in ${area}`);
-
-      const currentOpportunity = uniqueOpportunities[currentIndex];
-
-      if (isDesktop) {
-        setContextPanelView('directions');
-        setSelectedOpportunity(currentOpportunity);
-      } else {
-        setSelectedOpportunity(currentOpportunity);
-        setShowDirectionsModal(true);
-      }
-    },
-    [isDesktop, uniqueOpportunities, currentIndex]
-  );
+  const handleDirectionsPress = useCallback((userName: string, area: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    console.log(`📍 Directions to ${userName} in ${area}`);
+    setShowDirectionsModal(true);
+  }, []);
 
   const handleAIPress = useCallback(
-    (opportunity: RawOpportunity) => {
+    (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       console.log('🤖 AI Pressed for opportunity:', opportunity.title);
       setSelectedOpportunity(opportunity);
@@ -552,7 +653,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   }, []);
 
   const handleShowMorePress = useCallback(
-    (opportunity: RawOpportunity) => {
+    (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setSelectedOpportunity(opportunity);
 
@@ -566,154 +667,101 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   );
 
   const handleLovePress = useCallback(
-    (opportunity: RawOpportunity, isLoved: boolean) => {
+    (opportunity: Opportunity, isLoved: boolean) => {
       if (!isAuthenticated) {
-        Alert.alert(
-          'Join Munolink',
-          'Create a free account to save opportunities.',
-          [
-            { text: 'Continue Browsing', style: 'cancel' },
-            { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-          ]
-        );
+        Alert.alert('🔒 Join Munolink', 'Create a free account to save opportunities.', [
+          { text: 'Continue Browsing', style: 'cancel' },
+          { text: 'Join Now', onPress: () => navigation.navigate('Join') },
+        ]);
         return;
       }
       if (user?.id && isLoved) {
-        setSavedItemsMap(prev => ({
+        setSavedItemsMap((prev) => ({
           ...prev,
-          [opportunity.id]: true
+          [opportunity.id]: true,
         }));
-        // ✅ Silent tracking
-        recommendationService.trackInteraction(
-          user.id,
-          opportunity.id,
-          'save',
-          mapItemType(opportunity.type)
-        ).catch(() => {});
+        recommendationService
+          .trackInteraction(user.id, opportunity.id, 'save', mapItemType(opportunity.type))
+          .catch(() => {});
       }
     },
     [isAuthenticated, navigation, user?.id]
   );
 
-  // Updated Save Handler
   const handleSavePress = useCallback(
-    (opportunity: RawOpportunity) => {
+    (opportunity: Opportunity) => {
       if (!isAuthenticated) {
-        Alert.alert(
-          'Join Munolink',
-          'Create a free account to save items.',
-          [
-            { text: 'Continue Browsing', style: 'cancel' },
-            { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-          ]
-        );
+        Alert.alert('🔒 Join Munolink', 'Create a free account to save items.', [
+          { text: 'Continue Browsing', style: 'cancel' },
+          { text: 'Join Now', onPress: () => navigation.navigate('Join') },
+        ]);
         return;
       }
-      
+
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      
+
       const currentSaved = savedItemsMap[opportunity.id] || false;
       const newSaved = !currentSaved;
-      
-      setSavedItemsMap(prev => ({
+
+      setSavedItemsMap((prev) => ({
         ...prev,
-        [opportunity.id]: newSaved
+        [opportunity.id]: newSaved,
       }));
-      
+
       if (user?.id) {
-        // ✅ Silent tracking
-        recommendationService.trackInteraction(
-          user.id,
-          opportunity.id,
-          newSaved ? 'save' : 'unsave',
-          mapItemType(opportunity.type)
-        ).catch(() => {});
+        recommendationService
+          .trackInteraction(
+            user.id,
+            opportunity.id,
+            newSaved ? 'save' : 'unsave',
+            mapItemType(opportunity.type)
+          )
+          .catch(() => {});
       }
-      
+
       console.log(newSaved ? '🔖 Saved:' : '🔖 Unsaved:', opportunity.title);
     },
     [isAuthenticated, navigation, user?.id, savedItemsMap]
   );
 
   const handleFollowPress = useCallback(
-    (opportunity: RawOpportunity) => {
+    (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      navigation.navigate('ShopProfile', {
-        shopId: opportunity.shopId,
-        shopName: opportunity.shopName,
+      navigation.navigate('Inbox', {
+        userId: opportunity.userId,
+        userName: opportunity.userFullName || 'User',
       });
     },
     [navigation]
   );
 
-  // --- Add to Cart / Book Handler ---
-  const handleAddToCart = useCallback(() => {
-    if (!currentOpportunity) return;
+  // ✅ FIX: Inbox Press - Opens direct chat with the user
+  const handleInboxPress = useCallback(() => {
+    if (!currentOpportunity) {
+      console.warn('⚠️ No current opportunity');
+      return;
+    }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (!isAuthenticated) {
-      Alert.alert(
-        'Join Munolink',
-        'Create a free account to make purchases.',
-        [
-          { text: 'Continue Browsing', style: 'cancel' },
-          { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-        ]
-      );
+      Alert.alert('🔒 Join Munolink', 'Create a free account to message sellers and providers.', [
+        { text: 'Continue Browsing', style: 'cancel' },
+        { text: 'Join Now', onPress: () => navigation.navigate('Join') },
+      ]);
       return;
     }
 
-    const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
+    const targetUserId = currentOpportunity.userId || '';
+    const targetUserName = currentOpportunity.userFullName || 'User';
 
-    if (isService) {
-      if (user?.id) {
-        // ✅ Silent tracking
-        recommendationService.trackInteraction(
-          user.id,
-          currentOpportunity.id,
-          'booking',
-          mapItemType(currentOpportunity.type)
-        ).catch(() => {});
-      }
-      Alert.alert(
-        '📅 Booking Request',
-        `Would you like to book "${currentOpportunity.title}"?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Book Now',
-            onPress: () => {
-              console.log('📅 Booking:', currentOpportunity.title);
-            },
-          },
-        ]
-      );
-    } else {
-      if (user?.id) {
-        // ✅ Silent tracking
-        recommendationService.trackInteraction(
-          user.id,
-          currentOpportunity.id,
-          'purchase',
-          mapItemType(currentOpportunity.type)
-        ).catch(() => {});
-      }
-      Alert.alert(
-        '🛒 Added to Cart',
-        `${currentOpportunity.title} has been added to your cart!`,
-        [
-          { text: 'Continue Shopping', style: 'cancel' },
-          {
-            text: 'View Cart',
-            onPress: () => {
-              console.log('🛒 View Cart');
-            },
-          },
-        ]
-      );
-    }
-  }, [currentOpportunity, isAuthenticated, user?.id, navigation]);
+    console.log(`💬 Opening inbox with: ${targetUserName} (${targetUserId})`);
+
+    navigation.navigate('Inbox', {
+      userId: targetUserId,
+      userName: targetUserName,
+    });
+  }, [currentOpportunity, isAuthenticated, navigation]);
 
   // --- Navigation Helpers ---
   const scrollToIndex = useCallback(
@@ -742,7 +790,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     }
   }, [currentIndex, scrollToIndex]);
 
-  // --- Render Functions ---
+  // --- Render Desktop Nav Arrows ---
   const renderDesktopNavArrows = useCallback(() => {
     if (!isDesktop) return null;
 
@@ -757,194 +805,269 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           <Ionicons name="chevron-up" size={28} color={currentIndex === 0 ? '#555' : '#FFFFFF'} />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.navArrow, currentIndex === uniqueOpportunities.length - 1 && styles.navArrowDisabled]}
+          style={[
+            styles.navArrow,
+            currentIndex === uniqueOpportunities.length - 1 && styles.navArrowDisabled,
+          ]}
           onPress={goToNext}
           disabled={currentIndex === uniqueOpportunities.length - 1}
           activeOpacity={0.7}
         >
-          <Ionicons name="chevron-down" size={28} color={currentIndex === uniqueOpportunities.length - 1 ? '#555' : '#FFFFFF'} />
+          <Ionicons
+            name="chevron-down"
+            size={28}
+            color={currentIndex === uniqueOpportunities.length - 1 ? '#555' : '#FFFFFF'}
+          />
         </TouchableOpacity>
       </View>
     );
   }, [isDesktop, currentIndex, uniqueOpportunities.length, goToPrevious, goToNext]);
 
- // src/features/feed/FeedScreen.tsx
-
-const renderItem = useCallback(
-  ({ item }: { item: RawOpportunity }) => {
-    const cardWidth = isDesktop ? 420 : width;
-    const cardHeight = isDesktop ? height : height;
-
-    const normalizedOpportunity = OpportunityFormatter.format(item);
-    const engine = new SceneEngine(normalizedOpportunity);
-    const scenes = engine.compose();
-
-    const isSaved = savedItemsMap[item.id] || false;
-    
-    // ✅ Determine if this is a service
-    const isService = item.type === 'service' || item.type === 'event';
-    
-    // ✅ For services, use provider name from the item
-    // Convert null to undefined to match the expected type
-    const providerName = isService 
-      ? (item.providerName || item.shopName || undefined)
-      : undefined;
-
-    return (
-      <View
-        style={{
-          height: isDesktop ? height : height,
-          paddingVertical: 0,
-          alignItems: 'center',
-          justifyContent: 'center',
-          position: 'relative',
-        }}
-      >
-        <SceneRenderer
-          key={item.id}
-          scenes={scenes}
-          title={item.title}
-          price={item.price}
-          shopName={item.shopName}
-          rating={item.rating ?? undefined}
-          area={item.area ?? undefined}
-          inStock={item.inStock}
-          currency={item.currency || 'UGX'}
-          isDesktop={isDesktop}
-          // ✅ Pass type and provider name (converted to undefined instead of null)
-          type={item.type || 'product'}
-          providerName={providerName}
-          onPrimaryAction={() => {
-            navigation.navigate('ShopProfile', {
-              shopId: item.shopId,
-              shopName: item.shopName,
-            });
-          }}
-          onShare={() => {
-            handleSharePress(item);
-          }}
-          onSave={() => {
-            handleSavePress(item);
-          }}
-          onShowMore={() => {
-            handleShowMorePress(item);
-          }}
-          onSceneChange={(index) => {
-            if (__DEV__) {
-              console.log('Scene changed to:', index);
-            }
-          }}
-          width={cardWidth}
-          height={cardHeight}
-          autoPlay={false}
-          autoPlayInterval={9000}
-          resetKey={item.id}
-        />
-
-        {/* Each item has its own FloatingActionRail */}
-        <View style={styles.actionRailWrapper}>
-          <FloatingActionRail
-            key={`rail-${item.id}`}
-            opportunity={item}
-            onShopPress={(shopId) => {
-              navigation.navigate('ShopProfile', {
-                shopId,
-                shopName: item.shopName,
-              });
-            }}
-            onReviewsPress={(productId) => handleReviewsPress(productId, item.title)}
-            onDirectionsPress={handleDirectionsPress}
-            onSharePress={handleSharePress}
-            onAIPress={handleAIPress}
-            onSavePress={handleSavePress}
-            isSaved={isSaved}
-            savedCount={item.savedCount || 0}
-            shareCount={item.shareCount || 0}
-            reviewCount={item.reviewCount || 0}
-            distance={item.distance || 0}
-            shopLogo={item.shopLogo || null}
-          />
-        </View>
-      </View>
-    );
-  },
-  [
-    isDesktop,
-    width,
-    height,
-    navigation,
-    handleSharePress,
-    handleSavePress,
-    handleShowMorePress,
-    handleReviewsPress,
-    handleDirectionsPress,
-    handleAIPress,
-    savedItemsMap,
-  ]
-);
+  // --- Render Action Button (Inbox button at bottom) ---
   const renderActionButton = useCallback(() => {
     if (!currentOpportunity) return null;
-
-    const isService = currentOpportunity.type === 'service' || currentOpportunity.type === 'event';
-    const buttonLabel = isService ? 'Book' : 'Add to Cart';
-    const iconName = isService ? 'calendar-outline' : 'cart-outline';
 
     return (
       <View style={styles.buttonWrapper}>
         <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleAddToCart}
+          style={styles.inboxButton}
+          onPress={handleInboxPress}
           activeOpacity={0.85}
         >
           <LinearGradient
-            colors={isService ? ['#6C5CE7', '#A855F7'] : ['#4A7DFF', '#6C5CE7']}
+            colors={['#4A7DFF', '#6B94FF']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={styles.actionButtonGradient}
+            style={styles.inboxButtonGradient}
           >
-            <Ionicons name={iconName} size={14} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>{buttonLabel}</Text>
+            <Ionicons name="chatbubble-outline" size={16} color="#FFFFFF" />
+            <Text style={styles.inboxButtonText}>Inbox</Text>
           </LinearGradient>
         </TouchableOpacity>
       </View>
     );
-  }, [currentOpportunity, handleAddToCart]);
+  }, [currentOpportunity, handleInboxPress]);
 
-  // --- Loading States with Skeleton ---
+  // ============================================================
+  // RENDER ITEM
+  // ============================================================
+  const renderItem = useCallback(
+    ({ item, index }: { item: Opportunity; index: number }) => {
+      const isSaved = savedItemsMap[item.id] || false;
+
+      // ✅ NEW: is this feed item the currently visible one?
+      const isVisible = index === currentIndex;
+
+      // ✅ Extract price from specifications if available
+      let price = item.price || 0;
+      let priceType: 'fixed' | 'negotiable' | 'starting_from' | 'free' = 'fixed';
+      const specifications = (item as Opportunity & {
+        specifications?: Record<string, unknown>;
+      }).specifications;
+
+      if (specifications) {
+        const specPrice = specifications.price || specifications.regular_price || null;
+        if (specPrice) {
+          price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+        }
+        if (
+          specifications.price_type === 'fixed' ||
+          specifications.price_type === 'negotiable' ||
+          specifications.price_type === 'starting_from' ||
+          specifications.price_type === 'free'
+        ) {
+          priceType = specifications.price_type;
+        }
+      }
+
+      if (price === 0 || price === null || price === undefined) {
+        price = 0;
+        priceType = 'free';
+      }
+
+      const mediaItems = [];
+
+      let videoThumbnail: string | undefined = undefined;
+
+      if (item.catalogImages && item.catalogImages.length > 0) {
+        videoThumbnail = item.catalogImages[0];
+      } else if (item.imageUrl) {
+        videoThumbnail = item.imageUrl;
+      } else {
+        const encodedTitle = encodeURIComponent(item.title || 'Video');
+        videoThumbnail = `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${encodedTitle.substring(
+          0,
+          20
+        )}`;
+      }
+
+      if (item.video) {
+        mediaItems.push({
+          type: 'video' as const,
+          url: item.video,
+          thumbnail: videoThumbnail,
+        });
+      }
+
+      if (item.catalogImages && item.catalogImages.length > 0) {
+        for (const img of item.catalogImages) {
+          if (mediaItems.some((m) => m.url === img)) continue;
+          mediaItems.push({ type: 'image' as const, url: img });
+        }
+      } else if (item.imageUrl && !item.video) {
+        mediaItems.push({ type: 'image' as const, url: item.imageUrl });
+      }
+
+      if (mediaItems.length === 0) {
+        const placeholderText = encodeURIComponent(item.title || 'Item');
+        mediaItems.push({
+          type: 'image' as const,
+          url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(
+            0,
+            20
+          )}`,
+        });
+      }
+
+      return (
+        <View
+          style={{
+            height: isDesktop ? height : height,
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          <SceneRenderer
+            media={mediaItems}
+            title={item.title}
+            price={price}
+            priceType={priceType}
+            currency={item.currency || 'UGX'}
+            userName={item.userFullName || 'User'}
+            userAvatar={item.userAvatar || null}
+            description={item.description || null}
+            rating={null}
+            area={item.area || null}
+            inStock={true}
+            type={item.type || 'product'}
+            createdAt={item.createdAt}
+            isDesktop={isDesktop}
+            width={isDesktop ? 420 : width}
+            height={isDesktop ? height : height}
+            onShowMore={() => handleShowMorePress(item)}
+            onShare={() => handleSharePress(item)}
+            onSave={() => handleSavePress(item)}
+            onPrimaryAction={() => {
+              navigation.navigate('Inbox', {
+                userId: item.userId,
+                userName: item.userFullName || 'User',
+              });
+            }}
+            onSceneChange={(sceneIdx, source) => {
+              if (__DEV__) console.log(`Scene changed to: ${sceneIdx}`, source);
+            }}
+            onBehavioralEvent={(event) => {
+              // ✅ SceneRenderer now only emits scene_view.
+              // opportunity_open / opportunity_close are handled by
+              // onViewableItemsChanged above.
+              if (__DEV__) console.log('📊 Behavioral Event:', event);
+            }}
+            autoPlay={false}
+            autoPlayInterval={5000}
+            resetKey={item.id}
+            bottomOffset={0}
+            isVisible={isVisible}
+          />
+
+          <View style={styles.actionRailWrapper}>
+            <FloatingActionRail
+              key={`rail-${item.id}`}
+              opportunity={item}
+              onUserPress={() => {
+                navigation.navigate('UserProfile' as any, {
+                  userId: item.userId,
+                  userName: item.userFullName || 'User',
+                });
+              }}
+              onReviewsPress={(productId) => handleReviewsPress(productId, item.title)}
+              onDirectionsPress={(userName, area) => {
+                console.log(`📍 Directions to ${userName} in ${area}`);
+                setShowDirectionsModal(true);
+              }}
+              onSharePress={handleSharePress}
+              onAIPress={handleAIPress}
+              onSavePress={handleSavePress}
+              isSaved={isSaved}
+              savedCount={0}
+              shareCount={item.shareCount || 0}
+              reviewCount={0}
+              distance={0}
+              userAvatar={item.userAvatar || null}
+            />
+          </View>
+        </View>
+      );
+    },
+    [
+      isDesktop,
+      height,
+      width,
+      currentIndex,
+      navigation,
+      savedItemsMap,
+      handleShowMorePress,
+      handleSharePress,
+      handleSavePress,
+      handleAIPress,
+      handleReviewsPress,
+    ]
+  );
+
+  // --- Loading States ---
   if (isLoading || queryLoading || isApplyingRecommendations) {
-    // If applying recommendations, show a simple loading state
     if (isApplyingRecommendations) {
       return (
-      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>          <ActivityIndicator size="large" color="#4A7DFF" />
+        <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+          <ActivityIndicator size="large" color="#4A7DFF" />
           <Text style={[styles.loadingText, { fontSize: width < 380 ? 14 : 16 }]}>
             Personalizing your feed...
           </Text>
-      </SafeAreaView>      );
+        </SafeAreaView>
+      );
     }
 
-    // Show beautiful skeleton loading
     return (
-    <SafeAreaView style={[styles.container, { height }]} edges={['top']}>        <SafeAreaView style={{ flex: 1 }}>
+      <SafeAreaView style={[styles.container, { height }]} edges={['top']}>
+        <SafeAreaView style={{ flex: 1 }}>
           <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
           <FeedListSkeleton isDesktop={isDesktop} />
         </SafeAreaView>
-    </SafeAreaView>    );
+      </SafeAreaView>
+    );
   }
 
   if (error) {
     return (
-    <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>Error loading feed</Text>
+      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>
+          Error loading feed
+        </Text>
         <Text style={[styles.errorSubtext, { fontSize: width < 380 ? 12 : 14 }]}>{error}</Text>
-    </SafeAreaView>    );
+      </SafeAreaView>
+    );
   }
 
   if (uniqueOpportunities.length === 0) {
     return (
-    <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>No opportunities found</Text>
+      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>
+          No opportunities found
+        </Text>
         <Text style={[styles.emptySubtext, { fontSize: width < 380 ? 12 : 14 }]}>
           Check back later for new deals!
         </Text>
-    </SafeAreaView>    );
+      </SafeAreaView>
+    );
   }
 
   // --- Main Render ---
@@ -999,23 +1122,27 @@ const renderItem = useCallback(
               >
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
-                    <Image 
-                      source={require('../../../assets/logo.png')} 
-                      style={styles.logoImage} 
-                      resizeMode="contain" // ✅ Fixed: resizeMode as prop
+                    <Image
+                      source={require('../../../assets/logo.png')}
+                      style={styles.logoImage}
+                      resizeMode="contain"
                     />
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.locationContainer}>
+                  <TouchableOpacity
+                    style={styles.locationContainer}
+                    onPress={() => setShowLocationPicker(true)}
+                    activeOpacity={0.7}
+                  >
                     <Ionicons name="location-outline" size={16} color="#4A7DFF" />
-                    <Text style={[styles.locationText, { fontSize: 13 }]}>
-                      {isLocationLoading ? 'Detecting...' : userLocation}
+                    <Text style={[styles.locationText, { fontSize: 13 }]} numberOfLines={1}>
+                      {getLocationDisplay()}
                     </Text>
                     <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
-                    style={styles.searchContainer} 
+                  <TouchableOpacity
+                    style={styles.searchContainer}
                     onPress={() => {
                       (navigation as any).navigate('Search');
                     }}
@@ -1036,7 +1163,7 @@ const renderItem = useCallback(
               snapToInterval={isDesktop ? undefined : height}
               snapToAlignment="start"
               decelerationRate="fast"
-              viewabilityConfig={VIEWABILITY_CONFIG}
+              viewabilityConfig={viewabilityConfigRef.current}
               onViewableItemsChanged={handleViewableItemsChanged}
               getItemLayout={(data, index) => ({
                 length: height,
@@ -1045,10 +1172,10 @@ const renderItem = useCallback(
               })}
               initialScrollIndex={currentIndex}
               removeClippedSubviews={true}
-              maxToRenderPerBatch={isDesktop ? 3 : 1}
-              windowSize={isDesktop ? 5 : 2}
+              maxToRenderPerBatch={isDesktop ? 3 : 2}
+              windowSize={isDesktop ? 5 : 3}
               onScrollToIndexFailed={() => {}}
-              scrollEventThrottle={32} // ✅ Reduced for better performance
+              scrollEventThrottle={32}
               style={{ flex: 1, backgroundColor: '#0D0D1A' }}
             />
 
@@ -1079,18 +1206,17 @@ const renderItem = useCallback(
 
             <DirectionsBottomSheet
               visible={showDirectionsModal}
-              opportunity={selectedOpportunity}
+              opportunity={currentOpportunity}
               onClose={handleCloseDirections}
               isDesktopView={false}
             />
 
-            <SimpleDetailsModal
-              visible={showDetailsModal}
-              opportunity={selectedOpportunity}
-              onClose={() => {
-                setShowDetailsModal(false);
-                setSelectedOpportunity(null);
-              }}
+            <LocationPicker
+              visible={showLocationPicker}
+              onClose={() => setShowLocationPicker(false)}
+              onSelectLocation={handleLocationSelect}
+              currentLocationLabel={selectedLocationLabel || userLocation}
+              isLocationLoading={isLocationLoading}
             />
 
             {showGuestPrompt && (
@@ -1224,13 +1350,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
   },
-  actionRailWrapper: {
-    position: 'absolute',
-    right: 16,
-    top: '50%',
-    transform: [{ translateY: -150 }],
-    zIndex: 50,
-  },
   buttonWrapper: {
     position: 'absolute',
     bottom: 220,
@@ -1241,32 +1360,42 @@ const styles = StyleSheet.create({
     zIndex: 50,
     paddingHorizontal: 24,
   },
-  actionButton: {
+  inboxButton: {
     borderRadius: 20,
     overflow: 'hidden',
     width: 'auto',
-    maxWidth: 160,
-    // ✅ Fixed: Use boxShadow instead of shadow* props
-    boxShadow: '0 4px 10px rgba(74, 125, 255, 0.25)',
+    maxWidth: 200,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
     elevation: 6,
   },
-  actionButtonGradient: {
+  inboxButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    gap: 8,
   },
-  actionButtonText: {
+  inboxButtonText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     letterSpacing: 0.3,
   },
 
+  actionRailWrapper: {
+    position: 'absolute',
+    right: 16,
+    top: '50%',
+    transform: [{ translateY: -150 }],
+    zIndex: 50,
+  },
+
   // ============================================================
-  // 🎨 SKELETON STYLES
+  // SKELETON STYLES
   // ============================================================
   skeletonContainer: {
     flex: 1,
@@ -1277,13 +1406,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#0D0D1A',
     overflow: 'hidden',
   },
-  skeletonBackground: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: '#1A1A2E',
-  },
-  skeletonShimmerOverlay: {
-    ...StyleSheet.absoluteFill,
-  },
+skeletonBackground: {
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  backgroundColor: '#1A1A2E',
+},
+skeletonShimmerOverlay: {
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+},
   skeletonShimmerGradient: {
     width: '100%',
     height: '100%',

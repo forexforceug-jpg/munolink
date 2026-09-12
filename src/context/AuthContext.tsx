@@ -1,6 +1,6 @@
 // src/context/AuthContext.tsx
 
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
@@ -20,12 +20,12 @@ interface AuthContextType {
   signInWithPhone: (phone: string, fullName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  logout: () => Promise<void>;
   joinAsGuest: () => void;
   refreshSession: () => Promise<void>;
   createSessionForUser: (userId: string) => Promise<void>;
   setIsAuthenticated: (value: boolean) => void;
   setIsGuest: (value: boolean) => void;
-  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -46,7 +46,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Google Auth Request
+  // ✅ Google Auth Request - MUST be at top level, not conditional
   const [request, response, promptAsync] = Google.useAuthRequest({
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
@@ -54,14 +54,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   // ============================================================
-  // ✅ FIXED: Check Auth on App Start - With Better Persistence
+  // CHECK AUTH ON APP START
   // ============================================================
   useEffect(() => {
     const checkAuth = async () => {
       try {
         console.log('🔍 Checking auth state...');
         
-        // Check both storage and in-memory state
         const token = await AsyncStorage.getItem('authToken');
         const userDataStr = await AsyncStorage.getItem('userData');
         
@@ -70,7 +69,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const parsedUser = JSON.parse(userDataStr);
             console.log('✅ Found stored user:', parsedUser);
             
-            // Also check if user exists in database
             if (parsedUser.id) {
               const { data: dbUser, error: dbError } = await supabase
                 .from('users')
@@ -89,7 +87,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setIsGuest(false);
                 console.log('✅ Session restored successfully');
               } else {
-                // User doesn't exist in DB, clear storage
                 console.log('⚠️ User not found in database, clearing session');
                 await AsyncStorage.removeItem('authToken');
                 await AsyncStorage.removeItem('userData');
@@ -128,7 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkAuth();
   }, []);
 
-  // Handle Google OAuth Response
+  // ✅ Handle Google OAuth Response - MUST be at top level
   useEffect(() => {
     if (response?.type === 'success') {
       const { id_token, access_token } = response.params;
@@ -148,6 +145,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [response]);
 
+  // ✅ Google Sign In Handler - Defined inside component
   const handleGoogleSignIn = async (idToken: string) => {
     try {
       setIsLoading(true);
@@ -239,16 +237,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // ✅ FIXED: Sign In With Phone
   const signInWithPhone = async (phone: string, fullName?: string): Promise<void> => {
     console.log('📝 Signing in with phone (custom auth):', phone);
-    console.log('📝 User name provided:', fullName || 'Not provided');
     
     try {
       const cleanPhone = phone.replace(/\s/g, '');
       const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
       
-      // Check if user exists first
       const { data: existingUser, error: checkError } = await supabase
         .from('users')
         .select('id, full_name, phone_number')
@@ -302,7 +297,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('✅ User created in database successfully with name:', userName);
       }
 
-      // Create user data object for session
       const userData = {
         id: userId,
         phone: fullPhone,
@@ -315,11 +309,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lifetime_savings: 0,
       };
 
-      // Store in AsyncStorage
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
-      // Update state
       setUser(userData);
       setIsAuthenticated(true);
       setIsGuest(false);
@@ -343,7 +335,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const phoneNumber = userData.phone || userData.phone_number || '';
       const userName = userData.full_name || userData.name || 'Munolink Member';
       
-      // Check if user exists
       const { data: existingUser, error: checkError } = await supabase
         .from('users')
         .select('id, full_name')
@@ -387,7 +378,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // ✅ FIXED: Sign Out - Clear everything
   const signOut = async (): Promise<void> => {
     setIsLoading(true);
     try {
@@ -447,26 +437,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // ✅ Memoize the context value to prevent unnecessary re-renders
+  const contextValue = useMemo(() => ({
+    isAuthenticated,
+    isGuest,
+    isLoading,
+    user,
+    session,
+    signIn,
+    signInWithPhone,
+    signInWithGoogle,
+    signOut,
+    logout,
+    joinAsGuest,
+    refreshSession,
+    createSessionForUser,
+    setIsAuthenticated,
+    setIsGuest,
+  }), [isAuthenticated, isGuest, isLoading, user, session]);
+
   return (
-    <AuthContext.Provider
-      value={{
-        isAuthenticated,
-        isGuest,
-        isLoading,
-        user,
-        session,
-        signIn,
-        signInWithPhone,
-        signInWithGoogle,
-        signOut,
-        logout,
-        joinAsGuest,
-        refreshSession,
-        createSessionForUser,
-        setIsAuthenticated,
-        setIsGuest,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

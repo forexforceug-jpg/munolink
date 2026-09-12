@@ -3,381 +3,526 @@
 import { supabase } from '../lib/supabase';
 
 // ============================================================
-// TYPE DEFINITION
+// TYPE DEFINITIONS
 // ============================================================
+
+export interface Post {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  price: number | null;
+  currency: string;
+  images: string[];
+  video: string | null;
+  video_thumbnail: string | null;
+  video_duration: number | null;
+  video_size: number | null;
+  hashtags: string[];
+  location: string | null;
+  category: string | null;
+  status: string;
+  like_count: number;
+  view_count: number;
+  share_count: number;
+  comment_count: number;
+  save_count: number;
+  created_at: string;
+  updated_at: string;
+  user_full_name: string | null;
+  user_avatar: string | null;
+  user_latitude: number | null;
+  user_longitude: number | null;
+  detected_category: string | null;
+  detected_intent: string | null;
+  detected_tags: string[];
+  specifications?: any;
+}
+
 export interface Opportunity {
   id: string;
   title: string;
-  shopName: string;
-  savedCount?: number;
-  shareCount?: number;
-  distance?: number;
-  shopId: string;
   price: number;
   currency: string;
   imageUrl: string;
   catalogImages: string[];
   description: string;
-  specifications: any;
   rating: number | null;
-  topReview?: string;
   reviewCount: number | null;
   area: string | null;
   inStock: boolean;
   category: string | null;
   type: 'product' | 'service' | 'event';
   createdAt?: string;
-  duration?: string | null;
-  duration_minutes?: number | null;
-  latitude?: number | null;
-  longitude?: number | null;
-  shopLatitude?: number | null;
-  shopLongitude?: number | null;
-  shopLogo?: string | null;
-  brand?: string | null;
-  providerId?: string;
-  providerName?: string;
-  providerType?: 'individual' | 'institution';
+  userId: string;
+  userFullName: string;
+  userAvatar: string | null;
+  userLatitude: number | null;
+  userLongitude: number | null;
+  userPhone: string | null;
+  hashtags?: string[];
+  video: string | null;
+  video_thumbnail: string | null;
+  video_duration: number | null;
+  video_size: number | null;
+  likeCount?: number;
+  viewCount?: number;
+  shareCount?: number;
+  commentCount?: number;
+  saveCount?: number;
+  isSaved?: boolean;
+  distance?: number;
+  specifications?: any;
 }
 
 // ============================================================
-// HELPER: PLACEHOLDER IMAGE
+// HELPER: CALCULATE DISTANCE
 // ============================================================
-function getPlaceholderImage(category: string | null, title: string): string {
-  const seed = encodeURIComponent(title);
-  return `https://picsum.photos/seed/${seed}/400/600`;
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 }
 
 // ============================================================
-// HELPER: SAFELY FILTER NULL VALUES
+// TYPE GUARD FOR SPECIFICATIONS
 // ============================================================
-function filterNonNull<T>(arr: (T | null | undefined)[]): T[] {
-  return arr.filter((item): item is T => item !== null && item !== undefined);
-}
-
-// ============================================================
-// HELPER: SHUFFLE ARRAY
-// ============================================================
-function shuffleArray<T>(array: T[]): T[] {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-}
-
-// ============================================================
-// MOCK DATA (Fallback when Supabase fails)
-// ============================================================
-const MOCK_OPPORTUNITIES: Opportunity[] = [
-  {
-    id: 'mock_1',
-    title: 'Samsung Galaxy A54',
-    shopName: 'TechWorld Kampala',
-    shopId: 'shop_mock_1',
-    price: 850000,
-    currency: 'UGX',
-    imageUrl: getPlaceholderImage('electronics', 'Samsung Galaxy'),
-    catalogImages: Array(5).fill(getPlaceholderImage('electronics', 'Samsung Galaxy')),
-    description: 'Brand new Samsung Galaxy A54 with 5G, 128GB storage.',
-    specifications: { model: 'A54', storage: '128GB', ram: '8GB' },
-    rating: 4.8,
-    reviewCount: 45,
-    area: 'Kampala',
-    inStock: true,
-    category: 'electronics',
-    type: 'product',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'mock_2',
-    title: 'Phone Screen Repair',
-    shopName: 'QuickFix Mobile',
-    shopId: 'shop_mock_2',
-    price: 75000,
-    currency: 'UGX',
-    imageUrl: getPlaceholderImage('services', 'Phone Repair'),
-    catalogImages: Array(5).fill(getPlaceholderImage('services', 'Phone Repair')),
-    description: 'Professional phone screen repair service. 1-hour turnaround.',
-    specifications: { duration: '1 hour', warranty: '3 months' },
-    rating: 4.5,
-    reviewCount: 23,
-    area: 'Jinja',
-    inStock: true,
-    category: 'services',
-    type: 'service',
-    createdAt: new Date().toISOString(),
-    providerName: 'QuickFix Mobile',
-    providerType: 'individual',
-  },
-];
-
-function getMockOpportunities(): Opportunity[] {
-  return MOCK_OPPORTUNITIES;
+function isSpecificationsObject(specs: unknown): specs is Record<string, unknown> {
+  return !!specs && typeof specs === 'object' && !Array.isArray(specs);
 }
 
 // ============================================================
 // MAIN SERVICE
 // ============================================================
 export const feedService = {
-  async getOpportunities(): Promise<Opportunity[]> {
+  /**
+   * Get opportunities with distance from user
+   */
+  getOpportunities: async (userLocation?: { latitude: number; longitude: number }): Promise<Opportunity[]> => {
     try {
-      console.log('🔄 Fetching products AND services from Supabase...');
+      console.log('🔄 Fetching opportunities from catalog...');
 
-      // ============================================================
-      // PART 1: FETCH PRODUCTS
-      // ============================================================
-
-      const { data: shopProducts, error: shopProductsError } = await supabase
-        .from('shop_products')
+      const { data: catalogPosts, error: catalogError } = await supabase
+        .from('catalog')
         .select('*')
-        .eq('in_stock', true)
+        .eq('status', 'active')
         .order('created_at', { ascending: false });
 
-      if (shopProductsError) {
-        console.error('❌ Error fetching shop products:', shopProductsError);
-        return getMockOpportunities();
+      if (catalogError) {
+        console.error('❌ Error fetching catalog posts:', catalogError);
+        return [];
       }
 
-      let catalogItems: any[] = [];
-      let shops: any[] = [];
-      const productOpportunities: Opportunity[] = [];
-
-      if (shopProducts && shopProducts.length > 0) {
-        console.log(`✅ Found ${shopProducts.length} shop products`);
-
-        const catalogIds = filterNonNull(shopProducts.map(sp => sp.catalog_id));
-        if (catalogIds.length > 0) {
-          const { data, error } = await supabase
-            .from('catalog')
-            .select('*')
-            .in('id', catalogIds);
-          if (!error && data) catalogItems = data;
-        }
-
-        const shopIds = filterNonNull(shopProducts.map(sp => sp.shop_id));
-        if (shopIds.length > 0) {
-          const { data, error } = await supabase
-            .from('shops')
-            .select('*')
-            .in('id', shopIds);
-          if (!error && data) shops = data;
-        }
-
-        for (const sp of shopProducts) {
-          const catalog = catalogItems.find(c => c.id === sp.catalog_id);
-          const shop = shops.find(s => s.id === sp.shop_id);
-          if (catalog && shop) {
-            const catalogImages = catalog.images || [];
-            productOpportunities.push({
-              id: catalog.id,
-              title: catalog.name || 'Product',
-              shopName: shop.name || 'Shop',
-              shopId: shop.id,
-              price: sp.regular_price || 0,
-              currency: 'UGX',
-              imageUrl: catalogImages[0] || getPlaceholderImage(catalog.category, catalog.name),
-              catalogImages: catalogImages,
-              description: catalog.description || '',
-              specifications: catalog.specifications || {},
-              rating: shop.rating || null,
-              reviewCount: shop.review_count || null,
-              area: shop.area || null,
-              inStock: sp.in_stock || false,
-              category: catalog.category || null,
-              type: 'product',
-              createdAt: sp.created_at || new Date().toISOString(),
-              brand: catalog.brand || null,
-              shopLatitude: shop.latitude || null,
-              shopLongitude: shop.longitude || null,
-              shopLogo: shop.logo_url || null,
-            });
-          }
-        }
-        console.log(`📦 Found ${productOpportunities.length} products`);
+      if (!catalogPosts || catalogPosts.length === 0) {
+        console.log('⚠️ No opportunities found in catalog');
+        return [];
       }
 
-      // ============================================================
-      // PART 2: FETCH SERVICES - FIXED WITHOUT TYPE RELATION
-      // ============================================================
+      console.log(`✅ Found ${catalogPosts.length} opportunities in catalog`);
 
-      // ✅ Step 1: Get provider services
-      const { data: providerServices, error: providerServicesError } = await supabase
-        .from('provider_services')
-        .select('*')
-        .eq('is_active', true);
+      // Get user info including location
+      const userIds = catalogPosts
+        .map(post => post.user_id)
+        .filter((id): id is string => id !== null && id !== undefined && id !== '');
 
-      let serviceOpportunities: Opportunity[] = [];
+      let userMap: Record<string, { 
+        full_name: string | null; 
+        avatar_url: string | null;
+        latitude: number | null;
+        longitude: number | null;
+        phone_number: string | null;
+      }> = {};
 
-      if (providerServicesError) {
-        console.error('❌ Error fetching provider services:', providerServicesError);
-      } else if (providerServices && providerServices.length > 0) {
-        console.log(`✅ Found ${providerServices.length} provider services`);
+      if (userIds.length > 0) {
+        const { data: users, error: usersError } = await supabase
+          .from('users')
+          .select('id, full_name, avatar_url, latitude, longitude, phone_number')
+          .in('id', userIds);
 
-        // ✅ Step 2: Get all service catalog items from the provider services
-        const serviceIds = filterNonNull(providerServices.map(ps => ps.service_id));
+        if (usersError) {
+          console.error('❌ Error fetching users:', usersError);
+        } else if (users) {
+          users.forEach((user: any) => {
+            userMap[user.id] = {
+              full_name: user.full_name,
+              avatar_url: user.avatar_url,
+              latitude: user.latitude || null,
+              longitude: user.longitude || null,
+              phone_number: user.phone_number || null,
+            };
+          });
+          console.log(`👤 Found ${Object.keys(userMap).length} users`);
+        }
+      }
+
+      // Get save counts and user's saved status
+      let saveCounts: Record<string, { count: number; isSaved: boolean }> = {};
+      
+      try {
+        const { data: saveData, error: saveError } = await supabase
+          .from('saves')
+          .select('post_id, user_id')
+          .in('post_id', catalogPosts.map((p: any) => p.id));
+
+        if (saveError) {
+          console.error('❌ Error fetching saves:', saveError);
+        } else if (saveData) {
+          const saveMap: Record<string, { count: number; userSaved: boolean }> = {};
+          const { data: authData } = await supabase.auth.getUser();
+          const currentUserId = authData?.user?.id;
+          
+          saveData.forEach((s: any) => {
+            if (!saveMap[s.post_id]) {
+              saveMap[s.post_id] = { count: 0, userSaved: false };
+            }
+            saveMap[s.post_id].count++;
+            if (s.user_id === currentUserId) {
+              saveMap[s.post_id].userSaved = true;
+            }
+          });
+          
+          saveCounts = Object.keys(saveMap).reduce((acc, key) => {
+            acc[key] = { 
+              count: saveMap[key].count, 
+              isSaved: saveMap[key].userSaved 
+            };
+            return acc;
+          }, {} as Record<string, { count: number; isSaved: boolean }>);
+        }
+      } catch (e) {
+        console.log('⚠️ Saves table may not exist yet:', e);
+      }
+
+      // Build opportunities
+      const opportunities: Opportunity[] = catalogPosts.map((post: any) => {
+        const userInfo = post.user_id ? userMap[post.user_id] : null;
+        const images = post.images || [];
+        const saveInfo = saveCounts[post.id] || { count: 0, isSaved: false };
         
-        let serviceCatalogItems: any[] = [];
-        if (serviceIds.length > 0) {
-          const { data, error } = await supabase
-            .from('service_catalog')
-            .select('*')
-            .in('id', serviceIds);
-          if (!error && data) {
-            serviceCatalogItems = data;
-            console.log(`📚 Found ${serviceCatalogItems.length} service catalog items`);
-          } else {
-            console.error('❌ Error fetching service catalog:', error);
+        // ✅ EXTRACT PRICE FROM SPECIFICATIONS with type safety
+        let price = post.price || 0;
+        let specifications = post.specifications || {};
+        
+        // ✅ Type-safe extraction from specifications
+        if (price === 0 && isSpecificationsObject(specifications)) {
+          const specPrice = specifications.price || specifications.regular_price || null;
+          if (specPrice !== null && specPrice !== undefined) {
+            price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+            if (isNaN(price)) price = 0;
           }
         }
-
-        // ✅ Step 3: Get users for provider services
-        const userIds = filterNonNull(providerServices.map(ps => ps.user_id));
-        let users: any[] = [];
-        if (userIds.length > 0) {
-          const { data, error } = await supabase
-            .from('users')
-            .select('id, full_name, phone_number')
-            .in('id', userIds);
-          if (!error && data) users = data;
+        
+        // Calculate distance if user location and seller location available
+        let distance = undefined;
+        if (userLocation && userInfo?.latitude !== null && userInfo?.latitude !== undefined && userInfo?.longitude !== null && userInfo?.longitude !== undefined) {
+          distance = calculateDistance(
+            userLocation.latitude,
+            userLocation.longitude,
+            userInfo.latitude,
+            userInfo.longitude
+          );
         }
 
-        // ✅ Step 4: Get institutions for provider services
-        const institutionIds = filterNonNull(providerServices.map(ps => ps.institution_id));
-        let institutions: any[] = [];
-        if (institutionIds.length > 0) {
-          const { data, error } = await supabase
-            .from('institutions')
-            .select('id, name, area, city, rating, review_count')
-            .in('id', institutionIds);
-          if (!error && data) institutions = data;
-        }
-
-        // ✅ Step 5: Build service opportunities
-        for (const ps of providerServices) {
-          // Find the service catalog item
-          const service = serviceCatalogItems.find(s => s.id === ps.service_id);
-          if (!service) {
-            console.warn(`⚠️ No service catalog found for service_id: ${ps.service_id}`);
-            continue;
-          }
-
-          let providerName = 'Service Provider';
-          let providerId = ps.user_id || ps.institution_id || 'unknown';
-          let providerType: 'individual' | 'institution' = 'individual';
-          let providerRating = null;
-          let providerReviewCount = null;
-          let providerArea = null;
-
-          // Check if linked to institution
-          if (ps.institution_id) {
-            const inst = institutions.find(i => i.id === ps.institution_id);
-            if (inst) {
-              providerName = inst.name || 'Institution';
-              providerType = 'institution';
-              providerRating = inst.rating;
-              providerReviewCount = inst.review_count;
-              providerArea = inst.area || inst.city;
-              console.log(`🏢 Institution service: ${service.name} by ${providerName}`);
-            }
-          } 
-          // Check if linked to user
-          else if (ps.user_id) {
-            const user = users.find(u => u.id === ps.user_id);
-            if (user) {
-              providerName = user.full_name || 'Service Provider';
-              providerType = 'individual';
-              console.log(`👤 User service: ${service.name} by ${providerName}`);
-            } else {
-              console.warn(`⚠️ No user found for user_id: ${ps.user_id}`);
-            }
-          }
-
-          const serviceImages = service.images || [];
-          const serviceSpecs = service.specifications || {};
-
-          serviceOpportunities.push({
-            id: service.id,
-            title: service.name || 'Service',
-            shopName: providerName,
-            shopId: providerId,
-            price: ps.price || 0,
-            currency: 'UGX',
-            imageUrl: serviceImages[0] || getPlaceholderImage(service.category, service.name),
-            catalogImages: serviceImages,
-            description: service.description || '',
-            specifications: serviceSpecs,
-            rating: providerRating || null,
-            reviewCount: providerReviewCount || null,
-            area: providerArea || null,
-            inStock: ps.is_active || false,
-            category: service.category || null,
-            type: 'service',
-            createdAt: ps.created_at || new Date().toISOString(),
-            duration: service.duration || null,
-            duration_minutes: service.duration_minutes || null,
-            providerId: providerId,
-            providerName: providerName,
-            providerType: providerType,
+        if (__DEV__) {
+          console.log(`📊 Raw post data for "${post.name}":`, {
+            price: price,
+            specifications: specifications,
+            share_count: post.share_count,
+            comment_count: post.comment_count,
+            like_count: post.like_count,
+            view_count: post.view_count,
+            save_count: post.save_count,
           });
         }
-        console.log(`🔧 Found ${serviceOpportunities.length} services`);
+
+        return {
+          id: post.id,
+          title: post.name || 'Untitled',
+          price: price,
+          currency: 'UGX',
+          imageUrl: images[0] || '',
+          catalogImages: images,
+          description: post.description || '',
+          rating: null,
+          reviewCount: null,
+          area: post.location || null,
+          inStock: true,
+          category: post.category || null,
+          type: 'product',
+          createdAt: post.created_at || new Date().toISOString(),
+          userId: post.user_id || '',
+          userFullName: userInfo?.full_name || 'User',
+          userAvatar: userInfo?.avatar_url || null,
+          userLatitude: userInfo?.latitude || null,
+          userLongitude: userInfo?.longitude || null,
+          userPhone: userInfo?.phone_number || null,
+          hashtags: post.tags || [],
+          video: post.video || null,
+          video_thumbnail: post.video_thumbnail || null,
+          video_duration: post.video_duration || null,
+          video_size: post.video_size || null,
+          likeCount: post.like_count || 0,
+          viewCount: post.view_count || 0,
+          shareCount: post.share_count || 0,
+          commentCount: post.comment_count || 0,
+          saveCount: saveInfo.count || post.save_count || 0,
+          isSaved: saveInfo.isSaved || false,
+          distance: distance,
+          specifications: specifications,
+        };
+      });
+
+      // Log the mapped data
+      if (__DEV__ && opportunities.length > 0) {
+        console.log('📊 First opportunity mapped:', {
+          title: opportunities[0].title,
+          price: opportunities[0].price,
+          specifications: opportunities[0].specifications,
+          shareCount: opportunities[0].shareCount,
+          commentCount: opportunities[0].commentCount,
+          saveCount: opportunities[0].saveCount,
+          distance: opportunities[0].distance,
+          isSaved: opportunities[0].isSaved,
+        });
       }
 
-      // ============================================================
-      // PART 3: COMBINE AND RETURN
-      // ============================================================
-
-      const allOpportunities = [...productOpportunities, ...serviceOpportunities];
-      const shuffled = shuffleArray(allOpportunities);
-
-      if (shuffled.length === 0) {
-        console.log('⚠️ No opportunities found, using mock data');
-        return getMockOpportunities();
+      // Sort by distance if available
+      if (userLocation) {
+        opportunities.sort((a, b) => {
+          const distA = a.distance ?? Infinity;
+          const distB = b.distance ?? Infinity;
+          return distA - distB;
+        });
       }
 
-      console.log(`✅ Returning ${shuffled.length} total opportunities`);
-      console.log(`   📦 Products: ${productOpportunities.length}`);
-      console.log(`   🔧 Services: ${serviceOpportunities.length}`);
-
-      return shuffled;
+      console.log(`✅ Returning ${opportunities.length} opportunities`);
+      return opportunities;
 
     } catch (error) {
       console.error('❌ Error in getOpportunities:', error);
-      return getMockOpportunities();
+      return [];
     }
   },
 
-  async getOpportunitiesByCategory(categoryId: string): Promise<Opportunity[]> {
-    const all = await this.getOpportunities();
-    return all.filter(opp => opp.category === categoryId);
+  /**
+   * Increment share count - Simple update without RPC
+   */
+  incrementShareCount: async (postId: string): Promise<boolean> => {
+    try {
+      // First, get the current share count
+      const { data: post, error: fetchError } = await supabase
+        .from('catalog')
+        .select('share_count')
+        .eq('id', postId)
+        .single();
+
+      if (fetchError) {
+        console.error('❌ Error fetching share count:', fetchError);
+        return false;
+      }
+
+      const currentCount = post?.share_count || 0;
+      const newCount = currentCount + 1;
+
+      // Update with the new count
+      const { error: updateError } = await supabase
+        .from('catalog')
+        .update({ share_count: newCount })
+        .eq('id', postId);
+
+      if (updateError) {
+        console.error('❌ Error updating share count:', updateError);
+        return false;
+      }
+
+      console.log(`✅ Share count updated from ${currentCount} to ${newCount}`);
+      return true;
+    } catch (error) {
+      console.error('❌ Error incrementing share count:', error);
+      return false;
+    }
   },
 
-  async getOpportunityById(id: string): Promise<Opportunity | null> {
-    const all = await this.getOpportunities();
-    return all.find(opp => opp.id === id) || null;
+  /**
+   * Toggle save status - Simple update without RPC/sql
+   */
+  toggleSave: async (postId: string, userId: string): Promise<{ saved: boolean; count: number }> => {
+    try {
+      // Check if already saved
+      const { data: existing, error: checkError } = await supabase
+        .from('saves')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('post_id', postId)
+        .maybeSingle();
+
+      if (checkError) {
+        console.error('❌ Error checking save:', checkError);
+        return { saved: false, count: 0 };
+      }
+
+      // Get current count
+      const { data: post } = await supabase
+        .from('catalog')
+        .select('save_count')
+        .eq('id', postId)
+        .single();
+      
+      let currentCount = post?.save_count || 0;
+
+      if (existing) {
+        // Unsave
+        const { error: deleteError } = await supabase
+          .from('saves')
+          .delete()
+          .eq('id', existing.id);
+
+        if (deleteError) {
+          console.error('❌ Error unsaving:', deleteError);
+          return { saved: false, count: currentCount };
+        }
+
+        // Decrement count
+        const newCount = Math.max(0, currentCount - 1);
+        await supabase
+          .from('catalog')
+          .update({ save_count: newCount })
+          .eq('id', postId);
+
+        return { saved: false, count: newCount };
+      } else {
+        // Save
+        const { error: insertError } = await supabase
+          .from('saves')
+          .insert({ user_id: userId, post_id: postId });
+
+        if (insertError) {
+          console.error('❌ Error saving:', insertError);
+          return { saved: false, count: currentCount };
+        }
+
+        // Increment count
+        const newCount = currentCount + 1;
+        await supabase
+          .from('catalog')
+          .update({ save_count: newCount })
+          .eq('id', postId);
+
+        return { saved: true, count: newCount };
+      }
+    } catch (error) {
+      console.error('❌ Error toggling save:', error);
+      return { saved: false, count: 0 };
+    }
   },
 
-  async getProductsOnly(): Promise<Opportunity[]> {
-    const all = await this.getOpportunities();
-    return all.filter(opp => opp.type === 'product');
+  /**
+   * Check if user saved a post
+   */
+  isSaved: async (postId: string, userId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase
+        .from('saves')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('post_id', postId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('❌ Error checking save status:', error);
+        return false;
+      }
+      return !!data;
+    } catch (error) {
+      console.error('❌ Error checking save status:', error);
+      return false;
+    }
   },
 
-  async getServicesOnly(): Promise<Opportunity[]> {
-    const all = await this.getOpportunities();
-    return all.filter(opp => opp.type === 'service');
-  },
+  /**
+   * Get a single opportunity by ID
+   */
+  getOpportunityById: async (id: string): Promise<Opportunity | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('catalog')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-  async searchOpportunities(query: string): Promise<Opportunity[]> {
-    const all = await this.getOpportunities();
-    const lowerQuery = query.toLowerCase();
-    return all.filter(opp =>
-      opp.title.toLowerCase().includes(lowerQuery) ||
-      opp.description.toLowerCase().includes(lowerQuery) ||
-      opp.category?.toLowerCase().includes(lowerQuery)
-    );
-  },
+      if (error) {
+        console.error('❌ Error fetching opportunity:', error);
+        return null;
+      }
 
-  getMockOpportunities,
+      if (!data) return null;
+      if (!data.user_id) return null;
+
+      // Get user info
+      const { data: userData } = await supabase
+        .from('users')
+        .select('full_name, avatar_url, latitude, longitude, phone_number')
+        .eq('id', data.user_id)
+        .single();
+
+      const images = data.images || [];
+      
+      // ✅ Extract price from specifications with type safety
+      let price = data.price || 0;
+      let specifications = data.specifications || {};
+      
+      if (price === 0 && isSpecificationsObject(specifications)) {
+        const specPrice = specifications.price || specifications.regular_price || null;
+        if (specPrice !== null && specPrice !== undefined) {
+          price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+          if (isNaN(price)) price = 0;
+        }
+      }
+
+      return {
+        id: data.id,
+        title: data.name || 'Untitled',
+        price: price,
+        currency: 'UGX',
+        imageUrl: images[0] || '',
+        catalogImages: images,
+        description: data.description || '',
+        rating: null,
+        reviewCount: null,
+        area: data.location || null,
+        inStock: true,
+        category: data.category || null,
+        type: 'product',
+        createdAt: data.created_at || new Date().toISOString(),
+        userId: data.user_id || '',
+        userFullName: userData?.full_name || 'User',
+        userAvatar: userData?.avatar_url || null,
+        userLatitude: userData?.latitude || null,
+        userLongitude: userData?.longitude || null,
+        userPhone: userData?.phone_number || null,
+        hashtags: data.tags || [],
+        video: data.video || null,
+        video_thumbnail: data.video_thumbnail || null,
+        video_duration: data.video_duration || null,
+        video_size: data.video_size || null,
+        likeCount: data.like_count || 0,
+        viewCount: data.view_count || 0,
+        shareCount: data.share_count || 0,
+        commentCount: data.comment_count || 0,
+        saveCount: data.save_count || 0,
+        isSaved: false,
+        distance: undefined,
+        specifications: specifications,
+      };
+    } catch (error) {
+      console.error('❌ Error in getOpportunityById:', error);
+      return null;
+    }
+  },
 };

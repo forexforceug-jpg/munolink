@@ -36,7 +36,6 @@ export const recommendationService = {
       const mappedType = mapItemType(itemType);
       console.log(`📊 Tracking ${action} for user ${userId} on item ${itemId}`);
 
-      // Check if user exists
       const { data: user, error: userError } = await supabaseAny
         .from('users')
         .select('id')
@@ -48,7 +47,6 @@ export const recommendationService = {
         return;
       }
 
-      // Check if item exists
       let itemExists = false;
       let finalItemType = mappedType;
 
@@ -79,7 +77,6 @@ export const recommendationService = {
         return;
       }
 
-      // Check if interaction exists
       const { data: existing, error: findError } = await supabaseAny
         .from('user_interactions')
         .select('*')
@@ -162,10 +159,77 @@ export const recommendationService = {
   calculateIntensity(action: string, count: number): number {
     const baseWeight = this.getActionWeight(action);
     if (action === 'view') {
-      // ✅ FIXED: Cap at 5 instead of 3 so > 3 logic works
       return Math.min(baseWeight * Math.log2(count + 1), 5.0);
     }
     return Math.min(baseWeight + (count - 1) * 0.5, 10.0);
+  },
+
+  // ============================================================
+  // SAVE USER LOCATION
+  // ============================================================
+  async saveUserLocation(
+    userId: string,
+    location: UserLocation | null,
+    locationLabel: string
+  ): Promise<void> {
+    try {
+      if (!userId || !location) return;
+
+      const { error } = await supabaseAny
+        .from('users')
+        .update({
+          location_city: location.city || null,
+          location_region: location.region || null,
+          location_country: location.country || null,
+          location_label: locationLabel || null,
+          location_lat: location.latitude || null,
+          location_lng: location.longitude || null,
+          location_updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (error) {
+        console.error('Error saving user location:', error);
+      } else {
+        console.log(`✅ Saved location for user ${userId}: ${locationLabel}`);
+      }
+    } catch (error) {
+      console.error('Error in saveUserLocation:', error);
+    }
+  },
+
+  // ============================================================
+  // GET USER'S SAVED LOCATION
+  // ============================================================
+  async getUserLocation(userId: string): Promise<{ location: UserLocation | null; label: string | null }> {
+    try {
+      const { data, error } = await supabaseAny
+        .from('users')
+        .select('location_city, location_region, location_country, location_label, location_lat, location_lng')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error || !data) {
+        return { location: null, label: null };
+      }
+
+      if (data.location_lat && data.location_lng) {
+        const location: UserLocation = {
+          latitude: data.location_lat,
+          longitude: data.location_lng,
+          city: data.location_city || null,
+          region: data.location_region || null,
+          country: data.location_country || null,
+          formattedAddress: data.location_label || null,
+        };
+        return { location, label: data.location_label || null };
+      }
+
+      return { location: null, label: null };
+    } catch (error) {
+      console.error('Error getting user location:', error);
+      return { location: null, label: null };
+    }
   },
 
   // ============================================================
@@ -187,12 +251,10 @@ export const recommendationService = {
         return null;
       }
 
-      // Extract all actions with proper counts
       const savedItems = interactions
         .filter((i: any) => i.action === 'save')
         .map((i: any) => i.item_id);
 
-      // ✅ FIXED: Get view counts from metadata, not rows
       const viewedItems: string[] = [];
       const viewIntensity: Record<string, number> = {};
       const viewCounts: Record<string, number> = {};
@@ -220,24 +282,8 @@ export const recommendationService = {
         .filter((i: any) => i.action === 'share')
         .map((i: any) => i.item_id);
 
-      // Get user location
-      const { data: user } = await supabaseAny
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      let location: UserLocation | null = null;
-      if (user) {
-        location = {
-          latitude: 0,
-          longitude: 0,
-          city: user.location_city || null,
-          region: user.location_region || null,
-          country: user.location_country || null,
-          formattedAddress: null,
-        };
-      }
+      // Get user location from saved preferences
+      const { location, label } = await this.getUserLocation(userId);
 
       // Get categories from viewed items
       let categories: string[] = [];
@@ -268,7 +314,6 @@ export const recommendationService = {
         }
       }
 
-      // Determine preferred types
       const typeCounts: Record<string, number> = {};
       interactions.forEach((i: any) => {
         const type = i.item_type || 'product';
@@ -289,7 +334,7 @@ export const recommendationService = {
         bookedItems,
         sharedItems,
         location,
-        area: user?.location_city || null,
+        area: location?.city || null,
         viewIntensity,
       };
     } catch (error) {
@@ -299,7 +344,7 @@ export const recommendationService = {
   },
 
   // ============================================================
-  // GET PERSONALIZED RECOMMENDATIONS - WITH PROPER MIXING
+  // GET PERSONALIZED RECOMMENDATIONS
   // ============================================================
   async getPersonalizedRecommendations(
     opportunities: Opportunity[],
@@ -307,59 +352,46 @@ export const recommendationService = {
     userLocation?: UserLocation | null
   ): Promise<Opportunity[]> {
     const preferences = await this.getUserPreferences(userId);
-    const location = userLocation || locationService.getCachedLocation();
+    const location = userLocation || preferences?.location || locationService.getCachedLocation();
 
     if (!preferences || preferences.viewedItems.length === 0) {
       return this.getNewUserRecommendations(opportunities, location);
     }
 
-    // Separate products and services
     const products = opportunities.filter((opp: Opportunity) => opp.type === 'product');
     const services = opportunities.filter((opp: Opportunity) => opp.type === 'service' || opp.type === 'event');
 
-    // Score products
     const scoredProducts = products.map((opp: Opportunity) => {
       const score = this.calculateScoreImproved(opp, preferences, location);
       return { ...opp, score };
     });
 
-    // Score services
     const scoredServices = services.map((opp: Opportunity) => {
       const score = this.calculateScoreImproved(opp, preferences, location);
       return { ...opp, score };
     });
 
-    // Sort each group by score
     scoredProducts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
     scoredServices.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
 
-    // ============================================================
-    // ✅ PROPER MIXING - Interleave products and services
-    // ============================================================
     const mixedResults: any[] = [];
     
-    // Calculate the ratio of products to services in the total pool
     const totalProducts = scoredProducts.length;
     const totalServices = scoredServices.length;
     const totalItems = totalProducts + totalServices;
     
-    // If no items, return empty
     if (totalItems === 0) return [];
     
-    // Calculate target percentages
     const productPercentage = totalProducts / totalItems;
     const servicePercentage = totalServices / totalItems;
     
-    // Determine how many of each to take (up to 50 total)
     const targetCount = Math.min(totalItems, 50);
     const targetProducts = Math.round(targetCount * productPercentage);
     const targetServices = targetCount - targetProducts;
     
-    // Take the top items from each group
     const topProducts = scoredProducts.slice(0, targetProducts);
     const topServices = scoredServices.slice(0, targetServices);
     
-    // Interleave them evenly
     const maxLen = Math.max(topProducts.length, topServices.length);
     
     for (let i = 0; i < maxLen; i++) {
@@ -371,21 +403,17 @@ export const recommendationService = {
       }
     }
     
-    // ✅ EXPLORATION: Replace 10-20% with random items from the bottom
-    const explorationRate = 0.15; // 15% exploration
+    const explorationRate = 0.15;
     const explorationCount = Math.floor(mixedResults.length * explorationRate);
     
     if (explorationCount > 0) {
-      // Get items from the bottom of each list
       const bottomProducts = scoredProducts.slice(targetProducts);
       const bottomServices = scoredServices.slice(targetServices);
       const bottomAll = [...bottomProducts, ...bottomServices];
       
-      // Shuffle and pick some for exploration
       const shuffledExploration = this.shuffleArray(bottomAll);
       const explorationItems = shuffledExploration.slice(0, explorationCount);
       
-      // Replace the last N items with exploration items
       for (let i = 0; i < explorationItems.length; i++) {
         const index = mixedResults.length - 1 - i;
         if (index >= 0) {
@@ -394,7 +422,6 @@ export const recommendationService = {
       }
     }
 
-    // Remove duplicates
     const unique = Array.from(new Map(mixedResults.map((item: any) => [item.id, item])).values());
 
     const productCount = unique.filter((o: any) => o.type === 'product').length;
@@ -448,7 +475,6 @@ export const recommendationService = {
     const behaviorWeight = 20;
     let behaviorScore = 0;
     
-    // ✅ FIXED: Use metadata.count for true view count
     const isSaved = preferences.savedItems.includes(opp.id);
     const isPurchased = preferences.purchasedItems?.includes(opp.id) || false;
     const isBooked = preferences.bookedItems?.includes(opp.id) || false;
@@ -462,7 +488,6 @@ export const recommendationService = {
     } else if (isSaved) {
       behaviorScore = behaviorWeight * 0.8;
     } else if (intensity > 0) {
-      // ✅ FIXED: Use intensity directly (now capped at 5)
       if (intensity >= 4) {
         behaviorScore = behaviorWeight * 0.8;
       } else if (intensity >= 3) {
@@ -506,25 +531,162 @@ export const recommendationService = {
       score += ratingWeight * 0.2;
     }
 
-    // 7. Location bonus (5% weight)
+    // 7. Location bonus (5% weight) - USES EXACT LOCATION
     const locationWeight = 5;
-    if (location?.city && opp.area) {
-      if (opp.area.toLowerCase().includes(location.city.toLowerCase())) {
-        score += locationWeight;
+    let locationScore = 0;
+
+    const effectiveLocation = location || preferences.location;
+
+    if (effectiveLocation?.city && opp.area) {
+      const cityLower = effectiveLocation.city.toLowerCase().trim();
+      const areaLower = opp.area.toLowerCase().trim();
+      
+      // ✅ Exact match or partial match
+      if (areaLower.includes(cityLower) || cityLower.includes(areaLower)) {
+        locationScore = locationWeight; // Full bonus
       } else {
-        score += locationWeight * 0.4;
+        // Check for partial matches (e.g., "Kampala" matches "Kampala Central")
+        const cityParts = cityLower.split(' ');
+        let hasPartialMatch = false;
+        for (const part of cityParts) {
+          if (part.length > 2 && areaLower.includes(part)) {
+            hasPartialMatch = true;
+            break;
+          }
+        }
+        locationScore = hasPartialMatch ? locationWeight * 0.7 : locationWeight * 0.3;
       }
     } else if (preferences.area && opp.area) {
-      if (opp.area.toLowerCase().includes(preferences.area.toLowerCase())) {
-        score += locationWeight;
+      const prefAreaLower = preferences.area.toLowerCase().trim();
+      const areaLower = opp.area.toLowerCase().trim();
+      
+      if (areaLower.includes(prefAreaLower) || prefAreaLower.includes(areaLower)) {
+        locationScore = locationWeight * 0.8;
+      } else {
+        locationScore = locationWeight * 0.3;
       }
+    } else {
+      locationScore = locationWeight * 0.2;
     }
+
+    score += locationScore;
 
     return Math.min(Math.round(score), 100);
   },
 
   // ============================================================
-  // GET NEW USER RECOMMENDATIONS - WITH PROPER MIXING
+  // GET LOCATION-BASED RECOMMENDATIONS
+  // ============================================================
+  async getLocationBasedRecommendations(
+    opportunities: Opportunity[],
+    location: UserLocation | null,
+    userId?: string
+  ): Promise<Opportunity[]> {
+    if (!location) {
+      if (userId) {
+        return await this.getPersonalizedRecommendations(opportunities, userId);
+      }
+      return this.getNewUserRecommendations(opportunities);
+    }
+
+    console.log(`📍 Getting location-based recommendations for: ${location.city || location.formattedAddress}`);
+
+    // Score each opportunity based on location
+    const scored = opportunities.map((opp) => {
+      let score = 0;
+      
+      // Location match scoring (max 100 points)
+      if (opp.area) {
+        const areaLower = opp.area.toLowerCase();
+        const cityLower = location.city?.toLowerCase() || '';
+        const regionLower = location.region?.toLowerCase() || '';
+        const countryLower = location.country?.toLowerCase() || '';
+        
+        // ✅ Exact city match (highest priority)
+        if (cityLower && areaLower.includes(cityLower)) {
+          score += 50;
+        } 
+        // ✅ Region match
+        else if (regionLower && areaLower.includes(regionLower)) {
+          score += 30;
+        }
+        // ✅ Country match (default)
+        else if (countryLower && areaLower.includes(countryLower)) {
+          score += 15;
+        }
+        // ✅ Partial match (e.g., "Kampala" matches "Kampala Central")
+        else if (cityLower) {
+          const cityParts = cityLower.split(' ');
+          let hasPartial = false;
+          for (const part of cityParts) {
+            if (part.length > 2 && areaLower.includes(part)) {
+              hasPartial = true;
+              break;
+            }
+          }
+          if (hasPartial) score += 25;
+        }
+      }
+      
+      // Add freshness bonus
+      if (opp.createdAt) {
+        const daysOld = (Date.now() - new Date(opp.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+        if (daysOld < 7) score += 20;
+        else if (daysOld < 14) score += 10;
+        else if (daysOld < 30) score += 5;
+      }
+      
+      // Add rating bonus
+      if (opp.rating && opp.rating > 4.5) score += 20;
+      else if (opp.rating && opp.rating > 4.0) score += 15;
+      else if (opp.rating && opp.rating > 3.0) score += 10;
+      
+      // Add stock bonus
+      if (opp.inStock !== false) score += 10;
+      
+      return { ...opp, score };
+    });
+
+    // Sort by score
+    scored.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+    
+    // Mix products and services
+    const products = scored.filter((o: any) => o.type === 'product');
+    const services = scored.filter((o: any) => o.type === 'service' || o.type === 'event');
+    
+    const mixedResults: any[] = [];
+    const maxLen = Math.max(products.length, services.length);
+    
+    for (let i = 0; i < maxLen; i++) {
+      if (i < products.length) mixedResults.push(products[i]);
+      if (i < services.length) mixedResults.push(services[i]);
+    }
+    
+    // Add some exploration items (10%)
+    const explorationCount = Math.min(Math.floor(mixedResults.length * 0.1), 5);
+    if (explorationCount > 0) {
+      const bottomItems = scored.slice(Math.min(scored.length, 20));
+      const shuffledBottom = this.shuffleArray(bottomItems);
+      for (let i = 0; i < Math.min(explorationCount, shuffledBottom.length); i++) {
+        const idx = mixedResults.length - 1 - i;
+        if (idx >= 0) {
+          mixedResults[idx] = shuffledBottom[i];
+        }
+      }
+    }
+
+    const unique = Array.from(new Map(mixedResults.map((item: any) => [item.id, item])).values());
+
+    const productCount = unique.filter((o: any) => o.type === 'product').length;
+    const serviceCount = unique.filter((o: any) => o.type === 'service' || o.type === 'event').length;
+
+    console.log(`📍 Returning ${unique.length} location-based opportunities (${productCount} products, ${serviceCount} services)`);
+
+    return unique;
+  },
+
+  // ============================================================
+  // GET NEW USER RECOMMENDATIONS
   // ============================================================
   getNewUserRecommendations(
     opportunities: Opportunity[],
@@ -533,27 +695,22 @@ export const recommendationService = {
     const shuffled = this.shuffleArray([...opportunities]);
     const location = userLocation || locationService.getCachedLocation();
 
-    // Separate products and services
     const products = shuffled.filter((opp: Opportunity) => opp.type === 'product');
     const services = shuffled.filter((opp: Opportunity) => opp.type === 'service' || opp.type === 'event');
 
-    // Score products
     const scoredProducts = products.map((opp: Opportunity) => {
       let score = this.calculateNewUserScoreImproved(opp, location);
       return { ...opp, score };
     });
 
-    // Score services
     const scoredServices = services.map((opp: Opportunity) => {
       let score = this.calculateNewUserScoreImproved(opp, location);
       return { ...opp, score };
     });
 
-    // Sort each group by score
     scoredProducts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
     scoredServices.sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
 
-    // ✅ PROPER MIXING for new users
     const mixedResults: any[] = [];
     
     const totalProducts = scoredProducts.length;
@@ -562,7 +719,6 @@ export const recommendationService = {
     
     if (totalItems === 0) return [];
     
-    // Calculate target percentages
     const productPercentage = totalProducts / totalItems;
     const servicePercentage = totalServices / totalItems;
     
@@ -573,7 +729,6 @@ export const recommendationService = {
     const topProducts = scoredProducts.slice(0, targetProducts);
     const topServices = scoredServices.slice(0, targetServices);
     
-    // Interleave
     const maxLen = Math.max(topProducts.length, topServices.length);
     
     for (let i = 0; i < maxLen; i++) {
@@ -596,22 +751,39 @@ export const recommendationService = {
   },
 
   // ============================================================
-  // CALCULATE NEW USER SCORE
+  // CALCULATE NEW USER SCORE - IMPROVED
   // ============================================================
   calculateNewUserScoreImproved(opp: Opportunity, location: UserLocation | null): number {
     let score = 0;
 
+    // Location weight (25%) - USES EXACT LOCATION
     const locationWeight = 25;
+    let locationScore = 0;
+
     if (location?.city && opp.area) {
-      if (opp.area.toLowerCase().includes(location.city.toLowerCase())) {
-        score += locationWeight;
+      const cityLower = location.city.toLowerCase().trim();
+      const areaLower = opp.area.toLowerCase().trim();
+      
+      if (areaLower.includes(cityLower) || cityLower.includes(areaLower)) {
+        locationScore = locationWeight;
       } else {
-        score += locationWeight * 0.4;
+        const cityParts = cityLower.split(' ');
+        let hasPartialMatch = false;
+        for (const part of cityParts) {
+          if (part.length > 2 && areaLower.includes(part)) {
+            hasPartialMatch = true;
+            break;
+          }
+        }
+        locationScore = hasPartialMatch ? locationWeight * 0.7 : locationWeight * 0.3;
       }
     } else {
-      score += locationWeight * 0.3;
+      locationScore = locationWeight * 0.2;
     }
 
+    score += locationScore;
+
+    // Freshness (20%)
     const freshnessWeight = 20;
     const daysOld = opp.createdAt
       ? (Date.now() - new Date(opp.createdAt).getTime()) / (1000 * 60 * 60 * 24)
@@ -626,6 +798,7 @@ export const recommendationService = {
       score += freshnessWeight * 0.2;
     }
 
+    // Rating (20%)
     const ratingWeight = 20;
     if (opp.rating && opp.rating > 4.5) {
       score += ratingWeight;
@@ -637,6 +810,7 @@ export const recommendationService = {
       score += ratingWeight * 0.2;
     }
 
+    // Stock (20%)
     const stockWeight = 20;
     if (opp.inStock !== false) {
       score += stockWeight;
@@ -644,6 +818,7 @@ export const recommendationService = {
       score += stockWeight * 0.1;
     }
 
+    // Image (15%)
     const imageWeight = 15;
     if (opp.imageUrl) {
       score += imageWeight;
@@ -652,6 +827,41 @@ export const recommendationService = {
     }
 
     return Math.min(Math.round(score), 100);
+  },
+
+  // ============================================================
+  // FILTER OPPORTUNITIES BY LOCATION
+  // ============================================================
+  filterByLocation(
+    opportunities: Opportunity[],
+    location: UserLocation | null,
+    radiusKm: number = 50
+  ): Opportunity[] {
+    if (!location) return opportunities;
+
+    return opportunities.filter((opp) => {
+      if (!opp.area) return true;
+      
+      const areaLower = opp.area.toLowerCase();
+      const cityLower = location.city?.toLowerCase() || '';
+      
+      if (cityLower) {
+        return areaLower.includes(cityLower) || cityLower.includes(areaLower);
+      }
+      
+      const regionLower = location.region?.toLowerCase() || '';
+      const countryLower = location.country?.toLowerCase() || '';
+      
+      if (regionLower) {
+        return areaLower.includes(regionLower);
+      }
+      
+      if (countryLower) {
+        return areaLower.includes(countryLower);
+      }
+      
+      return true;
+    });
   },
 
   // ============================================================

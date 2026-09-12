@@ -1,23 +1,20 @@
 // src/features/opportunity/renderer/SceneRenderer.tsx
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  Animated, 
-  TouchableOpacity, 
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Animated,
+  TouchableOpacity,
   Dimensions,
   PanResponder,
   Platform,
+  Image,
+  FlatList,
 } from 'react-native';
-import { Scene } from '../types/Scene';
-import { HeroScene } from '../scenes/HeroScene';
-import { DetailsScene } from '../scenes/DetailsScene';
-import { TrustScene } from '../scenes/TrustScene';
-import { GalleryScene } from '../scenes/GalleryScene';
-import { ActionScene } from '../scenes/ActionScene';
 import { Ionicons } from '@expo/vector-icons';
+import { useVideoPlayer, VideoView } from 'expo-video';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -35,7 +32,13 @@ export interface SceneViewEvent {
 }
 
 export interface BehavioralEvent {
-  type: 'scene_view' | 'scene_navigation' | 'opportunity_open' | 'opportunity_close' | 'gallery_interaction' | 'action_trigger';
+  type:
+    | 'scene_view'
+    | 'scene_navigation'
+    | 'opportunity_open'
+    | 'opportunity_close'
+    | 'gallery_interaction'
+    | 'action_trigger';
   sceneIndex?: number;
   sceneType?: string;
   timeSpent?: number;
@@ -43,254 +46,407 @@ export interface BehavioralEvent {
   action?: string;
 }
 
+export interface MediaItem {
+  type: 'image' | 'video';
+  url: string;
+  thumbnail?: string;
+}
+
+type PriceType = 'fixed' | 'negotiable' | 'starting_from' | 'free';
+
 interface Props {
-  scenes: Scene[];
+  media: MediaItem[];
   onSceneChange?: (index: number, source?: NavigationSource) => void;
+  onBehavioralEvent?: (event: BehavioralEvent) => void;
   onPrimaryAction?: () => void;
   onShare?: () => void;
   onSave?: () => void;
   onShowMore?: () => void;
-  onBehavioralEvent?: (event: BehavioralEvent) => void;
   width?: number;
   height?: number;
   autoPlay?: boolean;
   autoPlayInterval?: number;
   resetKey?: string | number;
   isDesktop?: boolean;
+  bottomOffset?: number;
   title?: string;
   price?: number;
-  shopName?: string;
+  priceType?: PriceType;
+  currency?: string;
+  userName?: string;
+  userAvatar?: string | null;
+  description?: string | null;
   rating?: number | null;
   area?: string | null;
   inStock?: boolean;
-  currency?: string;
   type?: 'product' | 'service' | 'event';
   providerName?: string;
   providerId?: string;
   providerType?: 'individual' | 'institution';
-  // ✅ New prop for custom bottom position
-  bottomOffset?: number;
+  createdAt?: string;
+  /**
+   * ✅ NEW: Whether this SceneRenderer is the currently visible feed item.
+   * When false, all video playback is force-paused so nothing plays in the background.
+   */
+  isVisible?: boolean;
 }
+
+// ============================================================
+// HELPER: Format time ago
+// ============================================================
+function formatTimeAgo(dateString?: string): string {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+
+  if (diff < 60000) return 'Just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+  if (diff < 172800000) return 'Yesterday';
+  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d`;
+  return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+}
+
+// ============================================================
+// VIDEO ITEM COMPONENT (expo-video)
+// ============================================================
+
+interface VideoItemProps {
+  url: string;
+  width: number;
+  height: number;
+  isCurrent: boolean;
+  /** ✅ Feed item is on screen */
+  isVisible: boolean;
+  autoPlay: boolean;
+  onPlayingChange: (playing: boolean) => void;
+}
+
+const VideoItem = memo(
+  function VideoItem({
+    url,
+    width,
+    height,
+    isCurrent,
+    isVisible,
+    autoPlay,
+    onPlayingChange,
+  }: VideoItemProps) {
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [isReady, setIsReady] = useState(false);
+    const [videoAspect, setVideoAspect] = useState<number | null>(null);
+
+    const player = useVideoPlayer(url, (p) => {
+      p.loop = false;
+      p.muted = false;
+    });
+
+    // Track playing state
+    useEffect(() => {
+      const sub = player.addListener('playingChange', (payload) => {
+        setIsPlaying(payload.isPlaying);
+        onPlayingChange(payload.isPlaying);
+      });
+      return () => sub.remove();
+    }, [player, onPlayingChange]);
+
+    // Track readiness + video dimensions
+    useEffect(() => {
+      const sub = player.addListener('statusChange', (payload) => {
+        if ((payload as any).status === 'readyToPlay') {
+          setIsReady(true);
+        }
+        const track = (player as any).videoTrack;
+        if (track?.size?.width && track?.size?.height) {
+          setVideoAspect(track.size.width / track.size.height);
+        }
+      });
+      return () => sub.remove();
+    }, [player]);
+
+    // ✅ THE FIX: Pause when either not current (within carousel)
+    // or not visible (feed item scrolled away)
+    useEffect(() => {
+      const shouldPlay = isCurrent && isVisible && autoPlay;
+      if (shouldPlay) {
+        player.play();
+      } else {
+        // Force pause — this is what stops background playback
+        player.pause();
+      }
+    }, [isCurrent, isVisible, autoPlay, player]);
+
+    const handlePress = useCallback(async () => {
+      if (!isReady) return;
+      try {
+        if (isPlaying) {
+          player.pause();
+        } else {
+          await player.play();
+        }
+      } catch (err) {
+        console.warn('[SceneRenderer] Video play/pause failed:', err);
+      }
+    }, [isReady, isPlaying, player]);
+
+    // Calculate dimensions maintaining aspect ratio
+    const containerAspect = width / height;
+    const effectiveAspect = videoAspect ?? containerAspect;
+    let videoW = width;
+    let videoH = height;
+    if (effectiveAspect > containerAspect) {
+      videoW = width;
+      videoH = width / effectiveAspect;
+    } else {
+      videoH = height;
+      videoW = height * effectiveAspect;
+    }
+
+    return (
+      <View style={[styles.mediaItem, { width, height }]}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={handlePress}
+          style={{ width, height, justifyContent: 'center', alignItems: 'center' }}
+        >
+          <VideoView
+            player={player}
+            style={{ width: videoW, height: videoH, backgroundColor: '#000' }}
+            contentFit="contain"
+            nativeControls={false}
+            allowsPictureInPicture={false}
+          />
+          <View style={styles.videoControlsOverlay} pointerEvents="none">
+            {!isPlaying ? (
+              <View style={styles.videoPlayButton}>
+                <Ionicons name="play-circle" size={60} color="rgba(255,255,255,0.8)" />
+              </View>
+            ) : (
+              <View style={styles.videoPlayingIndicator}>
+                <View style={styles.videoPlayingDot} />
+                <Text style={styles.videoPlayingText}>Playing</Text>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  },
+  (prev, next) =>
+    prev.url === next.url &&
+    prev.isCurrent === next.isCurrent &&
+    prev.isVisible === next.isVisible &&
+    prev.autoPlay === next.autoPlay &&
+    prev.width === next.width &&
+    prev.height === next.height
+);
 
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
 
-export function SceneRenderer({ 
-  scenes, 
-  onSceneChange, 
+export function SceneRenderer({
+  media,
+  onSceneChange,
   onPrimaryAction,
   onShare,
   onSave,
   onShowMore,
   onBehavioralEvent,
-  width = screenWidth, 
+  width = screenWidth,
   height = 600,
   autoPlay = false,
   autoPlayInterval = 6000,
   resetKey,
   isDesktop = false,
+  bottomOffset = 0,
   title = 'Product',
   price = 0,
-  shopName = 'Shop',
+  priceType = 'fixed',
+  currency = 'UGX',
+  userName = 'User',
+  userAvatar = null,
+  description = null,
   rating = null,
   area = null,
   inStock = true,
-  currency = 'UGX',
   type = 'product',
   providerName = '',
   providerId = '',
   providerType = 'individual',
-  bottomOffset = 0, // ✅ Allows manual adjustment from parent
+  createdAt,
+  isVisible = true,
 }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progressAnim] = useState(new Animated.Value(0));
   const [isDragging, setIsDragging] = useState(false);
-  
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+
+  const flatListRef = useRef<FlatList>(null);
   const autoPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sceneStartTimeRef = useRef<number>(Date.now());
-  const opportunityOpenTimeRef = useRef<number>(Date.now());
-  const isFirstSceneViewRef = useRef<boolean>(true);
-  
-  const flatListRef = useRef<any>(null);
 
-  // Safe check for empty scenes
-  if (!scenes || scenes.length === 0) {
-    return (
-      <View style={[styles.container, { width, height, justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={{ color: '#FFFFFF' }}>No scenes available</Text>
-      </View>
-    );
-  }
+  const safeMedia =
+    media && media.length > 0
+      ? media
+      : [
+          {
+            type: 'image' as const,
+            url: 'https://via.placeholder.com/400x400/1A1A2E/8A8AAE?text=No+Image',
+          },
+        ];
+  const totalItems = safeMedia.length;
 
-  const currentScene = scenes[currentIndex] || scenes[0];
-  
-  // ✅ Calculate bottom position - raised higher with more padding
-  const getBottomPosition = () => {
-    let basePosition = isDesktop ? 20 : 110;
-    // Add offset if provided
-    return basePosition + bottomOffset;
+  const currentMedia = safeMedia[currentIndex];
+  const currentIsVideo = currentMedia?.type === 'video';
+
+  const getPriceBadge = () => {
+    switch (priceType) {
+      case 'negotiable':
+        return { label: 'Negotiable', color: '#F1C40F' };
+      case 'starting_from':
+        return { label: 'Starting From', color: '#2ECC71' };
+      case 'free':
+        return { label: 'Free', color: '#2ECC71' };
+      default:
+        return { label: 'Fixed', color: '#4A7DFF' };
+    }
   };
-  
-  const bottomPosition = getBottomPosition();
 
-  // ✅ Check if this is a service
+  const priceBadge = getPriceBadge();
+  const timeAgo = formatTimeAgo(createdAt);
+
   const isService = type === 'service' || type === 'event';
-  
-  // ✅ Determine the display name with proper fallbacks
-  let displayName = shopName || 'Shop';
-  
-  if (isService) {
-    displayName = providerName || shopName || 'Service Provider';
-  } else {
-    displayName = shopName || 'Shop';
-  }
-  
-  // ✅ Availability text - different for products vs services
-  const availabilityText = isService 
-    ? (inStock ? 'Available' : 'Unavailable')
-    : (inStock ? 'In Stock' : 'Check Availability');
-  
+  const displayName = userName || 'User';
+
+  const availabilityText = isService
+    ? inStock
+      ? 'Available'
+      : 'Unavailable'
+    : inStock
+    ? 'In Stock'
+    : 'Check Availability';
+
   const availabilityStyle = isService
-    ? (inStock ? styles.available : styles.unavailable)
-    : (inStock ? styles.inStock : styles.outOfStock);
-
-  // ✅ Debug log to verify provider name is passed
-  if (__DEV__ && isService) {
-    console.log(`📱 Service: "${title}" - Provider: "${providerName || 'undefined'}" - Display: "${displayName}"`);
-  }
-
-  // ============================================================
-  // BEHAVIORAL EVENT EMITTER
-  // ============================================================
-  
-  const emitBehavioralEvent = useCallback((event: BehavioralEvent) => {
-    if (onBehavioralEvent) {
-      onBehavioralEvent(event);
-    }
-    if (__DEV__) {
-      console.log('📊 Behavioral Event:', event);
-    }
-  }, [onBehavioralEvent]);
+    ? inStock
+      ? styles.available
+      : styles.unavailable
+    : inStock
+    ? styles.inStock
+    : styles.outOfStock;
 
   // ============================================================
-  // SCENE VIEW TRACKING
+  // BEHAVIORAL EVENT EMITTER (internal only — no open/close)
   // ============================================================
-  
-  const trackSceneView = useCallback((index: number, source: NavigationSource = 'autoplay') => {
-    const scene = scenes[index];
-    if (!scene) return;
-    
-    const timeSpent = Date.now() - sceneStartTimeRef.current;
-    const event: BehavioralEvent = {
-      type: 'scene_view',
-      sceneIndex: index,
-      sceneType: scene.type || 'unknown',
-      timeSpent: timeSpent,
-      source: source,
-    };
-    
-    emitBehavioralEvent(event);
-    sceneStartTimeRef.current = Date.now();
-  }, [scenes, emitBehavioralEvent]);
 
-  // ============================================================
-  // OPPORTUNITY OPEN/CLOSE TRACKING
-  // ============================================================
-  
-  useEffect(() => {
-    const openEvent: BehavioralEvent = {
-      type: 'opportunity_open',
-      sceneIndex: 0,
-      sceneType: scenes[0]?.type || 'unknown',
-      source: 'tap',
-    };
-    emitBehavioralEvent(openEvent);
-    opportunityOpenTimeRef.current = Date.now();
-    sceneStartTimeRef.current = Date.now();
-    isFirstSceneViewRef.current = true;
-    
-    return () => {
-      const totalTimeSpent = Date.now() - opportunityOpenTimeRef.current;
-      const closeEvent: BehavioralEvent = {
-        type: 'opportunity_close',
-        timeSpent: totalTimeSpent,
-      };
-      emitBehavioralEvent(closeEvent);
-      
-      if (autoPlayTimerRef.current) {
-        clearTimeout(autoPlayTimerRef.current);
-        autoPlayTimerRef.current = null;
+  const emitBehavioralEvent = useCallback(
+    (event: BehavioralEvent) => {
+      if (onBehavioralEvent) {
+        onBehavioralEvent(event);
       }
-    };
-  }, []);
+      if (__DEV__) {
+        console.log('📊 Behavioral Event:', event);
+      }
+    },
+    [onBehavioralEvent]
+  );
+
+  const trackSceneView = useCallback(
+    (index: number, source: NavigationSource = 'autoplay') => {
+      const timeSpent = Date.now() - sceneStartTimeRef.current;
+      emitBehavioralEvent({
+        type: 'scene_view',
+        sceneIndex: index,
+        sceneType: 'media',
+        timeSpent,
+        source,
+      });
+      sceneStartTimeRef.current = Date.now();
+    },
+    [emitBehavioralEvent]
+  );
+
+  // ✅ NOTE: opportunity_open / opportunity_close tracking has been MOVED
+  // to FeedScreen.onViewableItemsChanged. It no longer lives here because
+  // FlatList's windowSize keeps multiple SceneRenderers mounted at once,
+  // which caused dozens of duplicate open/close events.
 
   // ============================================================
   // NAVIGATION FUNCTIONS
   // ============================================================
-  
-  const goToNextScene = useCallback((source: NavigationSource = 'autoplay') => {
-    if (scenes.length === 0) return;
-    trackSceneView(currentIndex, source);
-    const nextIndex = (currentIndex + 1) % scenes.length;
-    setCurrentIndex(nextIndex);
-    onSceneChange?.(nextIndex, source);
-    progressAnim.setValue(0);
-  }, [currentIndex, scenes.length, onSceneChange, trackSceneView, progressAnim]);
 
-  const goToPreviousScene = useCallback((source: NavigationSource = 'tap') => {
-    if (scenes.length === 0) return;
-    trackSceneView(currentIndex, source);
-    const prevIndex = (currentIndex - 1 + scenes.length) % scenes.length;
-    setCurrentIndex(prevIndex);
-    onSceneChange?.(prevIndex, source);
-    progressAnim.setValue(0);
-  }, [currentIndex, scenes.length, onSceneChange, trackSceneView, progressAnim]);
+  const goToNextMedia = useCallback(
+    (source: NavigationSource = 'autoplay') => {
+      if (totalItems <= 1) return;
+      trackSceneView(currentIndex, source);
+      const nextIndex = (currentIndex + 1) % totalItems;
+      setCurrentIndex(nextIndex);
+      onSceneChange?.(nextIndex, source);
+      progressAnim.setValue(0);
+      flatListRef.current?.scrollToIndex({ index: nextIndex, animated: true });
+    },
+    [currentIndex, totalItems, onSceneChange, trackSceneView, progressAnim]
+  );
 
-  const goToScene = useCallback((index: number, source: NavigationSource = 'tap') => {
-    if (scenes.length === 0) return;
-    if (index === currentIndex) return;
-    trackSceneView(currentIndex, source);
-    setCurrentIndex(index);
-    onSceneChange?.(index, source);
-    progressAnim.setValue(0);
-  }, [currentIndex, scenes.length, onSceneChange, trackSceneView, progressAnim]);
+  const goToPreviousMedia = useCallback(
+    (source: NavigationSource = 'tap') => {
+      if (totalItems <= 1) return;
+      trackSceneView(currentIndex, source);
+      const prevIndex = (currentIndex - 1 + totalItems) % totalItems;
+      setCurrentIndex(prevIndex);
+      onSceneChange?.(prevIndex, source);
+      progressAnim.setValue(0);
+      flatListRef.current?.scrollToIndex({ index: prevIndex, animated: true });
+    },
+    [currentIndex, totalItems, onSceneChange, trackSceneView, progressAnim]
+  );
 
-  // ============================================================
-  // TAP NAVIGATION
-  // ============================================================
-  
-  const handleTap = useCallback((event: any) => {
-    if (scenes.length <= 1) return;
-    const tapX = event.nativeEvent.locationX;
-    const containerWidth = width || screenWidth;
-    const tapThreshold = containerWidth * 0.3;
-    if (tapX < tapThreshold) {
-      if (currentIndex > 0) {
-        goToPreviousScene('tap');
-      }
-    } else if (tapX > containerWidth - tapThreshold) {
-      if (currentIndex < scenes.length - 1) {
-        goToNextScene('tap');
-      }
-    }
-  }, [currentIndex, scenes.length, width, goToPreviousScene, goToNextScene]);
+  const goToMedia = useCallback(
+    (index: number, source: NavigationSource = 'tap') => {
+      if (totalItems <= 1) return;
+      if (index === currentIndex) return;
+      trackSceneView(currentIndex, source);
+      setCurrentIndex(index);
+      onSceneChange?.(index, source);
+      progressAnim.setValue(0);
+      flatListRef.current?.scrollToIndex({ index, animated: true });
+    },
+    [currentIndex, totalItems, onSceneChange, trackSceneView, progressAnim]
+  );
 
   // ============================================================
   // AUTOPLAY LOGIC
   // ============================================================
-  
+
   const startAutoplay = useCallback(() => {
     if (autoPlayTimerRef.current) {
       clearTimeout(autoPlayTimerRef.current);
       autoPlayTimerRef.current = null;
     }
-    if (autoPlay && scenes.length > 1 && !isDragging) {
+    // Don't autoplay if current item is a video (let it finish naturally),
+    // or if this SceneRenderer isn't the visible one.
+    if (
+      autoPlay &&
+      isVisible &&
+      totalItems > 1 &&
+      !isDragging &&
+      currentMedia?.type !== 'video'
+    ) {
       autoPlayTimerRef.current = setTimeout(() => {
-        goToNextScene('autoplay');
+        goToNextMedia('autoplay');
       }, autoPlayInterval);
     }
-  }, [autoPlay, scenes.length, isDragging, autoPlayInterval, goToNextScene]);
+  }, [
+    autoPlay,
+    isVisible,
+    totalItems,
+    isDragging,
+    autoPlayInterval,
+    goToNextMedia,
+    currentMedia,
+  ]);
 
   const stopAutoplay = useCallback(() => {
     if (autoPlayTimerRef.current) {
@@ -299,12 +455,8 @@ export function SceneRenderer({
     }
   }, []);
 
-  // ============================================================
-  // EFFECTS
-  // ============================================================
-  
   useEffect(() => {
-    if (autoPlay && scenes.length > 1) {
+    if (autoPlay && isVisible && totalItems > 1) {
       startAutoplay();
     } else {
       stopAutoplay();
@@ -312,7 +464,7 @@ export function SceneRenderer({
     return () => {
       stopAutoplay();
     };
-  }, [autoPlay, scenes.length, currentIndex, isDragging, startAutoplay, stopAutoplay]);
+  }, [autoPlay, isVisible, totalItems, currentIndex, isDragging, startAutoplay, stopAutoplay]);
 
   useEffect(() => {
     setCurrentIndex(0);
@@ -320,11 +472,11 @@ export function SceneRenderer({
     stopAutoplay();
     onSceneChange?.(0, 'tap');
     sceneStartTimeRef.current = Date.now();
-    isFirstSceneViewRef.current = true;
-    if (autoPlay && scenes.length > 1) {
+    if (autoPlay && totalItems > 1) {
       startAutoplay();
     }
-  }, [resetKey, scenes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey, totalItems]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -339,11 +491,14 @@ export function SceneRenderer({
   // ============================================================
   // PAN RESPONDER (SWIPE)
   // ============================================================
-  
+
   const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponder: () => totalItems > 1,
     onMoveShouldSetPanResponder: (_, gestureState) => {
-      return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+      return (
+        Math.abs(gestureState.dx) > 10 &&
+        Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
+      );
     },
     onPanResponderGrant: () => {
       setIsDragging(true);
@@ -352,10 +507,10 @@ export function SceneRenderer({
     onPanResponderRelease: (_, gestureState) => {
       setIsDragging(false);
       const threshold = 50;
-      if (gestureState.dx < -threshold && currentIndex < scenes.length - 1) {
-        goToNextScene('swipe');
+      if (gestureState.dx < -threshold && currentIndex < totalItems - 1) {
+        goToNextMedia('swipe');
       } else if (gestureState.dx > threshold && currentIndex > 0) {
-        goToPreviousScene('swipe');
+        goToPreviousMedia('swipe');
       } else {
         startAutoplay();
       }
@@ -367,119 +522,136 @@ export function SceneRenderer({
   });
 
   // ============================================================
-  // RENDER SCENE
+  // RENDER MEDIA ITEM
   // ============================================================
-  
-  const renderScene = () => {
-    if (!currentScene) return null;
-    
-    switch (currentScene.type) {
-      case 'hero':
-        return <HeroScene scene={currentScene} width={width} height={height} />;
-      case 'details':
-        return <DetailsScene scene={currentScene} width={width} height={height} />;
-      case 'trust':
-        return <TrustScene scene={currentScene} width={width} height={height} />;
-      case 'gallery':
-        return <GalleryScene scene={currentScene} width={width} height={height} />;
-      case 'action':
+  const renderMediaItem = useCallback(
+    ({ item, index }: { item: MediaItem; index: number }) => {
+      const isCurrent = index === currentIndex;
+
+      if (item.type === 'video') {
         return (
-          <ActionScene 
-            scene={currentScene} 
-            onPrimaryAction={() => {
-              const actionEvent: BehavioralEvent = {
-                type: 'action_trigger',
-                action: 'primary',
-                sceneIndex: currentIndex,
-                sceneType: currentScene.type,
-              };
-              emitBehavioralEvent(actionEvent);
-              onPrimaryAction?.();
-            }}
-            onShare={() => {
-              const actionEvent: BehavioralEvent = {
-                type: 'action_trigger',
-                action: 'share',
-                sceneIndex: currentIndex,
-                sceneType: currentScene.type,
-              };
-              emitBehavioralEvent(actionEvent);
-              onShare?.();
-            }}
-            onSave={() => {
-              const actionEvent: BehavioralEvent = {
-                type: 'action_trigger',
-                action: 'save',
-                sceneIndex: currentIndex,
-                sceneType: currentScene.type,
-              };
-              emitBehavioralEvent(actionEvent);
-              onSave?.();
-            }}
-            width={width} 
-            height={height} 
+          <VideoItem
+            url={item.url}
+            width={width}
+            height={height}
+            isCurrent={isCurrent}
+            isVisible={isVisible}
+            autoPlay={autoPlay}
+            onPlayingChange={setIsVideoPlaying}
           />
         );
-      default:
-        return null;
-    }
-  };
+      }
+
+      // Image
+      return (
+        <View style={[styles.mediaItem, { width, height }]}>
+          <Image
+            source={{ uri: item.url }}
+            style={[styles.mediaImage, { width, height }]}
+            resizeMode="contain"
+          />
+        </View>
+      );
+    },
+    [width, height, currentIndex, isVisible, autoPlay]
+  );
 
   // ============================================================
   // RENDER
   // ============================================================
-  
-  const showNavArrows = isDesktop && Platform.OS === 'web';
+
+  const bottomPosition = (isDesktop ? 20 : 110) + bottomOffset;
+
+  const shouldShowSeeDetails = description && description.length > 100;
+  const displayDescription = isExpanded
+    ? description
+    : description
+    ? description.slice(0, 100) + (description.length > 100 ? '...' : '')
+    : '';
+
+  const displayPrice =
+    price && price > 0 ? `${currency} ${price.toLocaleString()}` : 'Free';
 
   return (
-    <View 
+    <View
       style={[styles.container, { width, height }]}
       {...panResponder.panHandlers}
     >
-      {scenes.length > 1 && (
-        <View style={styles.tapContainer}>
-          <TouchableOpacity 
+      <FlatList
+        ref={flatListRef}
+        data={safeMedia}
+        renderItem={renderMediaItem}
+        keyExtractor={(item, index) => `media-${index}`}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={(event) => {
+          const index = Math.round(event.nativeEvent.contentOffset.x / width);
+          if (index !== currentIndex && index < totalItems) {
+            setCurrentIndex(index);
+            onSceneChange?.(index, 'swipe');
+            progressAnim.setValue(0);
+          }
+        }}
+        scrollEventThrottle={32}
+        getItemLayout={(data, index) => ({
+          length: width,
+          offset: width * index,
+          index,
+        })}
+        initialScrollIndex={0}
+        style={styles.carousel}
+        removeClippedSubviews={false}
+      />
+
+      {/*
+        ✅ FIX: Only show tap-navigation overlay when the current media is NOT a video.
+        Otherwise the full-screen tap zones intercept every press and the video's
+        own TouchableOpacity never receives the tap → play button seems dead.
+      */}
+      {totalItems > 1 && !currentIsVideo && (
+        <View style={styles.tapContainer} pointerEvents="box-none">
+          <TouchableOpacity
             style={[styles.tapArea, styles.tapLeft]}
             onPress={() => {
               if (currentIndex > 0) {
-                goToPreviousScene('tap');
+                goToPreviousMedia('tap');
+                stopAutoplay();
+                startAutoplay();
               }
             }}
             activeOpacity={0.3}
-            accessible={false}
           />
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.tapArea, styles.tapRight]}
             onPress={() => {
-              if (currentIndex < scenes.length - 1) {
-                goToNextScene('tap');
+              if (currentIndex < totalItems - 1) {
+                goToNextMedia('tap');
+                stopAutoplay();
+                startAutoplay();
               }
             }}
             activeOpacity={0.3}
-            accessible={false}
           />
         </View>
       )}
 
-      <View style={styles.sceneWrapper}>
-        {renderScene()}
-      </View>
-
-      {/* ✅ Bottom Container - raised higher with extra padding */}
-      <View style={[
-        styles.bottomContainer, 
-        { 
-          bottom: bottomPosition,
-          paddingBottom: 16, // ✅ Added extra padding at bottom
-        }
-      ]}>
+      <View
+        style={[
+          styles.bottomContainer,
+          {
+            bottom: bottomPosition,
+            paddingBottom: 16,
+          },
+        ]}
+      >
         <View style={styles.dotsContainer}>
-          {scenes.map((_, index) => (
+          {safeMedia.map((_, index) => (
             <TouchableOpacity
               key={index}
               style={styles.dotWrapper}
               onPress={() => {
-                goToScene(index, 'tap');
+                goToMedia(index, 'tap');
                 stopAutoplay();
                 startAutoplay();
               }}
@@ -510,55 +682,51 @@ export function SceneRenderer({
             {title}
           </Text>
 
-          <Text style={styles.price}>
-            {currency} {price.toLocaleString()}
-          </Text>
-
-          <View style={styles.metaRow}>
-            <Text style={styles.shopName}>{displayName}</Text>
-            
-            {rating !== null && rating !== undefined && rating > 0 && (
-              <>
-                <Text style={styles.dotSeparator}>•</Text>
-                <Text style={styles.rating}>⭐ {rating.toFixed(1)}</Text>
-              </>
-            )}
-            
-            {area && (
-              <>
-                <Text style={styles.dotSeparator}>•</Text>
-                <Text style={styles.distance}>📍 {area}</Text>
-              </>
-            )}
-            
-            <Text style={styles.dotSeparator}>•</Text>
-            <Text style={[styles.availability, availabilityStyle]}>
-              {availabilityText}
-            </Text>
+          <View style={styles.priceRow}>
+            <Text style={styles.price}>{displayPrice}</Text>
+            <View
+              style={[
+                styles.priceBadge,
+                { backgroundColor: priceBadge.color + '20' },
+              ]}
+            >
+              <Text style={[styles.priceBadgeText, { color: priceBadge.color }]}>
+                {priceBadge.label}
+              </Text>
+            </View>
           </View>
 
-          <TouchableOpacity 
-            onPress={() => {
-              const showMoreEvent: BehavioralEvent = {
-                type: 'action_trigger',
-                action: 'show_more',
-                sceneIndex: currentIndex,
-                sceneType: currentScene.type,
-              };
-              emitBehavioralEvent(showMoreEvent);
-              onShowMore?.();
-            }} 
-            activeOpacity={0.7}
-          >
-            <Text style={styles.seeMoreText}>See Details ›</Text>
-          </TouchableOpacity>
+          <View style={styles.userRow}>
+            <Text style={styles.userName}>{displayName}</Text>
+            {timeAgo && <Text style={styles.timeAgo}>• {timeAgo}</Text>}
+          </View>
+
+          {description && (
+            <View style={styles.descriptionContainer}>
+              <Text
+                style={styles.description}
+                numberOfLines={isExpanded ? undefined : 2}
+              >
+                {displayDescription}
+              </Text>
+              {shouldShowSeeDetails && (
+                <TouchableOpacity
+                  onPress={() => setIsExpanded(!isExpanded)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.seeMoreText}>
+                    {isExpanded ? 'See Less' : 'See More'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Scene Counter */}
       <View style={styles.sceneCounter}>
         <Text style={styles.sceneCounterText}>
-          {currentIndex + 1} / {scenes.length}
+          {currentIndex + 1} / {totalItems}
         </Text>
       </View>
     </View>
@@ -576,8 +744,52 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  sceneWrapper: {
+  carousel: {
     flex: 1,
+  },
+  mediaItem: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#030305',
+  },
+  mediaImage: {
+    backgroundColor: '#000000',
+  },
+  videoControlsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPlayingIndicator: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 6,
+  },
+  videoPlayingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#2ECC71',
+  },
+  videoPlayingText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '500',
   },
   tapContainer: {
     position: 'absolute',
@@ -600,7 +812,7 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 25,
     paddingHorizontal: 16,
-    paddingBottom: 16, // ✅ Added to styles
+    paddingBottom: 16,
   },
   dotsContainer: {
     flexDirection: 'row',
@@ -624,85 +836,80 @@ const styles = StyleSheet.create({
   dotInactive: {
     width: 8,
   },
-  infoPanel: {
-    // No changes needed
-  },
+  infoPanel: {},
   title: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
   },
   price: {
     color: '#4A7DFF',
     fontSize: 16,
     fontWeight: '600',
-    marginTop: 2,
-    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  metaRow: {
+  priceBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  priceBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  userRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    marginTop: 4,
+    marginTop: 2,
   },
-  shopName: {
+  userName: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '500',
-    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  dotSeparator: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 13,
-    marginHorizontal: 4,
-  },
-  rating: {
-    color: '#F1C40F',
-    fontSize: 13,
-    textShadowColor: 'rgba(0,0,0,0.7)',
+  timeAgo: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 2,
   },
-  distance: {
+  descriptionContainer: {
+    marginTop: 4,
+  },
+  description: {
     color: 'rgba(255,255,255,0.8)',
-    fontSize: 12,
-    textShadowColor: 'rgba(0,0,0,0.7)',
+    fontSize: 13,
+    lineHeight: 18,
+    textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  availability: {
-    fontSize: 12,
-    textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  inStock: {
-    color: '#2ECC71',
-  },
-  outOfStock: {
-    color: '#E74C3C',
-  },
-  available: {
-    color: '#2ECC71',
-  },
-  unavailable: {
-    color: '#E74C3C',
+    textShadowRadius: 2,
   },
   seeMoreText: {
-    color: '#FFFFFF',
-    marginTop: 6,
-    fontWeight: '600',
+    color: '#4A7DFF',
     fontSize: 13,
-    textShadowColor: 'rgba(0,0,0,0.7)',
+    fontWeight: '500',
+    marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 2,
   },
   sceneCounter: {
     position: 'absolute',
@@ -718,5 +925,17 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
     fontSize: 11,
     fontWeight: '500',
+  },
+  inStock: {
+    color: '#2ECC71',
+  },
+  outOfStock: {
+    color: '#E74C3C',
+  },
+  available: {
+    color: '#2ECC71',
+  },
+  unavailable: {
+    color: '#E74C3C',
   },
 });

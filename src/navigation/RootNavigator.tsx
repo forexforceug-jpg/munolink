@@ -3,7 +3,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TabNavigator } from './TabNavigator';
-import { ShopProfileScreen } from '../features/shop/ShopProfileScreen';
+import { UserProfileScreen } from '../features/profile/UserProfileScreen';
 import { SearchScreen } from '../features/search/SearchScreen';
 import { SearchResultsScreen } from '../features/search/SearchResultsScreen';
 import { JoinScreen } from '../features/auth/JoinScreen';
@@ -40,6 +40,14 @@ export type RootStackParamList = {
     userName?: string;
     shopId?: string;
   };
+  // ✅ ADD UserProfile to the param list
+  UserProfile: {
+    userId: string;
+    userName?: string;
+  };
+  Notifications: undefined;
+  Wallet: undefined;
+  Hub: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -64,9 +72,8 @@ export const RootNavigator = () => {
       <Stack.Screen name="HelpSupport" component={HelpSupportScreen} />
       <Stack.Screen name="Inbox" component={InboxScreen} />
       
-      {/* Business Screens */}
-      <Stack.Screen name="ShopProfile" component={ShopProfileScreen} />
-      
+      {/* User Profile Screen */}
+      <Stack.Screen name="UserProfile" component={UserProfileScreen} options={{ headerShown: false }} />
       {/* Search Screens */}
       <Stack.Screen name="Search" component={SearchScreen} />
       <Stack.Screen name="SearchResults" component={SearchResultsScreen} />
@@ -77,6 +84,23 @@ export const RootNavigator = () => {
       {/* Business Registration */}
       <Stack.Screen name="BusinessRegistration" component={BusinessRegistrationWizard} />
       <Stack.Screen name="BusinessDashboard" component={BusinessDashboardScreen} />
+      
+      {/* Placeholder screens */}
+      <Stack.Screen 
+        name="Notifications" 
+        component={() => null} 
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="Wallet" 
+        component={() => null} 
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="Hub" 
+        component={() => null} 
+        options={{ headerShown: false }}
+      />
     </Stack.Navigator>
   );
 };

@@ -7,6 +7,10 @@ export type RootStackParamList = {
   ShopProfile: { shopId: string; shopName?: string };
   Search: undefined;
   BusinessRegistration: undefined;
+  UserProfile: {
+    userId: string;
+    userName?: string;
+  };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

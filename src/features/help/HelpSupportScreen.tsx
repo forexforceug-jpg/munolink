@@ -151,7 +151,6 @@ const FAQItem = ({ item, isOpen, onToggle }: { item: FAQItem; isOpen: boolean; o
           color="#4A7DFF" 
         />
       </View>
-      
       <Animated.View 
         style={[
           styles.faqAnswerContainer,
@@ -225,8 +224,9 @@ const HelpSupportContent = ({ navigation }: any) => {
     : FAQS.filter(faq => faq.category === selectedCategory);
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      {/* Header */}
+    <View style={[styles.container, isDesktop && styles.desktopContainer]}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
@@ -249,15 +249,13 @@ const HelpSupportContent = ({ navigation }: any) => {
           >
             <Text style={styles.welcomeEmoji}>💬</Text>
             <Text style={styles.welcomeTitle}>How can we help you?</Text>
-            <Text style={styles.welcomeSubtitle}>
-              Browse our FAQs or contact us directly
-            </Text>
+            <Text style={styles.welcomeSubtitle}>Browse our FAQs or contact us directly</Text>
           </LinearGradient>
         </View>
 
         {/* Support Options */}
         <Text style={styles.sectionTitle}>Contact Support</Text>
-        <SafeAreaView style={styles.supportOptionsRow} edges={['top']}>
+        <View style={styles.supportOptionsRow}>
           {supportOptions.map((option) => (
             <TouchableOpacity
               key={option.id}
@@ -272,7 +270,7 @@ const HelpSupportContent = ({ navigation }: any) => {
               <Text style={styles.supportOptionSubtitle}>{option.subtitle}</Text>
             </TouchableOpacity>
           ))}
-        </SafeAreaView>
+        </View>
 
         {/* FAQ Section */}
         <View style={styles.faqSection}>
@@ -322,9 +320,7 @@ const HelpSupportContent = ({ navigation }: any) => {
               <View style={styles.emptyFAQs}>
                 <Ionicons name="search-outline" size={40} color="#8A8AAE" />
                 <Text style={styles.emptyFAQsTitle}>No FAQs found</Text>
-                <Text style={styles.emptyFAQsSubtext}>
-                  Try selecting a different category
-                </Text>
+                <Text style={styles.emptyFAQsSubtext}>Try selecting a different category</Text>
               </View>
             )}
           </View>
@@ -351,7 +347,7 @@ const HelpSupportContent = ({ navigation }: any) => {
         {/* Version Info */}
         <Text style={styles.versionText}>Munolink v1.0.0</Text>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 

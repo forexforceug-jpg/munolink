@@ -1,58 +1,43 @@
-import React, { useState, memo } from 'react';
+// src/features/feed/components/OpportunityCard.tsx
+// This file is deprecated - use SceneRenderer directly in FeedScreen
+// If you need it, here's a simplified version
+
+import React, { memo } from 'react';
 import {
   View,
   Text,
   Image,
   StyleSheet,
-  Dimensions,
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
 import { Opportunity } from '../../../services/feed.service';
-import { ActionRail } from './ActionRail';
-
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface OpportunityCardProps {
   opportunity: Opportunity;
-  onShopPress: (shopId: string) => void;
-  onReviewsPress: (productId: string) => void;
-  onDirectionsPress: (shopName: string, area: string) => void;
+  onUserPress: (userId: string) => void;
   onSharePress: (opportunity: Opportunity) => void;
-  onAIPress: (opportunity: Opportunity) => void;
+  onSavePress: (opportunity: Opportunity) => void;
   cardWidth?: number;
   cardHeight?: number;
   isDesktop?: boolean;
-  hideActions?: boolean;
 }
 
 const OpportunityCardComponent: React.FC<OpportunityCardProps> = ({
   opportunity,
-  onShopPress,
-  onReviewsPress,
-  onDirectionsPress,
+  onUserPress,
   onSharePress,
-  onAIPress,
-  cardWidth = screenWidth,
-  cardHeight = screenHeight,
+  onSavePress,
+  cardWidth = 400,
+  cardHeight = 600,
   isDesktop = false,
-  hideActions = false,
 }) => {
-  const [imageLoading, setImageLoading] = useState(true);
+  const [imageLoading, setImageLoading] = React.useState(true);
 
-  const formatPrice = (price: number) => {
-    return `UGX ${price.toLocaleString()}`;
-  };
+  const imageUrl = opportunity.catalogImages?.[0] || opportunity.imageUrl || '';
 
   return (
-    <View style={[
-      styles.card,
-      { 
-        width: cardWidth, 
-        height: cardHeight,
-      }
-    ]}>
-      {/* Image */}
+    <View style={[styles.card, { width: cardWidth, height: cardHeight }]}>
       <View style={styles.imageContainer}>
         {imageLoading && (
           <View style={styles.loadingOverlay}>
@@ -60,7 +45,7 @@ const OpportunityCardComponent: React.FC<OpportunityCardProps> = ({
           </View>
         )}
         <Image
-          source={{ uri: opportunity.imageUrl }}
+          source={{ uri: imageUrl }}
           style={styles.image}
           onLoadStart={() => setImageLoading(true)}
           onLoadEnd={() => setImageLoading(false)}
@@ -68,43 +53,19 @@ const OpportunityCardComponent: React.FC<OpportunityCardProps> = ({
         />
       </View>
 
-      {/* Info Panel - Bottom */}
-      <View style={[styles.infoPanel, { bottom: cardHeight < 700 ? 80 : 100 }]}>
+      <View style={styles.infoPanel}>
         <Text style={styles.title} numberOfLines={1}>
           {opportunity.title}
         </Text>
-        <View style={styles.shopRow}>
-          <Text style={styles.shopName}>{opportunity.shopName}</Text>
-          {opportunity.rating !== null && (
-            <Text style={styles.rating}>⭐ {opportunity.rating.toFixed(1)}</Text>
-          )}
-        </View>
-        <Text style={styles.price}>{formatPrice(opportunity.price)}</Text>
-        {opportunity.area && (
-          <Text style={styles.distance}>📍 {opportunity.area}</Text>
+        <Text style={styles.userName}>@{opportunity.userFullName || 'User'}</Text>
+        {opportunity.price && opportunity.price > 0 && (
+          <Text style={styles.price}>UGX {opportunity.price.toLocaleString()}</Text>
         )}
-        <TouchableOpacity style={styles.showMoreButton}>
-          <Text style={styles.showMoreText}>Show More...</Text>
-        </TouchableOpacity>
       </View>
-
-      {/* Action Rail - ONLY on mobile */}
-      {!hideActions && (
-        <ActionRail
-          opportunity={opportunity}
-          onShopPress={onShopPress}
-          onReviewsPress={onReviewsPress}
-          onDirectionsPress={onDirectionsPress}
-          onSharePress={onSharePress}
-          onAIPress={onAIPress}
-          cardHeight={cardHeight}
-        />
-      )}
     </View>
   );
 };
 
-// ✅ Memoize to prevent unnecessary re-renders
 export const OpportunityCard = memo(OpportunityCardComponent);
 
 const styles = StyleSheet.create({
@@ -136,10 +97,11 @@ const styles = StyleSheet.create({
   },
   infoPanel: {
     position: 'absolute',
+    bottom: 40,
     left: 16,
-    right: 80,
+    right: 16,
     backgroundColor: 'rgba(31, 47, 95, 0.88)',
-    borderRadius: 0,
+    borderRadius: 12,
     padding: 14,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
@@ -149,38 +111,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  shopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  shopName: {
+  userName: {
     color: '#4A7DFF',
     fontSize: 13,
-  },
-  rating: {
-    color: '#F1C40F',
-    fontSize: 13,
+    marginTop: 2,
   },
   price: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
     marginTop: 4,
-  },
-  distance: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  showMoreButton: {
-    marginTop: 6,
-    paddingVertical: 4,
-  },
-  showMoreText: {
-    color: '#4A7DFF',
-    fontSize: 13,
-    fontWeight: '500',
   },
 });

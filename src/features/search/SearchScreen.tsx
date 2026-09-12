@@ -1,4 +1,5 @@
 // src/features/search/SearchScreen.tsx
+
 import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
@@ -15,24 +16,82 @@ import {
   Alert,
   useWindowDimensions,
   FlatList,
-  
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
-import { useQuery } from '@tanstack/react-query';
-import { feedService, Opportunity as RawOpportunity } from '../../services/feed.service';
-import { recommendationService } from '../../services/recommendation.service';
 import { supabase } from '../../lib/supabase';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-// --- Types ---
-interface SearchResult extends RawOpportunity {
+// ============================================================
+// TYPES
+// ============================================================
+
+interface CatalogPost {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  currency: string;
+  images: string[];
+  video: string | null;
+  video_thumbnail: string | null;
+  video_duration: number | null;
+  video_size: number | null;
+  tags: string[];
+  location: string | null;
+  category: string | null;
+  status: string;
+  like_count: number;
+  view_count: number;
+  share_count: number;
+  comment_count: number;
+  save_count: number;
+  created_at: string;
+  updated_at: string;
+  specifications?: any;
+  user_full_name?: string | null;
+  user_avatar?: string | null;
+}
+
+interface SearchResult {
+  id: string;
+  title: string;
+  price: number;
+  currency: string;
+  imageUrl: string;
+  catalogImages: string[];
+  description: string;
+  rating: number | null;
+  reviewCount: number | null;
+  area: string | null;
+  inStock: boolean;
+  category: string | null;
+  type: 'product' | 'service' | 'event';
+  createdAt?: string;
+  userId: string;
+  userFullName: string;
+  userAvatar: string | null;
+  userLatitude: number | null;
+  userLongitude: number | null;
+  userPhone: string | null;
+  video: string | null;
+  video_thumbnail: string | null;
+  video_duration: number | null;
+  video_size: number | null;
+  likeCount?: number;
+  viewCount?: number;
+  shareCount?: number;
+  commentCount?: number;
+  saveCount?: number;
+  isSaved?: boolean;
+  specifications?: any;
   relevanceScore?: number;
   aiTag?: boolean;
 }
@@ -47,7 +106,51 @@ interface SearchIntent {
   minRating: number;
 }
 
-// --- Sub-components ---
+// ============================================================
+// TYPE GUARD FOR SPECIFICATIONS
+// ============================================================
+
+function isSpecificationsObject(specs: any): specs is { [key: string]: any } {
+  return specs && typeof specs === 'object' && !Array.isArray(specs);
+}
+
+// ============================================================
+// HELPER: GET PRICE FROM SPECIFICATIONS
+// ============================================================
+
+function extractPriceFromSpecifications(post: any): number {
+  let price = post.price || 0;
+  const specs = post.specifications || {};
+  
+  if (price === 0 && isSpecificationsObject(specs)) {
+    const specPrice = specs.price || specs.regular_price || null;
+    if (specPrice !== null && specPrice !== undefined) {
+      const parsedPrice = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+      if (!isNaN(parsedPrice)) {
+        price = parsedPrice;
+      }
+    }
+  }
+  return price;
+}
+
+// ============================================================
+// HELPER: GET IMAGE URL
+// ============================================================
+
+function getImageUrl(post: any): string {
+  if (post.images && post.images.length > 0) {
+    return post.images[0];
+  }
+  if (post.video_thumbnail) {
+    return post.video_thumbnail;
+  }
+  return '';
+}
+
+// ============================================================
+// SUB-COMPONENTS - DEFINED BEFORE SearchContent
+// ============================================================
 
 const TrendingItem = React.memo(({ item, onPress }: any) => (
   <TouchableOpacity style={styles.trendingItem} onPress={() => onPress(item.label)}>
@@ -88,193 +191,9 @@ const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
 ));
 
 // ============================================================
-// NATURAL LANGUAGE PARSING
+// MAIN SEARCH CONTENT
 // ============================================================
 
-const parseNaturalLanguageQuery = (query: string): SearchIntent => {
-  const cleanQuery = query.trim();
-  
-  const intent: SearchIntent = {
-    keywords: [],
-    categories: [],
-    priceRange: null,
-    location: null,
-    type: 'all',
-    inStock: false,
-    minRating: 0,
-  };
-
-  // Price patterns
-  const underMatch = cleanQuery.match(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
-  if (underMatch) {
-    intent.priceRange = { min: 0, max: parseInt(underMatch[1].replace(/,/g, '')) };
-  }
-  
-  const aboveMatch = cleanQuery.match(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
-  if (aboveMatch && !intent.priceRange) {
-    intent.priceRange = { min: parseInt(aboveMatch[1].replace(/,/g, '')), max: 10000000 };
-  }
-  
-  const betweenMatch = cleanQuery.match(/(?:between|from)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)\s*(?:and|to)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
-  if (betweenMatch && !intent.priceRange) {
-    intent.priceRange = { 
-      min: parseInt(betweenMatch[1].replace(/,/g, '')), 
-      max: parseInt(betweenMatch[2].replace(/,/g, '')) 
-    };
-  }
-
-  // Location
-  const locationMatch = cleanQuery.match(/(?:in|near|around|at)\s+([a-zA-Z\s]+?)(?:\s+for|\s+with|\s+and|$)/i);
-  if (locationMatch) {
-    intent.location = locationMatch[1].trim();
-  }
-
-  // Stock availability
-  if (/(?:in stock|available|instock)/i.test(cleanQuery)) {
-    intent.inStock = true;
-  }
-
-  // Rating
-  const ratingMatch = cleanQuery.match(/(?:rated|rating|stars?)\s*([\d.]+)\s*(?:star|stars?)?/i);
-  if (ratingMatch) {
-    intent.minRating = parseFloat(ratingMatch[1]);
-  }
-
-  // Type detection
-  if (/\b(product|item|goods|merchandise)\b/i.test(cleanQuery)) {
-    intent.type = 'product';
-  } else if (/\b(service|booking|appointment|consultation|repair|cleaning|delivery)\b/i.test(cleanQuery)) {
-    intent.type = 'service';
-  }
-
-  // Extract keywords
-  let keywordText = cleanQuery;
-  keywordText = keywordText.replace(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
-  keywordText = keywordText.replace(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
-  keywordText = keywordText.replace(/(?:between|from)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+\s*(?:and|to)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
-  keywordText = keywordText.replace(/(?:in|near|around|at)\s+[a-zA-Z\s]+(?:\s+for|\s+with|\s+and|$)/gi, '');
-  keywordText = keywordText.replace(/(?:in stock|available|instock)/gi, '');
-  keywordText = keywordText.replace(/(?:rated|rating|stars?)\s*[\d.]+\s*(?:star|stars?)?/gi, '');
-  
-  const stopWords = new Set([
-    'i', 'am', 'looking', 'for', 'a', 'an', 'the', 'to', 'from', 'with', 
-    'and', 'or', 'but', 'in', 'on', 'at', 'by', 'for', 'of', 'so', 'than',
-    'that', 'this', 'these', 'those', 'then', 'than', 'very', 'too', 'also',
-    'get', 'want', 'need', 'find', 'search', 'looking', 'can', 'please'
-  ]);
-  
-  intent.keywords = keywordText
-    .split(/\s+/)
-    .filter(w => w.length > 1 && !stopWords.has(w.toLowerCase()));
-
-  // Detect categories
-  const categoryMap: Record<string, string[]> = {
-    'phone': ['Electronics', 'Phones & Accessories'],
-    'samsung': ['Electronics', 'Phones & Accessories'],
-    'iphone': ['Electronics', 'Phones & Accessories'],
-    'macbook': ['Electronics', 'Computers & Laptops'],
-    'laptop': ['Electronics', 'Computers & Laptops'],
-    'mechanic': ['Automotive', 'Repair & Services'],
-    'car': ['Automotive', 'Vehicles'],
-    'restaurant': ['Food & Dining', 'Restaurants'],
-    'pizza': ['Food & Dining', 'Restaurants'],
-    'hotel': ['Travel & Hospitality', 'Hotels & Lodging'],
-    'room': ['Travel & Hospitality', 'Hotels & Lodging'],
-    'electrician': ['Home Services', 'Repair & Services'],
-    'cleaning': ['Home Services', 'Cleaning Services'],
-    'delivery': ['Shipping & Logistics', 'Delivery Services'],
-  };
-
-  const detectedCategories: string[] = [];
-  for (const keyword of intent.keywords) {
-    const keywordLower = keyword.toLowerCase();
-    for (const [key, categories] of Object.entries(categoryMap)) {
-      if (keywordLower.includes(key) || key.includes(keywordLower)) {
-        detectedCategories.push(...categories);
-      }
-    }
-  }
-  intent.categories = [...new Set(detectedCategories)].slice(0, 3);
-
-  return intent;
-};
-
-// ============================================================
-// GET SIMILAR ITEMS
-// ============================================================
-
-const getSimilarItems = (
-  item: RawOpportunity,
-  allOpportunities: RawOpportunity[]
-): RawOpportunity[] => {
-  const similar: (RawOpportunity & { matchScore: number })[] = [];
-  const itemKeywords = `${item.title || ''} ${item.category || ''} ${item.shopName || ''}`.toLowerCase();
-  
-  for (const other of allOpportunities) {
-    if (other.id === item.id) continue;
-    
-    const otherText = `${other.title || ''} ${other.category || ''} ${other.shopName || ''}`.toLowerCase();
-    let matchScore = 0;
-    
-    if (other.category && item.category && 
-        other.category.toLowerCase().includes(item.category.toLowerCase())) {
-      matchScore += 3;
-    }
-    
-    const itemWords = new Set(itemKeywords.split(/\s+/));
-    const otherWords = otherText.split(/\s+/);
-    let commonWords = 0;
-    for (const word of otherWords) {
-      if (word.length > 2 && itemWords.has(word)) {
-        commonWords++;
-      }
-    }
-    matchScore += commonWords * 0.5;
-    
-    if (other.shopId === item.shopId) {
-      matchScore += 2;
-    }
-    
-    if (other.type === item.type) {
-      matchScore += 1;
-    }
-    
-    if (matchScore > 1.5) {
-      similar.push({ ...other, matchScore });
-    }
-  }
-  
-  similar.sort((a, b) => b.matchScore - a.matchScore);
-  return similar.slice(0, 15);
-};
-
-// ============================================================
-// MIX RECOMMENDATIONS
-// ============================================================
-
-const mixRecommendations = (items: RawOpportunity[]): RawOpportunity[] => {
-  const products = items.filter(item => item.type === 'product');
-  const services = items.filter(item => item.type === 'service' || item.type === 'event');
-  
-  if (products.length === 0) return services.slice(0, 30);
-  if (services.length === 0) return products.slice(0, 30);
-  
-  const mixed: RawOpportunity[] = [];
-  const maxLen = Math.max(products.length, services.length);
-  
-  for (let i = 0; i < maxLen && mixed.length < 30; i++) {
-    if (i < products.length) {
-      mixed.push(products[i]);
-    }
-    if (i < services.length && mixed.length < 30) {
-      mixed.push(services[i]);
-    }
-  }
-  
-  return mixed;
-};
-
-// --- Main Search Content Component ---
 const SearchContent = ({ navigation }: any) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
@@ -288,21 +207,83 @@ const SearchContent = ({ navigation }: any) => {
   const [recentSearches, setRecentSearches] = useState<{ id: string; label: string; time: string }[]>([]);
   const [popularSearches, setPopularSearches] = useState<{ id: string; label: string }[]>([]);
   const [isLoadingPopular, setIsLoadingPopular] = useState(false);
+  const [catalogPosts, setCatalogPosts] = useState<CatalogPost[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
   
   const inputRef = useRef<TextInput>(null);
   const searchContainerRef = useRef<View>(null);
 
-  const { data: allOpportunities, isLoading: queryLoading, error: queryError, refetch } = useQuery({
-    queryKey: ['opportunities'],
-    queryFn: feedService.getOpportunities,
-    staleTime: 5 * 60 * 1000,
-  });
-
   // ============================================================
-  // SEARCH HISTORY FUNCTIONS (Direct Supabase calls)
+  // FETCH CATALOG POSTS
   // ============================================================
 
-  // Track search in database
+  const fetchCatalogPosts = useCallback(async () => {
+    setIsLoadingCatalog(true);
+    try {
+      const { data, error } = await supabase
+        .from('catalog')
+        .select('*')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (error) {
+        console.error('❌ Error fetching catalog:', error);
+        setIsLoadingCatalog(false);
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        setCatalogPosts([]);
+        setIsLoadingCatalog(false);
+        return;
+      }
+
+      // Fetch user info for all posts
+      const userIds = data
+        .map(post => post.user_id)
+        .filter((id): id is string => id !== null && id !== undefined);
+
+      let userMap: Record<string, { full_name: string | null; avatar_url: string | null }> = {};
+
+      if (userIds.length > 0) {
+        const { data: users, error: usersError } = await supabase
+          .from('users')
+          .select('id, full_name, avatar_url')
+          .in('id', userIds);
+
+        if (!usersError && users) {
+          users.forEach((u: any) => {
+            userMap[u.id] = {
+              full_name: u.full_name || 'User',
+              avatar_url: u.avatar_url || null,
+            };
+          });
+        }
+      }
+
+      const postsWithUsers = data.map((post: any) => ({
+        ...post,
+        user_full_name: userMap[post.user_id]?.full_name || 'User',
+        user_avatar: userMap[post.user_id]?.avatar_url || null,
+      }));
+
+      setCatalogPosts(postsWithUsers);
+    } catch (error) {
+      console.error('❌ Error in fetchCatalogPosts:', error);
+    } finally {
+      setIsLoadingCatalog(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCatalogPosts();
+  }, [fetchCatalogPosts]);
+
+  // ============================================================
+  // SEARCH HISTORY FUNCTIONS
+  // ============================================================
+
   const trackSearch = useCallback(async (
     query: string,
     resultsCount: number,
@@ -330,7 +311,6 @@ const SearchContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  // Load recent searches from database
   const loadRecentSearches = useCallback(async () => {
     if (!user?.id) return;
     
@@ -348,7 +328,7 @@ const SearchContent = ({ navigation }: any) => {
         return;
       }
 
-      const formatted = data.map((s: any) => ({
+      const formatted = (data || []).map((s: any) => ({
         id: s.id,
         label: s.query,
         time: s.created_at ? timeAgo(new Date(s.created_at)) : 'Just now',
@@ -360,11 +340,9 @@ const SearchContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  // Load popular searches from database
   const loadPopularSearches = useCallback(async () => {
     setIsLoadingPopular(true);
     try {
-      // Get all searches and count manually
       const { data, error } = await supabase
         .from('search_history')
         .select('query')
@@ -383,7 +361,6 @@ const SearchContent = ({ navigation }: any) => {
         return;
       }
 
-      // Count occurrences
       const countMap: Record<string, number> = {};
       data.forEach((item: any) => {
         const query = item.query;
@@ -409,7 +386,6 @@ const SearchContent = ({ navigation }: any) => {
     }
   }, []);
 
-  // Default popular searches fallback
   const getDefaultPopularSearches = () => [
     { id: '1', label: 'Samsung phones under UGX 2M' },
     { id: '2', label: 'Mechanic available today' },
@@ -419,7 +395,6 @@ const SearchContent = ({ navigation }: any) => {
     { id: '6', label: 'Electrician in Jinja' },
   ];
 
-  // Delete a single search
   const deleteSearch = useCallback(async (searchId: string) => {
     if (!user?.id) return;
     
@@ -438,7 +413,6 @@ const SearchContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  // Clear all search history
   const clearAllSearches = useCallback(async () => {
     if (!user?.id) return;
     
@@ -456,13 +430,11 @@ const SearchContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  // Load data on mount
   useEffect(() => {
     loadRecentSearches();
     loadPopularSearches();
   }, [loadRecentSearches, loadPopularSearches]);
 
-  // Helper function for time ago
   const timeAgo = (date: Date): string => {
     const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
     
@@ -486,35 +458,33 @@ const SearchContent = ({ navigation }: any) => {
 
   // Get suggestions as user types
   useEffect(() => {
-    if (searchQuery.length > 1 && allOpportunities) {
+    if (searchQuery.length > 1 && catalogPosts.length > 0) {
       const lowerPartial = searchQuery.toLowerCase();
       const suggestionsSet = new Set<string>();
       
-      allOpportunities.forEach((item: RawOpportunity) => {
+      catalogPosts.forEach((item) => {
         if (item.category && item.category.toLowerCase().includes(lowerPartial)) {
           suggestionsSet.add(item.category);
         }
       });
       
-      allOpportunities.forEach((item: RawOpportunity) => {
-        if (item.shopName && item.shopName.toLowerCase().includes(lowerPartial)) {
-          suggestionsSet.add(item.shopName);
+      catalogPosts.forEach((item) => {
+        if (item.user_full_name && item.user_full_name.toLowerCase().includes(lowerPartial)) {
+          suggestionsSet.add(item.user_full_name);
         }
       });
       
-      allOpportunities.forEach((item: RawOpportunity) => {
-        if (item.area && item.area.toLowerCase().includes(lowerPartial)) {
-          suggestionsSet.add(item.area);
+      catalogPosts.forEach((item) => {
+        if (item.location && item.location.toLowerCase().includes(lowerPartial)) {
+          suggestionsSet.add(item.location);
         }
       });
       
-      allOpportunities
-        .filter((item: RawOpportunity) => 
-          item.title && item.title.toLowerCase().includes(lowerPartial)
-        )
+      catalogPosts
+        .filter((item) => item.name && item.name.toLowerCase().includes(lowerPartial))
         .slice(0, 3)
-        .forEach((item: RawOpportunity) => {
-          if (item.title) suggestionsSet.add(item.title);
+        .forEach((item) => {
+          if (item.name) suggestionsSet.add(item.name);
         });
       
       setSuggestions([...suggestionsSet].slice(0, 10));
@@ -523,9 +493,8 @@ const SearchContent = ({ navigation }: any) => {
       setSuggestions([]);
       setShowSuggestions(false);
     }
-  }, [searchQuery, allOpportunities]);
+  }, [searchQuery, catalogPosts]);
 
-  // Use popular searches from database or fallback
   const trendingSearches = popularSearches.length > 0 ? popularSearches : getDefaultPopularSearches();
 
   const suggestedPrompts = [
@@ -538,17 +507,128 @@ const SearchContent = ({ navigation }: any) => {
   ];
 
   // ============================================================
-  // ENHANCED SEARCH WITH HISTORY TRACKING
+  // NATURAL LANGUAGE PARSING
   // ============================================================
+
+  const parseNaturalLanguageQuery = (query: string): SearchIntent => {
+    const cleanQuery = query.trim();
+    
+    const intent: SearchIntent = {
+      keywords: [],
+      categories: [],
+      priceRange: null,
+      location: null,
+      type: 'all',
+      inStock: false,
+      minRating: 0,
+    };
+
+    // Price patterns
+    const underMatch = cleanQuery.match(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
+    if (underMatch) {
+      intent.priceRange = { min: 0, max: parseInt(underMatch[1].replace(/,/g, '')) };
+    }
+    
+    const aboveMatch = cleanQuery.match(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
+    if (aboveMatch && !intent.priceRange) {
+      intent.priceRange = { min: parseInt(aboveMatch[1].replace(/,/g, '')), max: 10000000 };
+    }
+    
+    const betweenMatch = cleanQuery.match(/(?:between|from)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)\s*(?:and|to)\s*(?:UGX|ugx|usd|USD)?\s*([\d,]+)/i);
+    if (betweenMatch && !intent.priceRange) {
+      intent.priceRange = { 
+        min: parseInt(betweenMatch[1].replace(/,/g, '')), 
+        max: parseInt(betweenMatch[2].replace(/,/g, '')) 
+      };
+    }
+
+    // Location
+    const locationMatch = cleanQuery.match(/(?:in|near|around|at)\s+([a-zA-Z\s]+?)(?:\s+for|\s+with|\s+and|$)/i);
+    if (locationMatch) {
+      intent.location = locationMatch[1].trim();
+    }
+
+    // Stock availability
+    if (/(?:in stock|available|instock)/i.test(cleanQuery)) {
+      intent.inStock = true;
+    }
+
+    // Rating
+    const ratingMatch = cleanQuery.match(/(?:rated|rating|stars?)\s*([\d.]+)\s*(?:star|stars?)?/i);
+    if (ratingMatch) {
+      intent.minRating = parseFloat(ratingMatch[1]);
+    }
+
+    // Type detection
+    if (/\b(product|item|goods|merchandise)\b/i.test(cleanQuery)) {
+      intent.type = 'product';
+    } else if (/\b(service|booking|appointment|consultation|repair|cleaning|delivery)\b/i.test(cleanQuery)) {
+      intent.type = 'service';
+    }
+
+    // Extract keywords
+    let keywordText = cleanQuery;
+    keywordText = keywordText.replace(/(?:under|less than|below|max|maximum|<=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
+    keywordText = keywordText.replace(/(?:above|over|more than|greater than|min|minimum|>=?)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
+    keywordText = keywordText.replace(/(?:between|from)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+\s*(?:and|to)\s*(?:UGX|ugx|usd|USD)?\s*[\d,]+/gi, '');
+    keywordText = keywordText.replace(/(?:in|near|around|at)\s+[a-zA-Z\s]+(?:\s+for|\s+with|\s+and|$)/gi, '');
+    keywordText = keywordText.replace(/(?:in stock|available|instock)/gi, '');
+    keywordText = keywordText.replace(/(?:rated|rating|stars?)\s*[\d.]+\s*(?:star|stars?)?/gi, '');
+    
+    const stopWords = new Set([
+      'i', 'am', 'looking', 'for', 'a', 'an', 'the', 'to', 'from', 'with', 
+      'and', 'or', 'but', 'in', 'on', 'at', 'by', 'for', 'of', 'so', 'than',
+      'that', 'this', 'these', 'those', 'then', 'than', 'very', 'too', 'also',
+      'get', 'want', 'need', 'find', 'search', 'looking', 'can', 'please'
+    ]);
+    
+    intent.keywords = keywordText
+      .split(/\s+/)
+      .filter(w => w.length > 1 && !stopWords.has(w.toLowerCase()));
+
+    // Detect categories - simplified
+    const categoryMap: Record<string, string[]> = {
+      'phone': ['Electronics', 'Phones & Accessories'],
+      'samsung': ['Electronics', 'Phones & Accessories'],
+      'iphone': ['Electronics', 'Phones & Accessories'],
+      'macbook': ['Electronics', 'Computers & Laptops'],
+      'laptop': ['Electronics', 'Computers & Laptops'],
+      'mechanic': ['Automotive', 'Repair & Services'],
+      'car': ['Automotive', 'Vehicles'],
+      'restaurant': ['Food & Dining', 'Restaurants'],
+      'pizza': ['Food & Dining', 'Restaurants'],
+      'hotel': ['Travel & Hospitality', 'Hotels & Lodging'],
+      'room': ['Travel & Hospitality', 'Hotels & Lodging'],
+      'electrician': ['Home Services', 'Repair & Services'],
+      'cleaning': ['Home Services', 'Cleaning Services'],
+      'delivery': ['Shipping & Logistics', 'Delivery Services'],
+    };
+
+    const detectedCategories: string[] = [];
+    for (const keyword of intent.keywords) {
+      const keywordLower = keyword.toLowerCase();
+      for (const [key, categories] of Object.entries(categoryMap)) {
+        if (keywordLower.includes(key) || key.includes(keywordLower)) {
+          detectedCategories.push(...categories);
+        }
+      }
+    }
+    intent.categories = [...new Set(detectedCategories)].slice(0, 3);
+
+    return intent;
+  };
+
+  // ============================================================
+  // PERFORM SEARCH
+  // ============================================================
+
   const performSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
       Alert.alert('Search', 'Please enter a search term');
       return;
     }
 
-    const opportunities = allOpportunities || [];
-
-    if (!opportunities || opportunities.length === 0) {
+    if (catalogPosts.length === 0) {
       Alert.alert('No Data', 'No products or services available to search.');
       return;
     }
@@ -559,53 +639,62 @@ const SearchContent = ({ navigation }: any) => {
     try {
       const intent = parseNaturalLanguageQuery(query);
 
-      let results = opportunities;
+      // Start with all catalog posts
+      let results = catalogPosts;
 
+      // Keyword search
       if (intent.keywords.length > 0) {
-        results = results.filter((item: RawOpportunity) => {
-          const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''} ${item.area || ''}`.toLowerCase();
+        results = results.filter((item) => {
+          const searchText = `${item.name || ''} ${item.description || ''} ${item.category || ''} ${item.user_full_name || ''} ${item.location || ''}`.toLowerCase();
           return intent.keywords.some(kw => searchText.includes(kw.toLowerCase()));
         });
       }
 
+      // Category filter
       if (intent.categories.length > 0) {
-        results = results.filter((item: RawOpportunity) => {
+        results = results.filter((item) => {
           return intent.categories.some(cat => 
             item.category?.toLowerCase().includes(cat.toLowerCase())
           );
         });
       }
 
+      // Price range filter
       if (intent.priceRange) {
-        results = results.filter((item: RawOpportunity) => {
-          const price = item.price || 0;
+        results = results.filter((item) => {
+          const price = extractPriceFromSpecifications(item);
           return price >= intent.priceRange!.min && price <= intent.priceRange!.max;
         });
       }
 
+      // Location filter
       if (intent.location) {
-        results = results.filter((item: RawOpportunity) => {
-          return item.area?.toLowerCase().includes(intent.location!.toLowerCase());
+        results = results.filter((item) => {
+          return item.location?.toLowerCase().includes(intent.location!.toLowerCase());
         });
       }
 
+      // Type filter
       if (intent.type !== 'all') {
-        results = results.filter((item: RawOpportunity) => item.type === intent.type);
+        results = results.filter((item) => {
+          const isService = item.category?.toLowerCase().includes('service') || 
+                           item.category?.toLowerCase().includes('repair') ||
+                           item.category?.toLowerCase().includes('cleaning') ||
+                           item.category?.toLowerCase().includes('delivery');
+          const isProduct = !isService;
+          
+          if (intent.type === 'product') return isProduct;
+          if (intent.type === 'service') return isService;
+          return true;
+        });
       }
 
-      if (intent.inStock) {
-        results = results.filter((item: RawOpportunity) => item.inStock !== false);
-      }
-
-      if (intent.minRating > 0) {
-        results = results.filter((item: RawOpportunity) => (item.rating || 0) >= intent.minRating);
-      }
-
-      const scoredResults = results.map((item: RawOpportunity) => {
+      // Score results
+      const scoredResults = results.map((item) => {
         let score = 0;
-        const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''} ${item.area || ''}`.toLowerCase();
+        const searchText = `${item.name || ''} ${item.description || ''} ${item.category || ''} ${item.user_full_name || ''} ${item.location || ''}`.toLowerCase();
         
-        if (intent.keywords.some(kw => item.title?.toLowerCase().includes(kw.toLowerCase()))) {
+        if (intent.keywords.some(kw => item.name?.toLowerCase().includes(kw.toLowerCase()))) {
           score += 20;
         }
         
@@ -617,25 +706,23 @@ const SearchContent = ({ navigation }: any) => {
           score += 10;
         }
         
-        if (intent.keywords.some(kw => item.shopName?.toLowerCase().includes(kw.toLowerCase()))) {
+        if (intent.keywords.some(kw => item.user_full_name?.toLowerCase().includes(kw.toLowerCase()))) {
           score += 8;
         }
         
-        if (intent.location && item.area?.toLowerCase().includes(intent.location.toLowerCase())) {
+        if (intent.location && item.location?.toLowerCase().includes(intent.location.toLowerCase())) {
           score += 10;
         }
         
         if (intent.priceRange) {
-          const price = item.price || 0;
+          const price = extractPriceFromSpecifications(item);
           if (price >= intent.priceRange.min && price <= intent.priceRange.max) {
             score += 5;
           }
         }
         
-        if (item.rating && item.rating >= 4.0) {
-          score += 5;
-        } else if (item.rating && item.rating >= 3.5) {
-          score += 3;
+        if (item.like_count && item.like_count > 5) {
+          score += Math.min(item.like_count / 10, 5);
         }
         
         return { ...item, relevanceScore: score };
@@ -643,74 +730,47 @@ const SearchContent = ({ navigation }: any) => {
 
       scoredResults.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
 
-      let recommendations: RawOpportunity[] = [];
-
-      if (scoredResults.length > 0) {
-        const topResult = scoredResults[0];
-        const similarItems = getSimilarItems(topResult, opportunities);
-        const resultIds = new Set(scoredResults.map(r => r.id));
-        recommendations = similarItems.filter(item => !resultIds.has(item.id));
-        
-        if (user?.id) {
-          const personalized = await recommendationService.getPersonalizedRecommendations(
-            opportunities.filter(item => !resultIds.has(item.id)),
-            user.id
-          );
-          const combined = [...recommendations, ...personalized];
-          const unique = Array.from(new Map(combined.map((item: RawOpportunity) => [item.id, item])).values());
-          recommendations = unique;
-        }
-      } else {
-        const relatedItems = opportunities.filter((item: RawOpportunity) => {
-          const searchText = `${item.title || ''} ${item.description || ''} ${item.category || ''} ${item.shopName || ''}`.toLowerCase();
-          return intent.keywords.some(kw => searchText.includes(kw.toLowerCase()));
-        });
-        
-        if (relatedItems.length > 0) {
-          const scoredRelated = relatedItems.map((item: RawOpportunity) => {
-            let score = 0;
-            if (intent.keywords.some(kw => item.title?.toLowerCase().includes(kw.toLowerCase()))) {
-              score += 20;
-            }
-            return { ...item, relevanceScore: score };
-          });
-          scoredRelated.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
-          recommendations = scoredRelated.slice(0, 20);
-        } else if (user?.id) {
-          recommendations = await recommendationService.getPersonalizedRecommendations(
-            opportunities,
-            user.id
-          );
-        }
-      }
-
-      const mixedRecommendations = mixRecommendations(recommendations);
-      const finalRecommendations = mixedRecommendations.slice(0, 30);
-
-      const taggedResults = scoredResults.map((item: SearchResult, index: number) => ({
-        ...item,
-        aiTag: index < 3 && (item.relevanceScore || 0) > 10,
+      // Map to SearchResult format
+      const searchResults: SearchResult[] = scoredResults.map((item) => ({
+        id: item.id,
+        title: item.name || 'Untitled',
+        price: extractPriceFromSpecifications(item),
+        currency: 'UGX',
+        imageUrl: getImageUrl(item),
+        catalogImages: item.images || [],
+        description: item.description || '',
+        rating: null,
+        reviewCount: null,
+        area: item.location || null,
+        inStock: true,
+        category: item.category || null,
+        type: 'product' as const,
+        createdAt: item.created_at,
+        userId: item.user_id || '',
+        userFullName: item.user_full_name || 'User',
+        userAvatar: item.user_avatar || null,
+        userLatitude: null,
+        userLongitude: null,
+        userPhone: null,
+        video: item.video || null,
+        video_thumbnail: item.video_thumbnail || null,
+        video_duration: item.video_duration || null,
+        video_size: item.video_size || null,
+        likeCount: item.like_count || 0,
+        viewCount: item.view_count || 0,
+        shareCount: item.share_count || 0,
+        commentCount: item.comment_count || 0,
+        saveCount: item.save_count || 0,
+        specifications: item.specifications || {},
+        relevanceScore: item.relevanceScore || 0,
+        aiTag: (item.relevanceScore || 0) > 15,
       }));
 
-      const allResults = [...taggedResults];
-      
-      if (finalRecommendations.length > 0) {
-        const resultIds = new Set(allResults.map(r => r.id));
-        const recs = finalRecommendations
-          .filter(r => !resultIds.has(r.id))
-          .map((r, index) => ({
-            ...r,
-            relevanceScore: 0,
-            aiTag: false,
-          }));
-        allResults.push(...recs);
-      }
-
-      // ✅ Track search in database using local function
+      // Track search
       if (user?.id) {
         await trackSearch(
           query,
-          scoredResults.length,
+          searchResults.length,
           intent,
           {
             categories: intent.categories,
@@ -727,16 +787,15 @@ const SearchContent = ({ navigation }: any) => {
       setIsSearching(false);
 
       navigation.navigate('SearchResults', {
-        results: allResults,
+        results: searchResults,
         query: query,
         initialIndex: 0,
         intent: intent,
-        hasResults: scoredResults.length > 0,
-        totalResults: scoredResults.length,
-        recommendationsCount: finalRecommendations.length,
+        hasResults: searchResults.length > 0,
+        totalResults: searchResults.length,
+        recommendationsCount: 0,
       });
 
-      // Reload recent searches
       await loadRecentSearches();
 
     } catch (error) {
@@ -745,7 +804,11 @@ const SearchContent = ({ navigation }: any) => {
       setIsLoading(false);
       setIsSearching(false);
     }
-  }, [allOpportunities, user?.id, navigation, trackSearch, loadRecentSearches]);
+  }, [catalogPosts, user?.id, navigation, trackSearch, loadRecentSearches]);
+
+  // ============================================================
+  // HANDLERS
+  // ============================================================
 
   const handleSearch = useCallback(() => {
     Keyboard.dismiss();
@@ -770,10 +833,7 @@ const SearchContent = ({ navigation }: any) => {
   }, [performSearch]);
 
   const handleRecentDelete = useCallback(async (id: string) => {
-    // Remove from local state
     setRecentSearches(prev => prev.filter(item => item.id !== id));
-    
-    // Delete from database
     await deleteSearch(id);
   }, [deleteSearch]);
 
@@ -816,21 +876,11 @@ const SearchContent = ({ navigation }: any) => {
     navigation.goBack();
   }, [navigation]);
 
-  if (queryError) {
-    return (
-      <SafeAreaView style={styles.errorContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
-        <Ionicons name="alert-circle-outline" size={48} color="#E74C3C" />
-        <Text style={styles.errorText}>Failed to load search data</Text>
-        <Text style={styles.errorSubtext}>{queryError.message}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
+  // ============================================================
+  // LOADING STATES
+  // ============================================================
 
-  if (queryLoading && !allOpportunities) {
+  if (isLoadingCatalog) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
@@ -840,11 +890,14 @@ const SearchContent = ({ navigation }: any) => {
     );
   }
 
-  return (
-  <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}> 
-       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+  // ============================================================
+  // RENDER
+  // ============================================================
 
-      {/* Header with Back Button */}
+  return (
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+
       <View style={styles.headerContainer}>
         <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -853,7 +906,6 @@ const SearchContent = ({ navigation }: any) => {
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Search Bar */}
       <View style={styles.searchWrapper} ref={searchContainerRef}>
         <View style={styles.searchInputWrapper}>
           <Ionicons name="search-outline" size={20} color="#8A8AAE" />
@@ -887,7 +939,6 @@ const SearchContent = ({ navigation }: any) => {
         </View>
       </View>
 
-      {/* Search Suggestions */}
       {showSuggestions && suggestions.length > 0 && (
         <View style={styles.suggestionsContainer}>
           <FlatList
@@ -907,7 +958,6 @@ const SearchContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* Loading Overlay */}
       {isLoading && (
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingCard}>
@@ -917,14 +967,12 @@ const SearchContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* Main Content */}
       {!isLoading && !showSuggestions && (
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Trending Now - From Database */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
@@ -939,7 +987,6 @@ const SearchContent = ({ navigation }: any) => {
             </View>
           </View>
 
-          {/* Suggested Prompts */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>💡 Suggested Prompts</Text>
@@ -951,7 +998,6 @@ const SearchContent = ({ navigation }: any) => {
             </View>
           </View>
 
-          {/* Recent Searches - From Database */}
           {recentSearches.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
@@ -978,7 +1024,10 @@ const SearchContent = ({ navigation }: any) => {
   );
 };
 
-// --- Main SearchScreen Component ---
+// ============================================================
+// MAIN EXPORT
+// ============================================================
+
 export const SearchScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -1012,7 +1061,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
 
-  // Header
   headerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1034,7 +1082,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Search Bar
   searchWrapper: {
     paddingHorizontal: 16,
     paddingBottom: 12,
@@ -1072,7 +1119,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Suggestions
   suggestionsContainer: {
     backgroundColor: 'rgba(20, 20, 40, 0.98)',
     borderBottomWidth: 1,
@@ -1106,7 +1152,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // Loading Overlay
   loadingOverlay: {
     position: 'absolute',
     top: 0,
@@ -1133,7 +1178,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 
-  // Sections
   section: {
     marginBottom: 24,
   },
@@ -1160,7 +1204,6 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
 
-  // Trending
   trendingGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1179,7 +1222,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  // Suggested Prompts
   suggestedGrid: {
     gap: 8,
   },
@@ -1208,7 +1250,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
 
-  // Recent Searches
   recentItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1246,38 +1287,6 @@ const styles = StyleSheet.create({
     padding: 6,
   },
 
-  // Error & Loading States
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#0D0D1A',
-    padding: 20,
-  },
-  errorText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 12,
-  },
-  errorSubtext: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  retryButton: {
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 10,
-    marginTop: 16,
-  },
-  retryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',

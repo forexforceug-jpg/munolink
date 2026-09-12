@@ -1,4 +1,6 @@
-﻿export type Json =
+﻿// src/types/database.types.ts
+
+export type Json =
   | string
   | number
   | boolean
@@ -27,6 +29,28 @@ export type Database = {
           subcategory: string | null
           tags: string[] | null
           updated_at: string | null
+          user_id: string | null
+          price: number | null
+          price_type: string | null
+          location: string | null
+          view_count: number | null
+          like_count: number | null
+          share_count: number | null
+          comment_count: number | null
+          save_count: number | null // ✅ ADDED
+          status: string | null
+          expires_at: string | null
+          detected_category: string | null
+          detected_intent: string | null
+          detected_entities: Json
+          detected_tags: string[] | null
+          confidence_score: number | null
+          video: string | null
+          video_thumbnail: string | null
+          video_duration: number | null
+          video_size: number | null
+          location_latitude: number | null // ✅ ADDED
+          location_longitude: number | null // ✅ ADDED
         }
         Insert: {
           brand?: string | null
@@ -42,6 +66,28 @@ export type Database = {
           subcategory?: string | null
           tags?: string[] | null
           updated_at?: string | null
+          user_id?: string | null
+          price?: number | null
+          price_type?: string | null
+          location?: string | null
+          view_count?: number | null
+          like_count?: number | null
+          share_count?: number | null
+          comment_count?: number | null
+          save_count?: number | null
+          status?: string | null
+          expires_at?: string | null
+          detected_category?: string | null
+          detected_intent?: string | null
+          detected_entities?: Json
+          detected_tags?: string[] | null
+          confidence_score?: number | null
+          video?: string | null
+          video_thumbnail?: string | null
+          video_duration?: number | null
+          video_size?: number | null
+          location_latitude?: number | null
+          location_longitude?: number | null
         }
         Update: {
           brand?: string | null
@@ -57,6 +103,28 @@ export type Database = {
           subcategory?: string | null
           tags?: string[] | null
           updated_at?: string | null
+          user_id?: string | null
+          price?: number | null
+          price_type?: string | null
+          location?: string | null
+          view_count?: number | null
+          like_count?: number | null
+          share_count?: number | null
+          comment_count?: number | null
+          save_count?: number | null
+          status?: string | null
+          expires_at?: string | null
+          detected_category?: string | null
+          detected_intent?: string | null
+          detected_entities?: Json
+          detected_tags?: string[] | null
+          confidence_score?: number | null
+          video?: string | null
+          video_thumbnail?: string | null
+          video_duration?: number | null
+          video_size?: number | null
+          location_latitude?: number | null
+          location_longitude?: number | null
         }
         Relationships: []
       }
@@ -172,6 +240,103 @@ export type Database = {
           },
         ]
       }
+      comments: {
+        Row: {
+          id: string
+          user_id: string
+          post_id: string
+          content: string
+          images: string[] | null
+          parent_id: string | null
+          helpful_count: number
+          is_edited: boolean
+          is_approved: boolean
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          post_id: string
+          content: string
+          images?: string[] | null
+          parent_id?: string | null
+          helpful_count?: number
+          is_edited?: boolean
+          is_approved?: boolean
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          post_id?: string
+          content?: string
+          images?: string[] | null
+          parent_id?: string | null
+          helpful_count?: number
+          is_edited?: boolean
+          is_approved?: boolean
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comments_user_id_fkey"
+            columns: ["user_id"]
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comments_post_id_fkey"
+            columns: ["post_id"]
+            referencedRelation: "catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comments_parent_id_fkey"
+            columns: ["parent_id"]
+            referencedRelation: "comments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      follows: {
+        Row: {
+          id: string
+          follower_id: string
+          following_id: string
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          follower_id: string
+          following_id: string
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          follower_id?: string
+          following_id?: string
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "follows_follower_id_fkey"
+            columns: ["follower_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "follows_following_id_fkey"
+            columns: ["following_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hero_slides: {
         Row: {
           bg_color: string | null
@@ -228,7 +393,6 @@ export type Database = {
           },
         ]
       }
-      
       individual_providers: {
         Row: {
           address: string | null
@@ -879,6 +1043,40 @@ export type Database = {
           },
         ]
       }
+      saves: {
+        Row: {
+          id: string
+          user_id: string
+          post_id: string
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          post_id: string
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          post_id?: string
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saves_user_id_fkey"
+            columns: ["user_id"]
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "saves_post_id_fkey"
+            columns: ["post_id"]
+            referencedRelation: "catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       service_catalog: {
         Row: {
           availability: string | null
@@ -897,7 +1095,7 @@ export type Database = {
           subcategory: string | null
           tags: string[] | null
           updated_at: string | null
-          brand: null;
+          brand: string | null
         }
         Insert: {
           availability?: string | null
@@ -916,6 +1114,7 @@ export type Database = {
           subcategory?: string | null
           tags?: string[] | null
           updated_at?: string | null
+          brand?: string | null
         }
         Update: {
           availability?: string | null
@@ -934,53 +1133,53 @@ export type Database = {
           subcategory?: string | null
           tags?: string[] | null
           updated_at?: string | null
+          brand?: string | null
         }
         Relationships: []
       }
       search_history: {
         Row: {
-          id: string;
-          user_id: string;
-          query: string;
-          results_count: number | null;
-          intent: Json | null;
-          filters_applied: Json | null;
-          clicked_item_id: string | null;
-          clicked_at: string | null;
-          created_at: string;
-        };
+          id: string
+          user_id: string
+          query: string
+          results_count: number | null
+          intent: Json | null
+          filters_applied: Json | null
+          clicked_item_id: string | null
+          clicked_at: string | null
+          created_at: string
+        }
         Insert: {
-          id?: string;
-          user_id: string;
-          query: string;
-          results_count?: number | null;
-          intent?: Json | null;
-          filters_applied?: Json | null;
-          clicked_item_id?: string | null;
-          clicked_at?: string | null;
-          created_at?: string;
-        };
+          id?: string
+          user_id: string
+          query: string
+          results_count?: number | null
+          intent?: Json | null
+          filters_applied?: Json | null
+          clicked_item_id?: string | null
+          clicked_at?: string | null
+          created_at?: string
+        }
         Update: {
-          id?: string;
-          user_id?: string;
-          query?: string;
-          results_count?: number | null;
-          intent?: Json | null;
-          filters_applied?: Json | null;
-          clicked_item_id?: string | null;
-          clicked_at?: string | null;
-          created_at?: string;
-        };
+          id?: string
+          user_id?: string
+          query?: string
+          results_count?: number | null
+          intent?: Json | null
+          filters_applied?: Json | null
+          clicked_item_id?: string | null
+          clicked_at?: string | null
+          created_at?: string
+        }
         Relationships: [
           {
-            foreignKeyName: "search_history_user_id_fkey";
-            columns: ["user_id"];
-            referencedRelation: "users";
-            referencedColumns: ["id"];
-          }
-        ];
-      };
-    
+            foreignKeyName: "search_history_user_id_fkey"
+            columns: ["user_id"]
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       shop_products: {
         Row: {
           catalog_id: string
@@ -1078,6 +1277,7 @@ export type Database = {
           logo_url?: string | null
           longitude?: number | null
           name: string
+          banner_url?: string | null
           opening_hours?: string | null
           owner_id?: string | null
           phone?: string | null
@@ -1110,6 +1310,7 @@ export type Database = {
           logo_url?: string | null
           longitude?: number | null
           name?: string
+          banner_url?: string | null
           opening_hours?: string | null
           owner_id?: string | null
           phone?: string | null
@@ -1190,11 +1391,19 @@ export type Database = {
       users: {
         Row: {
           avatar_url: string | null
+          bio: string | null
+          cover_url: string | null
           created_at: string | null
           full_name: string | null
           id: string
           kyc_verified: boolean | null
+          latitude: number | null
           lifetime_savings: number | null
+          location_city: string | null
+          location_country: string | null
+          location_data: Json | null
+          location_region: string | null
+          longitude: number | null
           phone_number: string
           pin_hash: string | null
           role: string | null
@@ -1202,11 +1411,19 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          bio?: string | null
+          cover_url?: string | null
           created_at?: string | null
           full_name?: string | null
           id?: string
           kyc_verified?: boolean | null
+          latitude?: number | null
           lifetime_savings?: number | null
+          location_city?: string | null
+          location_country?: string | null
+          location_data?: Json | null
+          location_region?: string | null
+          longitude?: number | null
           phone_number: string
           pin_hash?: string | null
           role?: string | null
@@ -1214,11 +1431,19 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          bio?: string | null
+          cover_url?: string | null
           created_at?: string | null
           full_name?: string | null
           id?: string
           kyc_verified?: boolean | null
+          latitude?: number | null
           lifetime_savings?: number | null
+          location_city?: string | null
+          location_country?: string | null
+          location_data?: Json | null
+          location_region?: string | null
+          longitude?: number | null
           phone_number?: string
           pin_hash?: string | null
           role?: string | null
@@ -1284,7 +1509,6 @@ export type Database = {
           },
         ]
       }
-      // --- ADD THE BUSINESS DOCUMENTS TABLE HERE ---
       business_documents: {
         Row: {
           id: string
@@ -1364,58 +1588,134 @@ export type Database = {
           },
         ]
       }
-      // In your database.types.ts, add this under Tables:
+    // src/types/database.types.ts - Add this to the Tables section
 
-opportunity_scenes: {
+payment_requests: {
   Row: {
     id: string;
-    opportunity_id: string;
-    opportunity_type: 'product' | 'service';
-    scene_index: number;
-    scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
-    image_url: string;
-    image_caption: string | null;
-    order_index: number;
-    is_primary: boolean;
-    created_at: string;
-    updated_at: string;
+    from_user_id: string;
+    to_user_id: string;
+    amount: number;
+    reason: string | null;
+    status: 'pending' | 'accepted' | 'locked' | 'completed' | 'cancelled' | 'disputed';
+    is_request: boolean;
+    transaction_id: string | null;
+    message_id: string | null;
+    accepted_at: string | null;
+    locked_at: string | null;
+    completed_at: string | null;
+    created_at: string | null;
+    updated_at: string | null;
   };
   Insert: {
     id?: string;
-    opportunity_id: string;
-    opportunity_type: 'product' | 'service';
-    scene_index: number;
-    scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
-    image_url: string;
-    image_caption?: string | null;
-    order_index?: number;
-    is_primary?: boolean;
-    created_at?: string;
-    updated_at?: string;
+    from_user_id: string;
+    to_user_id: string;
+    amount: number;
+    reason?: string | null;
+    status?: 'pending' | 'accepted' | 'locked' | 'completed' | 'cancelled' | 'disputed';
+    is_request?: boolean;
+    transaction_id?: string | null;
+    message_id?: string | null;
+    accepted_at?: string | null;
+    locked_at?: string | null;
+    completed_at?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
   };
   Update: {
     id?: string;
-    opportunity_id?: string;
-    opportunity_type?: 'product' | 'service';
-    scene_index?: number;
-    scene_type?: 'hero' | 'details' | 'trust' | 'gallery' | 'extra';
-    image_url?: string;
-    image_caption?: string | null;
-    order_index?: number;
-    is_primary?: boolean;
-    created_at?: string;
-    updated_at?: string;
+    from_user_id?: string;
+    to_user_id?: string;
+    amount?: number;
+    reason?: string | null;
+    status?: 'pending' | 'accepted' | 'locked' | 'completed' | 'cancelled' | 'disputed';
+    is_request?: boolean;
+    transaction_id?: string | null;
+    message_id?: string | null;
+    accepted_at?: string | null;
+    locked_at?: string | null;
+    completed_at?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
   };
   Relationships: [
     {
-      foreignKeyName: "opportunity_scenes_opportunity_id_fkey";
-      columns: ["opportunity_id"];
-      referencedRelation: "shop_products";
+      foreignKeyName: "payment_requests_from_user_id_fkey";
+      columns: ["from_user_id"];
+      referencedRelation: "users";
+      referencedColumns: ["id"];
+    },
+    {
+      foreignKeyName: "payment_requests_to_user_id_fkey";
+      columns: ["to_user_id"];
+      referencedRelation: "users";
+      referencedColumns: ["id"];
+    },
+    {
+      foreignKeyName: "payment_requests_transaction_id_fkey";
+      columns: ["transaction_id"];
+      referencedRelation: "transactions";
+      referencedColumns: ["id"];
+    },
+    {
+      foreignKeyName: "payment_requests_message_id_fkey";
+      columns: ["message_id"];
+      referencedRelation: "messages";
       referencedColumns: ["id"];
     },
   ];
-}
-      // --- END OF BUSINESS DOCUMENTS TABLE ---
+};
+      opportunity_scenes: {
+        Row: {
+          id: string
+          opportunity_id: string
+          opportunity_type: 'product' | 'service'
+          scene_index: number
+          scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra'
+          image_url: string
+          image_caption: string | null
+          order_index: number
+          is_primary: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          opportunity_id: string
+          opportunity_type: 'product' | 'service'
+          scene_index: number
+          scene_type: 'hero' | 'details' | 'trust' | 'gallery' | 'extra'
+          image_url: string
+          image_caption?: string | null
+          order_index?: number
+          is_primary?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          opportunity_id?: string
+          opportunity_type?: 'product' | 'service'
+          scene_index?: number
+          scene_type?: 'hero' | 'details' | 'trust' | 'gallery' | 'extra'
+          image_url?: string
+          image_caption?: string | null
+          order_index?: number
+          is_primary?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opportunity_scenes_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "shop_products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1623,22 +1923,21 @@ export const Constants = {
   },
 } as const
 
-// Keep your BusinessDocument type definition
 export type BusinessDocument = {
-  id: string;
-  business_id: string;
-  document_type: string;
-  file_name: string;
-  file_url: string;
-  file_size: number | null;
-  mime_type: string | null;
-  uploaded_by: string;
-  uploaded_at: string;
-  is_verified: boolean;
-  verified_at: string | null;
-  verified_by: string | null;
-  status: 'pending' | 'approved' | 'rejected';
-  rejection_reason: string | null;
-  created_at: string;
-  updated_at: string;
-};
+  id: string
+  business_id: string
+  document_type: string
+  file_name: string
+  file_url: string
+  file_size: number | null
+  mime_type: string | null
+  uploaded_by: string
+  uploaded_at: string
+  is_verified: boolean
+  verified_at: string | null
+  verified_by: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  rejection_reason: string | null
+  created_at: string
+  updated_at: string
+}

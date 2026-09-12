@@ -17,6 +17,7 @@ import {
   Animated,
   Modal,
   Platform,
+  ListRenderItem,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,13 +26,12 @@ import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { SceneEngine, OpportunityFormatter, SceneRenderer } from '../opportunity';
+import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
-import { SimpleDetailsModal } from '../feed/components/SimpleDetailsModal';
-import { Opportunity as RawOpportunity } from '../../services/feed.service';
+import { Opportunity } from '../../services/feed.service';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -39,39 +39,71 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 const { width, height } = Dimensions.get('window');
 
 // --- Types ---
-interface ExploreItem extends RawOpportunity {
-  type: 'product' | 'service';
-  image: string;
-  shopName: string;
-  price: number;
-  rating: number;
-  category: string;
-  providerName?: string;
+interface ExplorePost {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  currency: string;
+  images: string[];
+  video: string | null;
+  video_thumbnail: string | null;
+  video_duration: number | null;
+  video_size: number | null;
+  hashtags: string[];
+  location: string | null;
+  category: string | null;
+  status: string;
+  like_count: number;
+  view_count: number;
+  share_count: number;
+  comment_count: number;
+  created_at: string;
+  updated_at: string;
+  user_full_name: string | null;
+  user_avatar: string | null;
+  detected_category: string | null;
+  detected_intent: string | null;
+  detected_tags: string[];
+  userId: string;
+  userFullName: string;
+  userAvatar: string | null;
+  imageUrl: string;
+  catalogImages: string[];
+  user_cover_url?: string | null;
 }
 
-// --- Filter Categories (Dynamic from DB) ---
+// --- Filter Categories ---
 const DEFAULT_CATEGORIES = [
   { key: 'all', label: 'All' },
   { key: 'products', label: 'Products' },
   { key: 'services', label: 'Services' },
   { key: 'electronics', label: 'Electronics' },
   { key: 'fashion', label: 'Fashion' },
-  { key: 'groceries', label: 'Groceries' },
-  { key: 'construction', label: 'Construction' },
-  { key: 'automotive', label: 'Automotive' },
-  { key: 'health', label: 'Health' },
-  { key: 'education', label: 'Education' },
-  { key: 'hospitality', label: 'Hospitality' },
+  { key: 'food', label: 'Food' },
+  { key: 'art', label: 'Art' },
+  { key: 'vehicles', label: 'Vehicles' },
+  { key: 'property', label: 'Property' },
+  { key: 'jobs', label: 'Jobs' },
 ];
 
 const sortOptions = [
   { key: 'relevance', label: 'Relevance' },
+  { key: 'latest', label: 'Latest' },
   { key: 'price_low', label: 'Price: Low to High' },
   { key: 'price_high', label: 'Price: High to Low' },
-  { key: 'rating', label: 'Top Rated' },
+  { key: 'popular', label: 'Most Popular' },
 ];
 
-// --- Sub-components ---
+// ============================================================
+// PRICE BADGE HELPER
+// ============================================================
+
+
+// ============================================================
+// SUB-COMPONENTS
+// ============================================================
 
 const FilterChip = ({ label, selected, onPress, count }: any) => (
   <TouchableOpacity
@@ -90,10 +122,25 @@ const FilterChip = ({ label, selected, onPress, count }: any) => (
   </TouchableOpacity>
 );
 
-// Grid Result Card
-const GridResultCard = React.memo(({ item, onPress }: any) => {
-  const imageUrl = item.image || item.imageUrl || '';
-  const displayName = item.type === 'service' ? item.providerName || item.shopName : item.shopName;
+// ============================================================
+// GRID RESULT CARD - WITH PRICE BADGE
+// ============================================================
+const GridResultCard = React.memo(({ item, onPress }: { item: ExplorePost; onPress: (item: ExplorePost) => void }) => {
+  // Get thumbnail
+  let imageUrl = '';
+  if (item.images && item.images.length > 0) {
+    imageUrl = item.images[0];
+  } else if (item.video_thumbnail) {
+    imageUrl = item.video_thumbnail;
+  } else if (item.user_cover_url) {
+    imageUrl = item.user_cover_url;
+  } else if (item.user_avatar) {
+    imageUrl = item.user_avatar;
+  }
+  
+  const displayName = item.user_full_name || 'User';
+  const hasVideo = !!item.video;
+  const hasPrice = item.price !== undefined && item.price !== null && item.price > 0;
 
   return (
     <TouchableOpacity 
@@ -101,23 +148,42 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
       onPress={() => onPress(item)}
       activeOpacity={0.8}
     >
-      <Image 
-        source={{ uri: imageUrl || 'https://via.placeholder.com/200/4A7DFF/FFFFFF?text=No+Image' }} 
-        style={styles.gridImage}
-        resizeMode="cover"
-      />
+      {imageUrl ? (
+        <Image 
+          source={{ uri: imageUrl }} 
+          style={styles.gridImage}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={[styles.gridImage, styles.gridImagePlaceholder]}>
+          <Ionicons name="image-outline" size={40} color="#4A7DFF" />
+        </View>
+      )}
+      
+      {hasVideo && (
+        <View style={styles.videoBadge}>
+          <Ionicons name="play-circle" size={24} color="#FFFFFF" />
+        </View>
+      )}
+      
+      
       <View style={styles.gridOverlay}>
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.85)']}
           style={styles.gridGradient}
         />
         <View style={styles.gridInfo}>
-          <Text style={styles.gridTitle} numberOfLines={1}>{item.title || 'Item'}</Text>
-          <Text style={styles.gridPrice}>UGX {item.price?.toLocaleString() || '0'}</Text>
+          <Text style={styles.gridTitle} numberOfLines={1}>{item.name || 'Post'}</Text>
+          
+          {/* ✅ Show price if it exists */}
+          {hasPrice && (
+            <Text style={styles.gridPrice}>UGX {item.price!.toLocaleString()}</Text>
+          )}
+          
           <View style={styles.gridFooter}>
-            <Text style={styles.gridShop} numberOfLines={1}>{displayName || 'Shop'}</Text>
-            {item.rating && item.rating > 0 && (
-              <Text style={styles.gridRating}>⭐ {item.rating.toFixed(1)}</Text>
+            <Text style={styles.gridShop} numberOfLines={1}>{displayName}</Text>
+            {item.like_count && item.like_count > 0 && (
+              <Text style={styles.gridRating}>❤️ {item.like_count}</Text>
             )}
           </View>
         </View>
@@ -135,137 +201,151 @@ const ExploreContent = ({ navigation }: any) => {
   const { user } = useAuth();
   const { height, width } = useWindowDimensions();
 
-  const [items, setItems] = useState<ExploreItem[]>([]);
-  const [filteredItems, setFilteredItems] = useState<ExploreItem[]>([]);
+  const [items, setItems] = useState<ExplorePost[]>([]);
+  const [filteredItems, setFilteredItems] = useState<ExplorePost[]>([]);
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [selectedSort, setSelectedSort] = useState('relevance');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [showSortModal, setShowSortModal] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
-  const [selectedItem, setSelectedItem] = useState<ExploreItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ExplorePost | null>(null);
   const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [showSearch, setShowSearch] = useState(false);
   
   // Modal states
-  const [selectedOpportunity, setSelectedOpportunity] = useState<ExploreItem | null>(null);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [selectedOpportunity, setSelectedOpportunity] = useState<ExplorePost | null>(null);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
   const searchInputRef = useRef<TextInput>(null);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  
+  // Animated value for scroll
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   // ============================================================
-  // FETCH CATEGORIES
-  // ============================================================
-  const fetchCategories = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('categories')
-        .select('name, slug')
-        .eq('is_active', true)
-        .order('name', { ascending: true });
-
-      if (!error && data && data.length > 0) {
-        const categoryOptions = [
-          { key: 'all', label: 'All' },
-          { key: 'products', label: 'Products' },
-          { key: 'services', label: 'Services' },
-          ...data.map((cat: any) => ({
-            key: cat.slug || cat.name.toLowerCase().replace(/\s+/g, '_'),
-            label: cat.name,
-          })),
-        ];
-        setCategories(categoryOptions);
-      }
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-    }
-  }, []);
-
-  // ============================================================
-  // FETCH DATA
+  // FETCH DATA - FROM CATALOG WITH USER INFO INCLUDING COVER
   // ============================================================
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch products with shop info
-      const { data: productsData, error: productsError } = await supabase
-        .from('shop_products')
-        .select('*, catalog: catalog_id(*), shop: shop_id(id, name, rating)')
-        .eq('in_stock', true)
+      const { data: catalogPosts, error: catalogError } = await supabase
+        .from('catalog')
+        .select('*')
+        .eq('status', 'active')
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(100);
 
-      let allItems: ExploreItem[] = [];
-
-      if (!productsError && productsData) {
-        const productItems = productsData.map((p: any) => ({
-          id: p.catalog_id,
-          title: p.catalog?.name || 'Product',
-          shopName: p.shop?.name || 'Shop',
-          shopId: p.shop_id,
-          price: p.regular_price || 0,
-          currency: 'UGX',
-          image: p.catalog?.images?.[0] || '',
-          catalogImages: p.catalog?.images || [],
-          description: p.catalog?.description || '',
-          specifications: p.catalog?.specifications || {},
-          rating: p.shop?.rating || 0,
-          reviewCount: 0,
-          area: null,
-          inStock: p.in_stock !== false,
-          category: p.catalog?.category || 'Uncategorized',
-          type: 'product' as const,
-          imageUrl: p.catalog?.images?.[0] || '',
-          shopLogo: null,
-        }));
-        allItems = [...allItems, ...productItems];
+      if (catalogError) {
+        console.error('❌ Error fetching catalog posts:', catalogError);
+        setIsLoading(false);
+        return;
       }
 
-      // Fetch services with user/provider info
-      const { data: servicesData, error: servicesError } = await supabase
-        .from('provider_services')
-        .select('*, service: service_id(*), user: user_id(id, full_name)')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (!servicesError && servicesData) {
-        const serviceItems = servicesData.map((s: any) => ({
-          id: s.service_id,
-          title: s.service?.name || 'Service',
-          shopName: s.user?.full_name || 'Provider',
-          providerName: s.user?.full_name || 'Provider',
-          shopId: s.user_id,
-          price: s.price || 0,
-          currency: 'UGX',
-          image: s.service?.images?.[0] || '',
-          catalogImages: s.service?.images || [],
-          description: s.service?.description || '',
-          specifications: s.service?.specifications || {},
-          rating: 0,
-          reviewCount: 0,
-          area: null,
-          inStock: s.is_active !== false,
-          category: s.service?.category || 'Uncategorized',
-          type: 'service' as const,
-          imageUrl: s.service?.images?.[0] || '',
-          shopLogo: null,
-          duration: s.service?.duration || null,
-        }));
-        allItems = [...allItems, ...serviceItems];
+      if (!catalogPosts || catalogPosts.length === 0) {
+        setItems([]);
+        setFilteredItems([]);
+        setIsLoading(false);
+        return;
       }
 
-      // Shuffle and set
-      const shuffled = allItems.sort(() => Math.random() - 0.5);
+      console.log(`✅ Found ${catalogPosts.length} posts in catalog`);
+
+      // Get user info including cover_url
+      const userIds = catalogPosts
+        .map(post => post.user_id)
+        .filter((id): id is string => id !== null && id !== undefined && id !== '');
+
+      let userMap: Record<string, { 
+        full_name: string | null; 
+        avatar_url: string | null;
+        cover_url: string | null;
+      }> = {};
+
+      if (userIds.length > 0) {
+        const { data: users, error: usersError } = await supabase
+          .from('users')
+          .select('id, full_name, avatar_url, cover_url')
+          .in('id', userIds);
+
+        if (usersError) {
+          console.error('❌ Error fetching users:', usersError);
+        } else if (users) {
+          users.forEach((user: any) => {
+            userMap[user.id] = {
+              full_name: user.full_name,
+              avatar_url: user.avatar_url,
+              cover_url: user.cover_url,
+            };
+          });
+          console.log(`👤 Found ${Object.keys(userMap).length} users`);
+        }
+      }
+
+      // Build ExplorePost objects
+      const posts: ExplorePost[] = catalogPosts.map((post: any) => {
+        const userInfo = post.user_id ? userMap[post.user_id] : null;
+        const images = post.images || [];
+        
+        const videoUrl = post.video || null;
+        const videoThumbnail = post.video_thumbnail || null;
+        
+        // ✅ FIX: Get price from specifications if price column is null
+        let price = post.price || null;
+        if (!price && post.specifications && typeof post.specifications === 'object') {
+          const specPrice = post.specifications.price || post.specifications.regular_price || null;
+          if (specPrice) {
+            price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+          }
+        }
+        
+        const finalThumbnail = videoThumbnail || (images.length > 0 ? images[0] : null);
+
+        return {
+          id: post.id,
+          user_id: post.user_id || '',
+          name: post.name || 'Untitled',
+          description: post.description || null,
+          price: price,
+          currency: 'UGX',
+          images: images,
+          video: videoUrl,
+          video_thumbnail: finalThumbnail,
+          video_duration: post.video_duration || null,
+          video_size: post.video_size || null,
+          hashtags: post.tags || [],
+          location: post.location || null,
+          category: post.category || null,
+          status: post.status || 'active',
+          like_count: post.like_count || 0,
+          view_count: post.view_count || 0,
+          share_count: post.share_count || 0,
+          comment_count: post.comment_count || 0,
+          created_at: post.created_at || new Date().toISOString(),
+          updated_at: post.updated_at || new Date().toISOString(),
+          user_full_name: userInfo?.full_name || 'User',
+          user_avatar: userInfo?.avatar_url || null,
+          user_cover_url: userInfo?.cover_url || null,
+          detected_category: post.detected_category || null,
+          detected_intent: post.detected_intent || null,
+          detected_tags: post.detected_tags || [],
+          userId: post.user_id || '',
+          userFullName: userInfo?.full_name || 'User',
+          userAvatar: userInfo?.avatar_url || null,
+          imageUrl: images[0] || videoThumbnail || userInfo?.cover_url || '',
+          catalogImages: images,
+        };
+      });
+
+      // Shuffle for variety
+      const shuffled = posts.sort(() => Math.random() - 0.5);
       setItems(shuffled);
       setFilteredItems(shuffled);
     } catch (error) {
-      console.error('Error fetching explore data:', error);
+      console.error('❌ Error fetching explore data:', error);
     } finally {
       setIsLoading(false);
     }
@@ -273,8 +353,7 @@ const ExploreContent = ({ navigation }: any) => {
 
   useEffect(() => {
     fetchData();
-    fetchCategories();
-  }, [fetchData, fetchCategories]);
+  }, [fetchData]);
 
   // ============================================================
   // FILTERS AND SORTING
@@ -282,40 +361,54 @@ const ExploreContent = ({ navigation }: any) => {
   const applyFilters = useCallback(() => {
     let result = [...items];
 
-    // Filter by category
     if (selectedFilter !== 'all') {
       if (selectedFilter === 'products') {
-        result = result.filter(item => item.type === 'product');
+        result = result.filter(item => 
+          item.detected_intent === 'sell' || 
+          item.detected_category?.toLowerCase().includes('product')
+        );
       } else if (selectedFilter === 'services') {
-        result = result.filter(item => item.type === 'service');
+        result = result.filter(item => 
+          item.detected_intent === 'service' || 
+          item.detected_category?.toLowerCase().includes('service')
+        );
       } else {
         result = result.filter(item => 
           item.category?.toLowerCase().replace(/\s+/g, '_') === selectedFilter ||
-          item.category?.toLowerCase() === selectedFilter
+          item.category?.toLowerCase() === selectedFilter ||
+          item.detected_category?.toLowerCase().replace(/\s+/g, '_') === selectedFilter ||
+          item.detected_category?.toLowerCase() === selectedFilter
         );
       }
     }
 
-    // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       result = result.filter(item =>
-        item.title?.toLowerCase().includes(query) ||
-        item.shopName?.toLowerCase().includes(query) ||
-        item.category?.toLowerCase().includes(query)
+        item.name?.toLowerCase().includes(query) ||
+        (item.description && item.description.toLowerCase().includes(query)) ||
+        item.user_full_name?.toLowerCase().includes(query) ||
+        item.category?.toLowerCase().includes(query) ||
+        item.hashtags.some(tag => tag.toLowerCase().includes(query))
       );
     }
 
-    // Sort
     switch (selectedSort) {
+      case 'latest':
+        result.sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return dateB - dateA;
+        });
+        break;
       case 'price_low':
         result.sort((a, b) => (a.price || 0) - (b.price || 0));
         break;
       case 'price_high':
         result.sort((a, b) => (b.price || 0) - (a.price || 0));
         break;
-      case 'rating':
-        result.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      case 'popular':
+        result.sort((a, b) => (b.like_count || 0) - (a.like_count || 0));
         break;
       default:
         break;
@@ -331,8 +424,8 @@ const ExploreContent = ({ navigation }: any) => {
   // ============================================================
   // HANDLERS
   // ============================================================
-  const handleItemPress = useCallback((item: ExploreItem) => {
-    Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+  const handleItemPress = useCallback((item: ExplorePost) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedItem(item);
     setViewMode('fullscreen');
   }, []);
@@ -342,20 +435,86 @@ const ExploreContent = ({ navigation }: any) => {
     setSelectedItem(null);
   }, []);
 
+  const toggleSearch = useCallback(() => {
+    setShowSearch(!showSearch);
+    if (!showSearch) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 300);
+    } else {
+      setSearchQuery('');
+    }
+  }, [showSearch]);
+
   // ============================================================
   // FULLSCREEN RENDER
   // ============================================================
-  const renderFullScreenItem = useCallback((item: ExploreItem) => {
+  const renderFullScreenItem = useCallback((item: ExplorePost) => {
     if (!item) return null;
 
     const isSaved = savedItemsMap[item.id] || false;
+    
+    const mediaItems = [];
+    let thumbnail = item.video_thumbnail || item.images?.[0] || item.user_cover_url || item.user_avatar || undefined;
+    
+    if (item.video) {
+      mediaItems.push({ 
+        type: 'video' as const, 
+        url: item.video,
+        thumbnail: thumbnail
+      });
+    }
+    
+    if (item.images && item.images.length > 0) {
+      for (const img of item.images) {
+        if (mediaItems.some(m => m.url === img)) continue;
+        mediaItems.push({ type: 'image' as const, url: img });
+      }
+    }
+    
+    if (mediaItems.length === 0) {
+      const placeholderText = encodeURIComponent(item.name || 'Post');
+      mediaItems.push({ 
+        type: 'image' as const, 
+        url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(0, 20)}` 
+      });
+    }
 
-    const normalizedOpportunity = OpportunityFormatter.format(item);
-    const engine = new SceneEngine(normalizedOpportunity);
-    const scenes = engine.compose();
+    const displayName = item.user_full_name || 'User';
 
     const cardWidth = isDesktop ? 420 : width;
     const cardHeight = isDesktop ? height : height;
+
+    const opportunity: Opportunity = {
+      id: item.id,
+      title: item.name || 'Untitled',
+      price: item.price || 0,
+      currency: item.currency || 'UGX',
+      imageUrl: item.images?.[0] || item.video_thumbnail || item.user_cover_url || '',
+      catalogImages: item.images || [],
+      description: item.description || '',
+      rating: null,
+      reviewCount: 0,
+      userLatitude: null,
+      userLongitude: null,
+      userPhone: null,
+      area: item.location || null,
+      inStock: true,
+      category: item.category || item.detected_category || null,
+      type: 'product',
+      createdAt: item.created_at,
+      userId: item.user_id,
+      userFullName: item.user_full_name || 'User',
+      userAvatar: item.user_avatar || null,
+      video: item.video || null,
+      video_thumbnail: item.video_thumbnail || null,
+      video_duration: item.video_duration || null,
+      video_size: item.video_size || null,
+      likeCount: item.like_count || 0,
+      viewCount: item.view_count || 0,
+      shareCount: item.share_count || 0,
+      commentCount: item.comment_count || 0,
+    };
 
     return (
       <View
@@ -370,89 +529,95 @@ const ExploreContent = ({ navigation }: any) => {
       >
         <SceneRenderer
           key={item.id}
-          scenes={scenes}
-          title={item.title || 'Item'}
+          media={mediaItems}
+          title={item.name || 'Post'}
           price={item.price || 0}
-          shopName={item.type === 'service' ? item.providerName || item.shopName : item.shopName}
-          rating={item.rating ?? undefined}
-          area={item.area ?? undefined}
-          inStock={item.inStock}
           currency={item.currency || 'UGX'}
+          userName={displayName}
+          userAvatar={item.user_avatar || null}
+          description={item.description || null}
+          rating={null}
+          area={item.location || null}
+          inStock={true}
+          type="product"
+          createdAt={item.created_at}
           isDesktop={isDesktop}
-          providerName={item.type === 'service' ? item.providerName || item.shopName : undefined}
-          type={item.type}
-          onPrimaryAction={() => {
-            navigation.navigate('ShopProfile', {
-              shopId: item.shopId,
-              shopName: item.shopName,
-            });
+          width={cardWidth}
+          height={cardHeight}
+          onShowMore={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setSelectedOpportunity(item);
+            setShowAIModal(true);
           }}
           onShare={() => {
-            Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           }}
           onSave={() => {
             if (!user?.id) return;
-            Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             const currentSaved = savedItemsMap[item.id] || false;
             const newSaved = !currentSaved;
             setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
           }}
-          onShowMore={() => {
-            Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
-            setSelectedOpportunity(item);
-            setShowDetailsModal(true);
+          onPrimaryAction={() => {
+            navigation.navigate('Inbox', {
+              userId: item.user_id,
+              userName: item.user_full_name || 'User',
+            });
           }}
-          onSceneChange={(index) => {
+          onSceneChange={(index, source) => {
             if (__DEV__) {
-              console.log('Scene changed to:', index);
+              console.log('Scene changed to:', index, source);
             }
           }}
-          width={cardWidth}
-          height={cardHeight}
+          onBehavioralEvent={(event) => {
+            if (__DEV__) {
+              console.log('Behavioral event:', event);
+            }
+          }}
           autoPlay={false}
           autoPlayInterval={9000}
           resetKey={item.id}
+          bottomOffset={0}
         />
 
         <View style={styles.actionRailWrapper}>
           <FloatingActionRail
             key={`rail-${item.id}`}
-            opportunity={item}
-            onShopPress={(shopId) => {
-              navigation.navigate('ShopProfile', {
-                shopId,
-                shopName: item.shopName,
+            opportunity={opportunity}
+            onUserPress={() => {
+              navigation.navigate('UserProfile' as any, {
+                userId: item.user_id,
+                userName: item.user_full_name || 'User',
               });
             }}
-            onReviewsPress={(productId) => {
-              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+            onReviewsPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setShowReviewsModal(true);
             }}
             onDirectionsPress={() => {
-              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setShowDirectionsModal(true);
             }}
             onSharePress={() => {
-              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }}
             onAIPress={() => {
-              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Heavy);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
               setSelectedOpportunity(item);
               setShowAIModal(true);
             }}
             onSavePress={() => {
               if (!user?.id) return;
-              Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle.Light);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               const currentSaved = savedItemsMap[item.id] || false;
               const newSaved = !currentSaved;
               setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
             }}
             isSaved={isSaved}
-            savedCount={item.savedCount || 0}
-            shareCount={item.shareCount || 0}
-            reviewCount={item.reviewCount || 0}
-            distance={item.distance || 0}
-            shopLogo={item.shopLogo || null}
+            savedCount={0}
+            shareCount={0}
+            reviewCount={0}
           />
         </View>
       </View>
@@ -477,13 +642,8 @@ const ExploreContent = ({ navigation }: any) => {
     setSelectedOpportunity(null);
   }, []);
 
-  const handleCloseDetails = useCallback(() => {
-    setShowDetailsModal(false);
-    setSelectedOpportunity(null);
-  }, []);
-
   // ============================================================
-  // SORT MODAL
+  // RENDER SORT MODAL
   // ============================================================
   const renderSortModal = () => (
     <Modal
@@ -532,6 +692,55 @@ const ExploreContent = ({ navigation }: any) => {
       </View>
     </Modal>
   );
+
+  // ============================================================
+  // RENDER GRID ITEM
+  // ============================================================
+  const renderGridItem: ListRenderItem<ExplorePost> = useCallback(({ item }) => (
+    <GridResultCard item={item} onPress={handleItemPress} />
+  ), [handleItemPress]);
+
+  // ============================================================
+  // LIST HEADER - Filters only (search is separate)
+  // ============================================================
+  const ListHeader = useMemo(() => {
+    return (
+      <View style={styles.filterContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterContent}
+        >
+          {categories.map((filter) => {
+            const count = filter.key === 'all' ? items.length :
+                         filter.key === 'products' ? items.filter(i => 
+                           i.detected_intent === 'sell' || 
+                           i.detected_category?.toLowerCase().includes('product')
+                         ).length :
+                         filter.key === 'services' ? items.filter(i => 
+                           i.detected_intent === 'service' || 
+                           i.detected_category?.toLowerCase().includes('service')
+                         ).length :
+                         items.filter(i => 
+                           i.category?.toLowerCase().replace(/\s+/g, '_') === filter.key || 
+                           i.category?.toLowerCase() === filter.key ||
+                           i.detected_category?.toLowerCase().replace(/\s+/g, '_') === filter.key ||
+                           i.detected_category?.toLowerCase() === filter.key
+                         ).length;
+            return (
+              <FilterChip
+                key={filter.key}
+                label={filter.label}
+                selected={selectedFilter === filter.key}
+                count={count}
+                onPress={() => setSelectedFilter(filter.key)}
+              />
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  }, [categories, selectedFilter, items]);
 
   // ============================================================
   // LOADING / EMPTY STATES
@@ -591,30 +800,24 @@ const ExploreContent = ({ navigation }: any) => {
               scrollEventThrottle={32}
             />
 
-            <SimpleDetailsModal
-              visible={showDetailsModal}
-              opportunity={selectedOpportunity}
-              onClose={handleCloseDetails}
-            />
-
             <ReviewsBottomSheet
               visible={showReviewsModal}
               productId={selectedOpportunity?.id || ''}
-              productTitle={selectedOpportunity?.title || ''}
+              productTitle={selectedOpportunity?.name || ''}
               onClose={handleCloseReviews}
             />
 
             <AIBottomSheet
               visible={showAIModal}
-              opportunity={selectedOpportunity}
-              contextHint={`Explore item: ${selectedOpportunity?.title}`}
+              opportunity={selectedOpportunity as any}
+              contextHint={`Explore: ${selectedOpportunity?.name}`}
               onClose={handleCloseAI}
               isDesktopView={isDesktop}
             />
 
             <DirectionsBottomSheet
               visible={showDirectionsModal}
-              opportunity={selectedOpportunity}
+              opportunity={selectedOpportunity as any}
               onClose={handleCloseDirections}
               isDesktopView={isDesktop}
             />
@@ -627,95 +830,58 @@ const ExploreContent = ({ navigation }: any) => {
   // ============================================================
   // GRID VIEW
   // ============================================================
-  const numColumns = isDesktop ? 4 : 2;
+  const numColumns = isDesktop ? 4 : 3;
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
 
   return (
     <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-      {/* Desktop Header */}
-      {isDesktop && (
-        <View style={styles.desktopHeader}>
-          <Text style={styles.desktopHeaderTitle}>Explore</Text>
-          <Text style={styles.desktopHeaderSubtitle}>Discover products and services</Text>
-        </View>
-      )}
-
-      {/* Mobile Header */}
-      {!isDesktop && (
-        <View style={styles.header}>
+      {/* Header with Title and Search Icon */}
+      <View style={[styles.header, isDesktop && styles.headerDesktop]}>
+        <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Explore</Text>
-        </View>
-      )}
-
-      {/* Search Bar - Fixed Height */}
-      <View style={[styles.searchContainer, isDesktop && styles.searchContainerDesktop]}>
-        <View style={styles.searchInputWrapper}>
-          <Ionicons name="search-outline" size={20} color="#8A8AAE" />
-          <TextInput
-            ref={searchInputRef}
-            style={styles.searchInput}
-            placeholder="Search products and services..."
-            placeholderTextColor="#8A8AAE"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color="#8A8AAE" />
+          {!isDesktop && (
+            <TouchableOpacity onPress={toggleSearch} style={styles.searchIconButton}>
+              <Ionicons name={showSearch ? 'close' : 'search'} size={22} color="#FFFFFF" />
             </TouchableOpacity>
           )}
         </View>
         <TouchableOpacity
-          style={styles.sortButton}
+          style={styles.sortButtonHeader}
           onPress={() => setShowSortModal(true)}
         >
           <Ionicons name="options-outline" size={24} color="#4A7DFF" />
         </TouchableOpacity>
       </View>
 
-      {/* Filter Chips - Fixed Height ScrollView */}
-      <View style={styles.filterContainer}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterContent}
-        >
-          {categories.map((filter) => {
-            const count = filter.key === 'all' ? items.length :
-                         filter.key === 'products' ? items.filter(i => i.type === 'product').length :
-                         filter.key === 'services' ? items.filter(i => i.type === 'service').length :
-                         items.filter(i => i.category?.toLowerCase().replace(/\s+/g, '_') === filter.key || 
-                                   i.category?.toLowerCase() === filter.key).length;
-            return (
-              <FilterChip
-                key={filter.key}
-                label={filter.label}
-                selected={selectedFilter === filter.key}
-                count={count}
-                onPress={() => setSelectedFilter(filter.key)}
-              />
-            );
-          })}
-        </ScrollView>
-      </View>
+      {/* Search Bar - Only visible when showSearch is true */}
+      {showSearch && (
+        <View style={[styles.searchContainer, isDesktop && styles.searchContainerDesktop]}>
+          <View style={styles.searchInputWrapper}>
+            <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+            <TextInput
+              ref={searchInputRef}
+              style={styles.searchInput}
+              placeholder="Search posts..."
+              placeholderTextColor="#8A8AAE"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={20} color="#8A8AAE" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
 
-      {/* Results Count - Fixed Height */}
-      <View style={styles.resultsHeader}>
-        <Text style={styles.resultsCount}>
-          {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
-        </Text>
-      </View>
-
-      {/* Grid - Takes remaining space */}
       <FlatList
         key={gridKey}
         data={filteredItems}
-        renderItem={({ item }) => (
-          <GridResultCard item={item} onPress={handleItemPress} />
-        )}
+        renderItem={renderGridItem}
         keyExtractor={(item, index) => `explore-${item.id}-${index}`}
         numColumns={numColumns}
         showsVerticalScrollIndicator={false}
@@ -724,13 +890,15 @@ const ExploreContent = ({ navigation }: any) => {
         maxToRenderPerBatch={10}
         windowSize={5}
         initialNumToRender={8}
+        ListHeaderComponent={ListHeader}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="search-outline" size={48} color="#8A8AAE" />
-            <Text style={styles.emptyTitle}>No results found</Text>
+            <Text style={styles.emptyTitle}>No posts found</Text>
             <Text style={styles.emptySubtext}>Try adjusting your filters or search terms</Text>
           </View>
         }
+        stickyHeaderIndices={[0]}
       />
 
       {renderSortModal()}
@@ -758,7 +926,7 @@ export const ExploreScreen = ({ navigation }: any) => {
 };
 
 // ============================================================
-// STYLES - DARK THEME
+// STYLES
 // ============================================================
 const styles = StyleSheet.create({
   container: {
@@ -780,43 +948,58 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 
-  // Desktop Header
-  desktopHeader: {
-    marginBottom: 20,
-  },
-  desktopHeaderTitle: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  desktopHeaderSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 16,
-    marginTop: 4,
-  },
-
-  // Mobile Header
+  // ============================================================
+  // HEADER - With Search Icon
+  // ============================================================
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 8,
     paddingBottom: 8,
     backgroundColor: '#0D0D1A',
+  },
+  headerDesktop: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 12,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#FFFFFF',
   },
+  searchIconButton: {
+    padding: 4,
+  },
+  sortButtonHeader: {
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    minHeight: 40,
+    minWidth: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 
-  // Search
+  // ============================================================
+  // SEARCH BAR - Toggleable
+  // ============================================================
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 8,
     backgroundColor: '#0D0D1A',
     gap: 10,
-    minHeight: 56,
   },
   searchContainerDesktop: {
     paddingHorizontal: 0,
@@ -840,29 +1023,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     padding: 0,
   },
-  sortButton: {
-    padding: 10,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-    minHeight: 44,
-    minWidth: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
 
-  // Filters
+  // ============================================================
+  // FILTERS - Sticky
+  // ============================================================
   filterContainer: {
     backgroundColor: '#0D0D1A',
     paddingVertical: 8,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
     minHeight: 48,
     maxHeight: 56,
   },
   filterContent: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     gap: 8,
     alignItems: 'center',
   },
@@ -904,32 +1079,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // Results
-  resultsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#0D0D1A',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    minHeight: 36,
-  },
-  resultsCount: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-
-  // Grid
+  // ============================================================
+  // GRID STYLES
+  // ============================================================
   gridContainer: {
-    padding: 8,
+    padding: 4,
     paddingBottom: 20,
   },
   gridCard: {
     flex: 1,
-    margin: 6,
-    borderRadius: 12,
+    margin: 1,
+    borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#1A1A2E',
     position: 'relative',
@@ -946,6 +1106,39 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
   },
+  gridImagePlaceholder: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    borderRadius: 12,
+    padding: 4,
+    zIndex: 5,
+  },
+  
+  // ✅ PRICE BADGE - Top Left
+  priceBadgeContainer: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    zIndex: 5,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  priceBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+
   gridOverlay: {
     position: 'absolute',
     bottom: 0,
@@ -991,7 +1184,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
 
-  // Empty State
   emptyContainer: {
     flex: 1,
     alignItems: 'center',
@@ -1010,7 +1202,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // Fullscreen
+  // ============================================================
+  // FULLSCREEN STYLES
+  // ============================================================
   backButton: {
     position: 'absolute',
     top: 50,
@@ -1037,7 +1231,9 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
 
-  // Modal
+  // ============================================================
+  // MODAL STYLES
+  // ============================================================
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',

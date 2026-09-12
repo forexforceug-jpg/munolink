@@ -11,14 +11,11 @@ import {
   Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-
-
 import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
 import { useBreakpoint } from '../../../hooks/useBreakpoint';
-import { locationService } from '../../../services/location.service';
 
-// ✅ Fixed: Handle image import properly for React Native
+// Logo import
 let munoLogo: any = null;
 try {
   const logoPath = '../../../assets/muno.png';
@@ -32,7 +29,6 @@ try {
   }
 }
 
-// ✅ Type-safe icon mapping
 type IconName = keyof typeof Ionicons.glyphMap;
 
 const ICONS: Record<string, IconName> = {
@@ -45,18 +41,18 @@ const ICONS: Record<string, IconName> = {
 
 interface FloatingActionRailProps {
   opportunity: Opportunity;
-  onShopPress: (shopId: string) => void;
+  onUserPress: () => void;
   onReviewsPress: (productId: string) => void;
-  onDirectionsPress: (shopName: string, area: string) => void;
+  onDirectionsPress: (userName: string, area: string) => void;
   onSharePress: (opportunity: Opportunity) => void;
   onAIPress: (opportunity: Opportunity) => void;
   onSavePress?: (opportunity: Opportunity) => void;
   reviewCount?: number;
-  distance?: number;
   shareCount?: number;
   savedCount?: number;
   isSaved?: boolean;
-  shopLogo?: string | null;
+  distance?: number;
+  userAvatar?: string | null;
 }
 
 const DESKTOP_POSITION = {
@@ -79,14 +75,12 @@ const MOBILE_POSITION = {
   LABEL_FONT_SIZE: 9,
 };
 
-// ✅ Logo fallback component
 const LogoFallback = ({ size }: { size: number }) => (
   <View style={[styles.fallbackLogo, { width: size, height: size }]}>
     <Text style={[styles.fallbackText, { fontSize: size * 0.4 }]}>M</Text>
   </View>
 );
 
-// ✅ Logo component with error handling
 const LogoImage = ({ size }: { size: number }) => {
   const [hasError, setHasError] = useState(false);
 
@@ -106,109 +100,40 @@ const LogoImage = ({ size }: { size: number }) => {
 
 const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   opportunity,
-  onShopPress,
+  onUserPress,
   onReviewsPress,
   onDirectionsPress,
   onSharePress,
   onAIPress,
   onSavePress,
   reviewCount = 0,
-  distance = 0,
   shareCount = 0,
   savedCount = 0,
   isSaved = false,
-  shopLogo = null,
+  distance = 0,
+  userAvatar = null,
 }) => {
   const { isDesktop } = useBreakpoint();
   
-  // ✅ Store the opportunity ID to track changes
   const [currentOpportunityId, setCurrentOpportunityId] = useState(opportunity.id);
-  
-  // ✅ Save state - track both saved status and count
   const [isSavedState, setIsSavedState] = useState(isSaved);
   const [saveCount, setSaveCount] = useState(savedCount);
-  
-  // ✅ Track if user has interacted with THIS specific opportunity
   const hasInteractedRef = useRef(false);
-  
-  // ✅ Calculate distance from GPS
-  const [calculatedDistance, setCalculatedDistance] = useState<number | null>(null);
-  const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
 
-  const [logoError, setLogoError] = useState(false);
-
-  // ✅ CRITICAL FIX: Reset state when opportunity changes
+  // Reset state when opportunity changes
   useEffect(() => {
     if (opportunity.id !== currentOpportunityId) {
-      // Opportunity changed - reset everything
-      console.log(`🔄 Opportunity changed to ${opportunity.id}`);
       setCurrentOpportunityId(opportunity.id);
       setIsSavedState(isSaved);
       setSaveCount(savedCount);
       hasInteractedRef.current = false;
-      setLogoError(false);
-      setCalculatedDistance(null);
-      
-      // Recalculate distance for new opportunity
-      const lat = opportunity.shopLatitude || opportunity.latitude;
-      const lng = opportunity.shopLongitude || opportunity.longitude;
-      if (lat && lng) {
-        calculateDistance(lat, lng);
-      }
     } else {
-      // Same opportunity - update from props ONLY if user hasn't interacted
       if (!hasInteractedRef.current) {
-        const propsChanged = isSavedState !== isSaved || saveCount !== savedCount;
-        if (propsChanged) {
-          console.log(`📝 Updating from props: isSaved=${isSaved}, savedCount=${savedCount}`);
-          setIsSavedState(isSaved);
-          setSaveCount(savedCount);
-        }
+        setIsSavedState(isSaved);
+        setSaveCount(savedCount);
       }
     }
   }, [opportunity.id, isSaved, savedCount]);
-
-  // ✅ Calculate distance function
-  const calculateDistance = useCallback(async (lat: number, lng: number) => {
-    setIsCalculatingDistance(true);
-    try {
-      const userLocation = locationService.getCachedLocation();
-      if (userLocation) {
-        const dist = locationService.calculateDistance(
-          userLocation.latitude,
-          userLocation.longitude,
-          lat,
-          lng
-        );
-        setCalculatedDistance(dist);
-      } else {
-        const currentLocation = await locationService.getCurrentLocation();
-        if (currentLocation) {
-          const dist = locationService.calculateDistance(
-            currentLocation.latitude,
-            currentLocation.longitude,
-            lat,
-            lng
-          );
-          setCalculatedDistance(dist);
-        }
-      }
-    } catch (error) {
-      console.error('Error calculating distance:', error);
-      setCalculatedDistance(null);
-    } finally {
-      setIsCalculatingDistance(false);
-    }
-  }, []);
-
-  // ✅ Initial distance calculation
-  useEffect(() => {
-    const lat = opportunity.shopLatitude || opportunity.latitude;
-    const lng = opportunity.shopLongitude || opportunity.longitude;
-    if (lat && lng) {
-      calculateDistance(lat, lng);
-    }
-  }, [opportunity.shopLatitude, opportunity.shopLongitude, opportunity.latitude, opportunity.longitude]);
 
   const triggerHaptic = useCallback(async (style: 'light' | 'medium' | 'heavy') => {
     try {
@@ -232,83 +157,45 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   }, [triggerHaptic]);
 
-  // ✅ FIXED: Save button handler with proper count management
   const handleSavePress = useCallback(() => {
-    // Mark that user has interacted with this opportunity
     hasInteractedRef.current = true;
     triggerHaptic('medium');
     
-    // Toggle save state
     const newSaved = !isSavedState;
     const newCount = newSaved ? saveCount + 1 : Math.max(0, saveCount - 1);
     
-    console.log(`💾 Save toggled: ${isSavedState} -> ${newSaved}, count: ${saveCount} -> ${newCount}`);
-    
-    // Update local state immediately (optimistic update)
     setIsSavedState(newSaved);
     setSaveCount(newCount);
     
-    // Call parent callback
     if (onSavePress) {
       onSavePress(opportunity);
     }
   }, [isSavedState, saveCount, triggerHaptic, onSavePress, opportunity]);
 
-  // ============================================================
-  // ✅ SHARE FUNCTION WITH IMAGE
-  // ============================================================
-  
   const handleSharePress = useCallback(async () => {
     try {
       triggerHaptic('light');
       
-      // Get the first image from the opportunity
-      const imageUrl = opportunity.imageUrl || 
-                       opportunity.catalogImages?.[0] || 
-                       opportunity.shopLogo || 
-                       null;
-      
-      // Build the share message
-      const title = opportunity.title || 'Check this out on Munolink';
-      const price = opportunity.price ? `UGX ${opportunity.price.toLocaleString()}` : '';
-      const shop = opportunity.shopName ? `from ${opportunity.shopName}` : '';
-      const rating = opportunity.rating ? `⭐ ${opportunity.rating.toFixed(1)}` : '';
-      const area = opportunity.area ? `📍 ${opportunity.area}` : '';
-      
-      let message = `🛍️ ${title}`;
-      if (price) message += `\n💰 ${price}`;
-      if (shop) message += `\n🏪 ${shop}`;
-      if (rating) message += `\n${rating}`;
-      if (area) message += `\n${area}`;
-      message += `\n\n📱 Check it out on Munolink: https://munolink.com/item/${opportunity.id}`;
-      
-      // If there's an image, share with image URL
-      if (imageUrl) {
-        // On mobile, we can share with image
-        try {
-          // For iOS/Android, try to share with image
-          await Share.share({
-            message: message,
-            url: imageUrl, // Some platforms support URL
-          });
-        } catch (shareError) {
-          // Fallback: share without image
-          console.warn('Image share failed, sharing text only:', shareError);
-          await Share.share({
-            message: message,
-          });
-        }
-      } else {
-        // Share text only
-        await Share.share({
-          message: message,
-        });
-      }
-      
-      // Call the parent callback if provided
+      // Increment share count via callback
       if (onSharePress) {
         onSharePress(opportunity);
       }
+      
+      const title = opportunity.title || 'Check this out on Munolink';
+      const price = opportunity.price ? `UGX ${opportunity.price.toLocaleString()}` : '';
+      const user = opportunity.userFullName ? `from ${opportunity.userFullName}` : '';
+      const distanceText = opportunity.distance ? `${opportunity.distance.toFixed(1)}km away` : '';
+      
+      let message = `🛍️ ${title}`;
+      if (price) message += `\n💰 ${price}`;
+      if (user) message += `\n👤 ${user}`;
+      if (distanceText) message += `\n📍 ${distanceText}`;
+      message += `\n\n📱 Check it out on Munolink: https://munolink.com/post/${opportunity.id}`;
+      
+      await Share.share({
+        message: message,
+      });
+      
     } catch (error) {
       console.error('Share error:', error);
     }
@@ -327,77 +214,66 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const gap = isDesktop ? DESKTOP_POSITION.GAP : MOBILE_POSITION.GAP;
   const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : MOBILE_POSITION.AI_GAP;
 
-  const shopLetter = opportunity.shopName?.charAt(0).toUpperCase() || 'S';
+  const userLetter = opportunity.userFullName?.charAt(0).toUpperCase() || 'U';
   
   const LOGO_SIZE_DESKTOP = 80;
   const LOGO_SIZE_MOBILE = 70;
   const logoSize = isDesktop ? LOGO_SIZE_DESKTOP : LOGO_SIZE_MOBILE;
 
-  // ✅ Display values with proper logic
-  const displayRating = opportunity.rating ? opportunity.rating.toFixed(1) : '0.0';
-  const displayReviewCount = reviewCount > 0 ? `(${reviewCount})` : null;
-  
-  // ✅ Distance display logic
+  // Distance display
   let distanceDisplay = '0km';
-  if (isCalculatingDistance) {
-    distanceDisplay = '...';
-  } else if (calculatedDistance !== null) {
-    if (calculatedDistance < 1) {
-      distanceDisplay = `${Math.round(calculatedDistance * 1000)}m`;
-    } else if (calculatedDistance < 10) {
-      distanceDisplay = `${calculatedDistance.toFixed(1)}km`;
+  if (distance && distance > 0) {
+    if (distance < 1) {
+      distanceDisplay = `${Math.round(distance * 1000)}m`;
+    } else if (distance < 10) {
+      distanceDisplay = `${distance.toFixed(1)}km`;
     } else {
-      distanceDisplay = `${Math.round(calculatedDistance)}km`;
+      distanceDisplay = `${Math.round(distance)}km`;
     }
   }
-  
-  const displayShareCount = shareCount > 0 ? shareCount : 0;
-  const displaySavedCount = saveCount;
 
-  // ✅ SHOP LOGO - Use the real logo from the database
-  const shopLogoUrl = shopLogo || opportunity.shopLogo || null;
-  
-  // ✅ Check if we have a valid logo URL
-  const hasValidLogo = shopLogoUrl && shopLogoUrl.startsWith('http');
-  
-  // ✅ Log the logo URL for debugging
-  console.log(`🏪 Shop logo for ${opportunity.shopName}:`, shopLogoUrl);
+  const avatarUrl = userAvatar || opportunity.userAvatar || null;
+  const hasValidAvatar = avatarUrl && avatarUrl.startsWith('http');
+
+  // ✅ Use real counts from opportunity
+  const displayShareCount = opportunity.shareCount || shareCount || 0;
+  const displaySaveCount = saveCount > 0 ? saveCount : (opportunity.saveCount || 0);
+  const displayReviewCount = opportunity.commentCount || reviewCount || 0;
 
   return (
     <View style={[styles.container, { gap }]}>
-      {/* Shop Button - With Real Logo from Database */}
+      {/* User Button */}
       <TouchableOpacity
         style={[
-          styles.shopButton,
+          styles.userButton,
           { 
             width: shopButtonSize, 
             height: shopButtonSize,
             borderRadius: shopButtonSize / 2,
           }
         ]}
-        onPress={() => handlePress('Shop', () => onShopPress(opportunity.shopId))}
+        onPress={() => handlePress('User', onUserPress)}
         activeOpacity={0.8}
       >
-        <View style={styles.shopLetterContainer}>
-          {hasValidLogo ? (
+        <View style={styles.userLetterContainer}>
+          {hasValidAvatar ? (
             <Image
-              source={{ uri: shopLogoUrl }}
+              source={{ uri: avatarUrl }}
               style={[
-                styles.shopLogo,
+                styles.userAvatar,
                 { width: shopButtonSize * 0.7, height: shopButtonSize * 0.7 }
               ]}
               resizeMode="cover"
-              onError={() => setLogoError(true)}
             />
           ) : (
-            <Text style={[styles.shopLetter, { fontSize: shopButtonSize * 0.5 }]}>
-              {shopLetter}
+            <Text style={[styles.userLetter, { fontSize: shopButtonSize * 0.5 }]}>
+              {userLetter}
             </Text>
           )}
         </View>
       </TouchableOpacity>
 
-      {/* Reviews Button */}
+      {/* Reviews Button - Shows comment count */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -408,31 +284,26 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
       >
         <Ionicons name={ICONS.reviews} size={iconSize} color="#FFFFFF" />
         <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
-          {displayRating}
-        </Text>
-        {displayReviewCount && (
-          <Text style={[styles.valueSubText, { fontSize: valueFontSize - 2 }]}>
-            {displayReviewCount}
-          </Text>
-        )}
-      </TouchableOpacity>
-
-      {/* Directions Button */}
-      <TouchableOpacity
-        style={[
-          styles.actionButton,
-          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
-        ]}
-        onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.shopName, opportunity.area || ''))}
-        activeOpacity={0.7}
-      >
-        <Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />  
-        <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
-          {distanceDisplay}
+          {displayReviewCount}
         </Text>
       </TouchableOpacity>
 
-      {/* Share Button - Uses the new handleSharePress */}
+      {/* Directions Button - Shows distance */}
+<TouchableOpacity
+  style={[
+    styles.actionButton,
+    { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+  ]}
+  onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.userFullName || 'User', opportunity.area || ''))}
+  activeOpacity={0.7}
+>
+  <Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />  
+  <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
+    {distanceDisplay}
+  </Text>
+</TouchableOpacity>
+
+      {/* Share Button - Shows share count */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -447,7 +318,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* ✅ Save/Wishlist Button */}
+      {/* Save Button - Shows save count */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -465,11 +336,11 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           fontSize: valueFontSize,
           color: isSavedState ? '#FF6B6B' : 'rgba(255,255,255,0.8)'
         }]}>
-          {displaySavedCount}
+          {displaySaveCount}
         </Text>
       </TouchableOpacity>
 
-      {/* AI Button - Using LogoImage component with fallback */}
+      {/* AI Button */}
       <View style={[styles.aiWrapper, { marginTop: aiGap }]}>
         <TouchableOpacity
           style={[
@@ -506,23 +377,19 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   );
 };
 
-// ✅ Custom comparison function for memo
 export const FloatingActionRail = memo(FloatingActionRailComponent, (prevProps, nextProps) => {
-  // Only re-render if the opportunity ID changes or if the save state changes
   const opportunityChanged = prevProps.opportunity.id !== nextProps.opportunity.id;
   const saveStateChanged = prevProps.isSaved !== nextProps.isSaved || 
                           prevProps.savedCount !== nextProps.savedCount;
   const otherPropsChanged = prevProps.shareCount !== nextProps.shareCount ||
                            prevProps.reviewCount !== nextProps.reviewCount ||
                            prevProps.distance !== nextProps.distance ||
-                           prevProps.shopLogo !== nextProps.shopLogo;
+                           prevProps.userAvatar !== nextProps.userAvatar;
   
-  // Don't re-render if only the opportunity object reference changed but ID is the same
   if (!opportunityChanged && !saveStateChanged && !otherPropsChanged) {
-    return true; // Prevent re-render
+    return true;
   }
-  
-  return false; // Allow re-render
+  return false;
 });
 
 const styles = StyleSheet.create({
@@ -530,8 +397,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 9999,
   },
-
-  shopButton: {
+  userButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
@@ -539,8 +405,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.12)',
   },
-
-  shopLetterContainer: {
+  userLetterContainer: {
     width: '100%',
     height: '100%',
     justifyContent: 'center',
@@ -548,34 +413,29 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
-
-  shopLogo: {
+  userAvatar: {
     borderRadius: 999,
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
   },
-
-  shopLetter: {
+  userLetter: {
     color: '#4A7DFF',
     fontWeight: '700',
     textShadowColor: 'rgba(74, 125, 255, 0.2)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
-
   actionButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
   },
-
   aiWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     width: '100%',
   },
-
   valueText: {
     color: 'rgba(255,255,255,0.9)',
     fontWeight: '600',
@@ -585,7 +445,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
     letterSpacing: 0.5,
   },
-
   valueSubText: {
     color: 'rgba(255,255,255,0.5)',
     fontWeight: '400',
@@ -594,7 +453,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-
   labelText: {
     color: 'rgba(255,255,255,0.5)',
     fontWeight: '600',
@@ -603,27 +461,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
     letterSpacing: 0.3,
   },
-
-  badge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: '#F1C40F',
-    borderRadius: 10,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    minWidth: 18,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-
-  badgeText: {
-    color: '#1F2F5F',
-    fontSize: 9,
-    fontWeight: 'bold',
-  },
-
   aiButton: {
     backgroundColor: 'transparent',
     justifyContent: 'center',
@@ -633,7 +470,6 @@ const styles = StyleSheet.create({
     borderColor: '#4A7DFF',
     zIndex: 2,
   },
-
   aiGlowContainer: {
     width: '100%',
     height: '100%',
@@ -642,7 +478,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: 'hidden',
   },
-
   aiGlow: {
     width: '80%',
     height: '80%',
@@ -652,14 +487,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(74, 125, 255, 0.08)',
     overflow: 'hidden',
   },
-
   fallbackLogo: {
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderRadius: 999,
   },
-
   fallbackText: {
     color: '#4A7DFF',
     fontWeight: 'bold',

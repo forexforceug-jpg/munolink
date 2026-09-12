@@ -145,7 +145,7 @@ export default function App() {
     }
 
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1F2F5F' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#ffffff' }}>
         <StatusBar style="light" />
         {SplashIcon ? (
           <Image 
@@ -156,7 +156,6 @@ export default function App() {
           // Fallback text if icon not found
           <Text style={{ fontSize: 48, color: '#FFFFFF', fontWeight: 'bold', marginBottom: 12 }}>🛍️</Text>
         )}
-        <Text style={{ color: '#FFFFFF', marginTop: 12, fontWeight: '600', fontSize: 18 }}>Munolink</Text>
         <ActivityIndicator size="small" color="#4A7DFF" style={{ marginTop: 16 }} />
       </View>
     );

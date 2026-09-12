@@ -12,31 +12,59 @@ import {
   Image,
   useWindowDimensions,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
-import { SceneEngine, OpportunityFormatter, SceneRenderer } from '../opportunity';
+import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
-import { SimpleDetailsModal } from '../feed/components/SimpleDetailsModal';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { Opportunity as RawOpportunity } from '../../services/feed.service';
-import { recommendationService } from '../../services/recommendation.service';
-import { mapItemType } from '../../utils/typeHelpers';
 import { ViewabilityConfig, ViewToken } from 'react-native';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 // --- Types ---
-interface SearchResult extends RawOpportunity {
+interface SearchResult {
+  id: string;
+  title: string;
+  price: number;
+  currency: string;
+  imageUrl: string;
+  catalogImages: string[];
+  description: string;
+  rating: number | null;
+  reviewCount: number | null;
+  area: string | null;
+  inStock: boolean;
+  category: string | null;
+  type: 'product' | 'service' | 'event';
+  createdAt?: string;
+  userId: string;
+  userFullName: string;
+  userAvatar: string | null;
+  userLatitude: number | null;
+  userLongitude: number | null;
+  userPhone: string | null;
+  video: string | null;
+  video_thumbnail: string | null;
+  video_duration: number | null;
+  video_size: number | null;
+  likeCount?: number;
+  viewCount?: number;
+  shareCount?: number;
+  commentCount?: number;
+  saveCount?: number;
+  isSaved?: boolean;
+  specifications?: any;
   relevanceScore?: number;
   aiTag?: boolean;
 }
@@ -66,106 +94,76 @@ interface SearchResultsScreenProps {
   navigation: any;
 }
 
-// --- Filter Types ---
-type FilterType = 'all' | 'products' | 'services' | 'shops' | 'providers';
-
-interface FilterOption {
-  key: FilterType;
-  label: string;
-  icon: string;
-}
-
-const FILTER_OPTIONS: FilterOption[] = [
-  { key: 'all', label: 'All', icon: 'apps-outline' },
-  { key: 'products', label: 'Products', icon: 'cube-outline' },
-  { key: 'services', label: 'Services', icon: 'construct-outline' },
-  { key: 'shops', label: 'Shops', icon: 'storefront-outline' },
-  { key: 'providers', label: 'Providers', icon: 'people-outline' },
+// --- Filter Categories (10+ categories like Explore) ---
+const DEFAULT_CATEGORIES = [
+  { key: 'all', label: 'All' },
+  { key: 'products', label: 'Products' },
+  { key: 'services', label: 'Services' },
+  { key: 'electronics', label: 'Electronics' },
+  { key: 'fashion', label: 'Fashion' },
+  { key: 'food', label: 'Food' },
+  { key: 'art', label: 'Art' },
+  { key: 'vehicles', label: 'Vehicles' },
+  { key: 'property', label: 'Property' },
+  { key: 'jobs', label: 'Jobs' },
 ];
 
 // ============================================================
-// IMAGE HELPER
+// HELPER: GET ITEM IMAGE
 // ============================================================
 
-const getItemImage = (item: any): string => {
-  try {
-    const normalizedOpportunity = OpportunityFormatter.format(item);
-    const engine = new SceneEngine(normalizedOpportunity);
-    const scenes = engine.compose();
-
-    for (const scene of scenes) {
-      if (scene.type === 'hero' && scene.image) {
-        return scene.image;
-      }
-      if (scene.type === 'gallery' && scene.data?.images && scene.data.images.length > 0) {
-        return scene.data.images[0];
-      }
-      if (scene.type === 'details' && scene.image) {
-        return scene.image;
-      }
-      if (scene.type === 'trust' && scene.image) {
-        return scene.image;
-      }
-    }
-
-    if (item.images && Array.isArray(item.images) && item.images.length > 0) {
-      const img = item.images[0];
-      if (img && img.startsWith('http')) return img;
-    }
-    if (item.image && item.image.startsWith('http')) return item.image;
-    if (item.image_url && item.image_url.startsWith('http')) return item.image_url;
-    if (item.logo_url && item.logo_url.startsWith('http')) return item.logo_url;
-
-    const productName = item.title || 'Product';
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(productName)}&background=4A7DFF&color=fff&size=200&font-size=0.33`;
-  } catch (error) {
-    const productName = item.title || 'Product';
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(productName)}&background=4A7DFF&color=fff&size=200&font-size=0.33`;
+const getItemImage = (item: SearchResult): string => {
+  if (item.catalogImages && item.catalogImages.length > 0) {
+    return item.catalogImages[0];
   }
+  if (item.imageUrl) {
+    return item.imageUrl;
+  }
+  if (item.video_thumbnail) {
+    return item.video_thumbnail;
+  }
+  const productName = item.title || 'Product';
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(productName)}&background=4A7DFF&color=fff&size=200&font-size=0.33`;
 };
 
-// --- Sub-components ---
+// ============================================================
+// SUB-COMPONENTS - FILTER CHIP (Matches Explore)
+// ============================================================
 
-// Filter Chip Component
-const FilterChip = React.memo(({ option, isActive, onPress, count }: any) => (
+const FilterChip = React.memo(({ label, selected, onPress, count }: any) => (
   <TouchableOpacity
-    style={[
-      styles.filterChip,
-      isActive && styles.filterChipActive,
-    ]}
+    style={[styles.filterChip, selected && styles.filterChipActive]}
     onPress={onPress}
     activeOpacity={0.7}
   >
-    <Ionicons 
-      name={option.icon} 
-      size={16} 
-      color={isActive ? '#FFFFFF' : '#8A8AAE'} 
-    />
-    <Text style={[
-      styles.filterChipText,
-      isActive && styles.filterChipTextActive,
-    ]}>
-      {option.label}
+    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+      {label}
     </Text>
     {count !== undefined && count > 0 && (
-      <View style={[
-        styles.filterChipBadge,
-        isActive && styles.filterChipBadgeActive,
-      ]}>
-        <Text style={[
-          styles.filterChipBadgeText,
-          isActive && styles.filterChipBadgeTextActive,
-        ]}>
-          {count}
-        </Text>
+      <View style={styles.filterChipBadge}>
+        <Text style={styles.filterChipBadgeText}>{count}</Text>
       </View>
     )}
   </TouchableOpacity>
 ));
 
-// Grid Result Card - NO BADGES
+// ============================================================
+// GRID RESULT CARD - NO PRICE BADGE
+// ============================================================
+
 const GridResultCard = React.memo(({ item, onPress }: any) => {
-  const imageUrl = getItemImage(item);
+  let imageUrl = '';
+  if (item.catalogImages && item.catalogImages.length > 0) {
+    imageUrl = item.catalogImages[0];
+  } else if (item.video_thumbnail) {
+    imageUrl = item.video_thumbnail;
+  } else if (item.imageUrl) {
+    imageUrl = item.imageUrl;
+  }
+  
+  const displayName = item.userFullName || 'User';
+  const hasVideo = !!item.video;
+  const hasPrice = item.price !== undefined && item.price !== null && item.price > 0;
 
   return (
     <TouchableOpacity 
@@ -173,23 +171,38 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
       onPress={() => onPress(item)}
       activeOpacity={0.8}
     >
-      <Image 
-        source={{ uri: imageUrl }} 
-        style={styles.gridImage}
-        resizeMode="cover"
-      />
+      {imageUrl ? (
+        <Image 
+          source={{ uri: imageUrl }} 
+          style={styles.gridImage}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={[styles.gridImage, styles.gridImagePlaceholder]}>
+          <Ionicons name="image-outline" size={40} color="#4A7DFF" />
+        </View>
+      )}
+      
+      {hasVideo && (
+        <View style={styles.videoBadge}>
+          <Ionicons name="play-circle" size={24} color="#FFFFFF" />
+        </View>
+      )}
+      
       <View style={styles.gridOverlay}>
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.85)']}
           style={styles.gridGradient}
         />
         <View style={styles.gridInfo}>
-          <Text style={styles.gridTitle} numberOfLines={1}>{item.title || 'Product'}</Text>
-          <Text style={styles.gridPrice}>UGX {item.price?.toLocaleString() || '0'}</Text>
+          <Text style={styles.gridTitle} numberOfLines={1}>{item.title || 'Post'}</Text>
+          {hasPrice && (
+            <Text style={styles.gridPrice}>UGX {item.price!.toLocaleString()}</Text>
+          )}
           <View style={styles.gridFooter}>
-            <Text style={styles.gridShop} numberOfLines={1}>{item.shopName || 'Shop'}</Text>
-            {item.rating && item.rating > 0 && (
-              <Text style={styles.gridRating}>⭐ {item.rating.toFixed(1)}</Text>
+            <Text style={styles.gridShop} numberOfLines={1}>{displayName}</Text>
+            {item.likeCount && item.likeCount > 0 && (
+              <Text style={styles.gridRating}>❤️ {item.likeCount}</Text>
             )}
           </View>
         </View>
@@ -199,7 +212,7 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
 });
 
 // ============================================================
-// SEARCH RESULTS CONTENT
+// MAIN SEARCH RESULTS CONTENT
 // ============================================================
 
 const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) => {
@@ -217,11 +230,10 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     recommendationsCount = 0
   } = route.params || { results: [], query: '', initialIndex: 0 };
 
-  // State
-  const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+  const [activeFilter, setActiveFilter] = useState<string>('all');
   const [filteredResults, setFilteredResults] = useState<SearchResult[]>(results);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   
-  // Refs for stable values
   const flatListRef = useRef<FlatList>(null);
   const trackedViewRef = useRef<string>('');
   const currentIndexRef = useRef(initialIndex);
@@ -231,70 +243,76 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<SearchResult | null>(null);
   
-  // Modal states
   const [selectedOpportunity, setSelectedOpportunity] = useState<SearchResult | null>(null);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
   const [aiContextHint, setAiContextHint] = useState('');
 
-  // Memoized results
   const memoizedResults = useMemo(() => results, [results]);
 
-  // Get counts for each filter
+  // Get filter counts for badges
   const getFilterCounts = useCallback(() => {
-    const counts = {
+    const counts: Record<string, number> = {
       all: memoizedResults.length,
       products: memoizedResults.filter(item => item.type === 'product').length,
       services: memoizedResults.filter(item => item.type === 'service').length,
-      shops: new Set(memoizedResults.map(item => item.shopId || item.shopName).filter(Boolean)).size,
-      providers: new Set(memoizedResults.map(item => item.shopId || item.shopName).filter(Boolean)).size,
+      electronics: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('electronics') ||
+        item.category?.toLowerCase().includes('phone') ||
+        item.category?.toLowerCase().includes('computer')
+      ).length,
+      fashion: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('fashion') ||
+        item.category?.toLowerCase().includes('clothing')
+      ).length,
+      food: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('food') ||
+        item.category?.toLowerCase().includes('restaurant')
+      ).length,
+      art: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('art') ||
+        item.category?.toLowerCase().includes('craft')
+      ).length,
+      vehicles: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('vehicle') ||
+        item.category?.toLowerCase().includes('car') ||
+        item.category?.toLowerCase().includes('auto')
+      ).length,
+      property: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('property') ||
+        item.category?.toLowerCase().includes('real estate') ||
+        item.category?.toLowerCase().includes('house')
+      ).length,
+      jobs: memoizedResults.filter(item => 
+        item.category?.toLowerCase().includes('job') ||
+        item.category?.toLowerCase().includes('employment')
+      ).length,
     };
     return counts;
   }, [memoizedResults]);
 
   const filterCounts = getFilterCounts();
 
-  // Apply filter
   useEffect(() => {
     let filtered = [...memoizedResults];
     
-    switch (activeFilter) {
-      case 'products':
+    if (activeFilter !== 'all') {
+      if (activeFilter === 'products') {
         filtered = filtered.filter(item => item.type === 'product');
-        break;
-      case 'services':
+      } else if (activeFilter === 'services') {
         filtered = filtered.filter(item => item.type === 'service');
-        break;
-      case 'shops':
-        const shopMap = new Map();
-        filtered.forEach(item => {
-          const key = item.shopId || item.shopName;
-          if (key && !shopMap.has(key)) {
-            shopMap.set(key, { ...item });
-          }
-        });
-        filtered = Array.from(shopMap.values());
-        break;
-      case 'providers':
-        const providerMap = new Map();
-        filtered.forEach(item => {
-          const key = item.shopName || item.shopId;
-          if (key && !providerMap.has(key)) {
-            providerMap.set(key, { ...item });
-          }
-        });
-        filtered = Array.from(providerMap.values());
-        break;
-      default:
-        break;
+      } else {
+        filtered = filtered.filter(item => 
+          item.category?.toLowerCase().includes(activeFilter) ||
+          item.category?.toLowerCase().replace(/\s+/g, '_') === activeFilter
+        );
+      }
     }
     
     setFilteredResults(filtered);
   }, [activeFilter, memoizedResults]);
 
-  // Reset tracked view when results change
   useEffect(() => {
     trackedViewRef.current = '';
     currentIndexRef.current = initialIndex;
@@ -305,7 +323,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   // HANDLERS
   // ============================================================
 
-  const handleFilterPress = useCallback((filterKey: FilterType) => {
+  const handleFilterPress = useCallback((filterKey: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setActiveFilter(filterKey);
     flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -321,23 +339,17 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
       currentIndexRef.current = index;
       setCurrentIndex(index);
     }
-    
-    if (user?.id) {
-      recommendationService.trackInteraction(
-        user.id,
-        item.id,
-        'view',
-        mapItemType(item.type)
-      ).catch(() => {});
-    }
-  }, [memoizedResults, user?.id]);
+  }, [memoizedResults]);
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
   }, []);
 
-  // STABLE: onViewableItemsChanged
+  // ============================================================
+  // VIEWABILITY
+  // ============================================================
+
   const onViewableItemsChanged = useCallback((info: { viewableItems: ViewToken<SearchResult>[]; changed: ViewToken<SearchResult>[] }) => {
     const { viewableItems } = info;
     if (!viewableItems || viewableItems.length === 0) return;
@@ -351,31 +363,17 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
     currentIndexRef.current = index;
     setCurrentIndex(index);
+  }, [filteredResults]);
 
-    const item = filteredResults[index];
-    if (item && user?.id && trackedViewRef.current !== item.id) {
-      trackedViewRef.current = item.id;
-      recommendationService.trackInteraction(
-        user.id,
-        item.id,
-        'view',
-        mapItemType(item.type)
-      ).catch(() => {});
-    }
-  }, [filteredResults, user?.id]);
-
-  // STABLE: viewabilityConfig
   const viewabilityConfig = useMemo<ViewabilityConfig>(() => ({
     itemVisiblePercentThreshold: 50,
     minimumViewTime: 300,
   }), []);
 
-  // STABLE: keyExtractor
   const keyExtractor = useCallback((item: SearchResult, index: number) => {
     return `result-${item.id}-${index}`;
   }, []);
 
-  // STABLE: getItemLayout
   const getItemLayout = useCallback((data: any, index: number) => {
     const itemHeight = isDesktop ? height : height;
     return {
@@ -385,7 +383,10 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     };
   }, [isDesktop, height]);
 
-  // STABLE: renderGridItem
+  // ============================================================
+  // RENDER GRID ITEM
+  // ============================================================
+
   const renderGridItem = useCallback(
     ({ item }: { item: SearchResult }) => (
       <GridResultCard item={item} onPress={handleGridItemPress} />
@@ -393,19 +394,120 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     [handleGridItemPress]
   );
 
-  // STABLE: renderFullScreenItem
+  // ============================================================
+  // LIST HEADER - 10+ Categories like Explore
+  // ============================================================
+
+  const ListHeader = useMemo(() => {
+    return (
+      <View style={styles.filterContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterContent}
+        >
+          {categories.map((filter) => {
+            const count = filterCounts[filter.key] || 0;
+            return (
+              <FilterChip
+                key={filter.key}
+                label={filter.label}
+                selected={activeFilter === filter.key}
+                count={count}
+                onPress={() => handleFilterPress(filter.key)}
+              />
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  }, [categories, activeFilter, filterCounts, handleFilterPress]);
+
+  // ============================================================
+  // RENDER FULLSCREEN ITEM
+  // ============================================================
+
   const renderFullScreenItem = useCallback(
     ({ item }: { item: SearchResult }) => {
       if (!item) return null;
       
       const isSaved = savedItemsMap[item.id] || false;
 
-      const normalizedOpportunity = OpportunityFormatter.format(item);
-      const engine = new SceneEngine(normalizedOpportunity);
-      const scenes = engine.compose();
+      // Build media array
+      const mediaItems = [];
+      const thumbnail = item.video_thumbnail || item.catalogImages?.[0] || item.imageUrl || undefined;
+      
+      if (item.video) {
+        mediaItems.push({ 
+          type: 'video' as const, 
+          url: item.video,
+          thumbnail: thumbnail
+        });
+      }
+      
+      if (item.catalogImages && item.catalogImages.length > 0) {
+        for (const img of item.catalogImages) {
+          if (mediaItems.some(m => m.url === img)) continue;
+          mediaItems.push({ type: 'image' as const, url: img });
+        }
+      } else if (item.imageUrl && !item.video) {
+        mediaItems.push({ type: 'image' as const, url: item.imageUrl });
+      }
+      
+      if (mediaItems.length === 0) {
+        const placeholderText = encodeURIComponent(item.title || 'Item');
+        mediaItems.push({ 
+          type: 'image' as const, 
+          url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(0, 20)}` 
+        });
+      }
+
+      // Get price type for badge
+      let priceType: 'fixed' | 'negotiable' | 'starting_from' | 'free' = 'fixed';
+      if (item.price === 0 || item.price === null) {
+        priceType = 'free';
+      } else if (item.specifications && typeof item.specifications === 'object') {
+        if (item.specifications.price_type) {
+          priceType = item.specifications.price_type;
+        }
+      }
+
+      const displayName = item.userFullName || 'User';
 
       const cardWidth = isDesktop ? 420 : width;
       const cardHeight = isDesktop ? height : height;
+
+      // Build Opportunity object for FloatingActionRail
+      const opportunity = {
+        id: item.id,
+        title: item.title || 'Untitled',
+        price: item.price || 0,
+        currency: item.currency || 'UGX',
+        imageUrl: item.catalogImages?.[0] || item.imageUrl || '',
+        catalogImages: item.catalogImages || [],
+        description: item.description || '',
+        rating: item.rating,
+        reviewCount: item.reviewCount || 0,
+        userLatitude: item.userLatitude || null,
+        userLongitude: item.userLongitude || null,
+        userPhone: item.userPhone || null,
+        area: item.area || null,
+        inStock: item.inStock !== false,
+        category: item.category || null,
+        type: item.type || 'product',
+        createdAt: item.createdAt,
+        userId: item.userId || '',
+        userFullName: item.userFullName || 'User',
+        userAvatar: item.userAvatar || null,
+        video: item.video || null,
+        video_thumbnail: item.video_thumbnail || null,
+        video_duration: item.video_duration || null,
+        video_size: item.video_size || null,
+        likeCount: item.likeCount || 0,
+        viewCount: item.viewCount || 0,
+        shareCount: item.shareCount || 0,
+        commentCount: item.commentCount || 0,
+      };
 
       return (
         <View
@@ -420,31 +522,28 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
         >
           <SceneRenderer
             key={item.id}
-            scenes={scenes}
+            media={mediaItems}
             title={item.title || 'Product'}
             price={item.price || 0}
-            shopName={item.shopName || 'Shop'}
+            priceType={priceType}
+            currency={item.currency || 'UGX'}
+            userName={displayName}
+            userAvatar={item.userAvatar || null}
+            description={item.description || null}
             rating={item.rating ?? undefined}
             area={item.area ?? undefined}
-            inStock={item.inStock}
-            currency={item.currency || 'UGX'}
+            inStock={item.inStock !== false}
+            type={item.type || 'product'}
+            createdAt={item.createdAt}
             isDesktop={isDesktop}
-            onPrimaryAction={() => {
-              navigation.navigate('ShopProfile', {
-                shopId: item.shopId,
-                shopName: item.shopName,
-              });
+            width={cardWidth}
+            height={cardHeight}
+            onShowMore={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setSelectedOpportunity(item);
             }}
             onShare={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              if (user?.id) {
-                recommendationService.trackInteraction(
-                  user.id,
-                  item.id,
-                  'share',
-                  mapItemType(item.type)
-                ).catch(() => {});
-              }
             }}
             onSave={() => {
               if (!user?.id) return;
@@ -452,70 +551,52 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
               const currentSaved = savedItemsMap[item.id] || false;
               const newSaved = !currentSaved;
               setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-              recommendationService.trackInteraction(
-                user.id,
-                item.id,
-                newSaved ? 'save' : 'unsave',
-                mapItemType(item.type)
-              ).catch(() => {});
             }}
-            onShowMore={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setSelectedOpportunity(item);
-              setShowDetailsModal(true);
-              if (user?.id) {
-                recommendationService.trackInteraction(
-                  user.id,
-                  item.id,
-                  'view',
-                  mapItemType(item.type)
-                ).catch(() => {});
-              }
+            onPrimaryAction={() => {
+              navigation.navigate('Inbox', {
+                userId: item.userId || '',
+                userName: item.userFullName || 'User',
+              });
             }}
-            onSceneChange={(index) => {
+            onSceneChange={(index, source) => {
               if (__DEV__) {
-                console.log('Scene changed to:', index);
+                console.log('Scene changed to:', index, source);
               }
             }}
-            width={cardWidth}
-            height={cardHeight}
+            onBehavioralEvent={(event) => {
+              if (__DEV__) {
+                console.log('Behavioral event:', event);
+              }
+            }}
             autoPlay={false}
             autoPlayInterval={9000}
             resetKey={item.id}
+            bottomOffset={0}
           />
 
           <View style={styles.actionRailWrapper}>
             <FloatingActionRail
               key={`rail-${item.id}`}
-              opportunity={item}
-              onShopPress={(shopId) => {
-                navigation.navigate('ShopProfile', {
-                  shopId,
-                  shopName: item.shopName,
+              opportunity={opportunity}
+              onUserPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                navigation.navigate('UserProfile', {
+                  userId: item.userId || '',
+                  userName: item.userFullName || 'User',
                 });
               }}
-              onReviewsPress={(productId) => {
+              onReviewsPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                const found = filteredResults.find(r => r.id === productId);
-                if (found) {
-                  setSelectedOpportunity(found);
-                  setShowReviewsModal(true);
-                }
+                setSelectedOpportunity(item);
+                setShowReviewsModal(true);
               }}
               onDirectionsPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setSelectedOpportunity(item);
                 setShowDirectionsModal(true);
               }}
               onSharePress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                if (user?.id) {
-                  recommendationService.trackInteraction(
-                    user.id,
-                    item.id,
-                    'share',
-                    mapItemType(item.type)
-                  ).catch(() => {});
-                }
               }}
               onAIPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -529,34 +610,17 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
                 const currentSaved = savedItemsMap[item.id] || false;
                 const newSaved = !currentSaved;
                 setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-                recommendationService.trackInteraction(
-                  user.id,
-                  item.id,
-                  newSaved ? 'save' : 'unsave',
-                  mapItemType(item.type)
-                ).catch(() => {});
               }}
               isSaved={isSaved}
-              savedCount={item.savedCount || 0}
+              savedCount={0}
               shareCount={item.shareCount || 0}
-              reviewCount={item.reviewCount || 0}
-              distance={item.distance || 0}
-              shopLogo={item.shopLogo || null}
+              reviewCount={0}
             />
           </View>
         </View>
       );
     },
-    [
-      isDesktop,
-      width,
-      height,
-      navigation,
-      user?.id,
-      savedItemsMap,
-      filteredResults,
-      query,
-    ]
+    [isDesktop, width, height, navigation, user?.id, savedItemsMap, query]
   );
 
   // ============================================================
@@ -579,16 +643,25 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     setSelectedOpportunity(null);
   }, []);
 
-  const handleCloseDetails = useCallback(() => {
-    setShowDetailsModal(false);
-    setSelectedOpportunity(null);
-  }, []);
+  // ============================================================
+  // LOADING STATE
+  // ============================================================
+
+  if (!memoizedResults) {
+    return (
+      <SafeAreaView style={styles.centered}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+        <ActivityIndicator size="large" color="#4A7DFF" />
+        <Text style={styles.loadingText}>Loading results...</Text>
+      </SafeAreaView>
+    );
+  }
 
   // ============================================================
   // EMPTY STATE
   // ============================================================
 
-  if (!memoizedResults || memoizedResults.length === 0) {
+  if (memoizedResults.length === 0) {
     return (
       <SafeAreaView style={styles.emptyContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
@@ -643,12 +716,6 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
               style={styles.list}
             />
 
-            <SimpleDetailsModal
-              visible={showDetailsModal}
-              opportunity={selectedOpportunity}
-              onClose={handleCloseDetails}
-            />
-
             <ReviewsBottomSheet
               visible={showReviewsModal}
               productId={selectedOpportunity?.id || ''}
@@ -658,7 +725,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
             <AIBottomSheet
               visible={showAIModal}
-              opportunity={selectedOpportunity}
+              opportunity={selectedOpportunity as any}
               contextHint={aiContextHint}
               onClose={handleCloseAI}
               isDesktopView={false}
@@ -666,7 +733,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
             <DirectionsBottomSheet
               visible={showDirectionsModal}
-              opportunity={selectedOpportunity}
+              opportunity={selectedOpportunity as any}
               onClose={handleCloseDirections}
               isDesktopView={false}
             />
@@ -677,76 +744,32 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
   }
 
   // ============================================================
-  // GRID VIEW (Default)
+  // GRID VIEW - MATCHES EXPLORE SCREEN STYLE
   // ============================================================
 
-  const numColumns = isDesktop ? 4 : 2;
+  const numColumns = isDesktop ? 4 : 3;
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
-  const hasFilters = filteredResults.length !== memoizedResults.length;
-  const hasDirectResults = totalResults > 0;
 
   return (
-  <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
-          <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBack} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
+      {/* Header with Search Query - Shows the search term instead of "Results" */}
+      <View style={[styles.header, isDesktop && styles.headerDesktop]}>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonHeader}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {query}
-          </Text>
-          <Text style={styles.headerSubtitle} numberOfLines={1}>
-            {hasDirectResults 
-              ? `${totalResults} matches found` 
-              : `Showing ${memoizedResults.length} recommendations`}
-            {recommendationsCount > 0 && hasDirectResults && ` + ${recommendationsCount} recommendations`}
+            {query || 'Search'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.headerViewToggle} onPress={() => {
-          setCurrentIndex(0);
-          setViewMode('fullscreen');
-        }}>
-          <Ionicons name="expand-outline" size={22} color="#4A7DFF" />
-          <Text style={styles.headerViewToggleText}>Full</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Filter Chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterContainer}
-        contentContainerStyle={styles.filterContent}
-      >
-        {FILTER_OPTIONS.map((option) => (
-          <FilterChip
-            key={option.key}
-            option={option}
-            isActive={activeFilter === option.key}
-            onPress={() => handleFilterPress(option.key)}
-            count={filterCounts[option.key]}
-          />
-        ))}
-      </ScrollView>
-
-      {/* Results Count with Intent Info */}
-      <View style={styles.resultsCountContainer}>
-        <Text style={styles.resultsCountText}>
-          Showing {filteredResults.length} {filteredResults.length === 1 ? 'result' : 'results'}
-          {!hasDirectResults && ` (${recommendationsCount || 0} recommendations included)`}
-          {hasFilters && ` (filtered from ${memoizedResults.length})`}
+        <Text style={styles.headerSubtitle}>
+          {filteredResults.length}
         </Text>
-        {activeFilter !== 'all' && (
-          <TouchableOpacity onPress={() => handleFilterPress('all')}>
-            <Text style={styles.clearFilterText}>Clear filter</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
-      {/* Intent Info - Show what was parsed from the query */}
+      {/* Intent Chips - Show detected search intent */}
       {intent && (intent.keywords.length > 0 || intent.categories.length > 0 || intent.priceRange || intent.location) && (
         <ScrollView 
           horizontal 
@@ -795,7 +818,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
         </ScrollView>
       )}
 
-      {/* Grid FlatList */}
+      {/* Main Grid with Sticky Filters */}
       <FlatList
         key={gridKey}
         data={filteredResults}
@@ -808,11 +831,12 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
         maxToRenderPerBatch={10}
         windowSize={5}
         initialNumToRender={8}
+        ListHeaderComponent={ListHeader}
         ListEmptyComponent={
-          <View style={styles.noResults}>
+          <View style={styles.emptyGrid}>
             <Ionicons name="filter-outline" size={48} color="#8A8AAE" />
-            <Text style={styles.noResultsTitle}>No {activeFilter} found</Text>
-            <Text style={styles.noResultsSubtext}>Try adjusting your filter</Text>
+            <Text style={styles.emptyGridTitle}>No {activeFilter} found</Text>
+            <Text style={styles.emptyGridSubtext}>Try adjusting your filter</Text>
             <TouchableOpacity 
               style={styles.clearFilterButton}
               onPress={() => handleFilterPress('all')}
@@ -821,23 +845,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
             </TouchableOpacity>
           </View>
         }
-        ListFooterComponent={
-          recommendationsCount > 0 && !hasDirectResults ? (
-            <View style={styles.recommendationFooter}>
-              <Ionicons name="bulb-outline" size={20} color="#F1C40F" />
-              <Text style={styles.recommendationFooterText}>
-                Showing {recommendationsCount} recommended items based on your search
-              </Text>
-            </View>
-          ) : null
-        }
-      />
-
-      {/* Modals */}
-      <SimpleDetailsModal
-        visible={showDetailsModal}
-        opportunity={selectedOpportunity}
-        onClose={handleCloseDetails}
+        stickyHeaderIndices={[0]}
       />
 
       <ReviewsBottomSheet
@@ -849,7 +857,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
       <AIBottomSheet
         visible={showAIModal}
-        opportunity={selectedOpportunity}
+        opportunity={selectedOpportunity as any}
         contextHint={aiContextHint}
         onClose={handleCloseAI}
         isDesktopView={false}
@@ -857,7 +865,7 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
       <DirectionsBottomSheet
         visible={showDirectionsModal}
-        opportunity={selectedOpportunity}
+        opportunity={selectedOpportunity as any}
         onClose={handleCloseDirections}
         isDesktopView={false}
       />
@@ -895,57 +903,67 @@ const styles = StyleSheet.create({
     backgroundColor: '#0D0D1A',
   },
   containerDesktop: {
-    // Desktop specific styles - padding handled by ResponsiveLayout
+    backgroundColor: '#0D0D1A',
+    padding: 24,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0D0D1A',
+    padding: 20,
+  },
+  loadingText: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 12,
   },
   list: {
     flex: 1,
     backgroundColor: '#0D0D1A',
   },
-  // Header
+
+  // ============================================================
+  // HEADER - Shows search query instead of "Results"
+  // ============================================================
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    backgroundColor: 'rgba(13, 13, 26, 0.95)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    paddingTop: 8,
+    paddingBottom: 8,
+    backgroundColor: '#0D0D1A',
   },
-  headerBack: {
+  headerDesktop: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 12,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  backButtonHeader: {
     padding: 4,
   },
-  headerCenter: {
-    flex: 1,
-    marginLeft: 8,
-  },
   headerTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+    flex: 1,
   },
   headerSubtitle: {
     color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 1,
-  },
-  headerViewToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(74, 125, 255, 0.1)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  headerViewToggleText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 14,
+    marginLeft: 8,
   },
 
-  // Intent chips
+  // ============================================================
+  // INTENT CHIPS
+  // ============================================================
   intentContainer: {
     backgroundColor: 'rgba(13, 13, 26, 0.9)',
     borderBottomWidth: 1,
@@ -972,34 +990,37 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
 
-  // Filters
+  // ============================================================
+  // FILTERS - 10+ Categories, Sticky
+  // ============================================================
   filterContainer: {
-    maxHeight: 52,
-    backgroundColor: 'rgba(13, 13, 26, 0.95)',
+    backgroundColor: '#0D0D1A',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
-    paddingVertical: 4,
+    minHeight: 48,
+    maxHeight: 56,
   },
   filterContent: {
     paddingHorizontal: 12,
-    paddingVertical: 4,
-    gap: 6,
+    gap: 8,
     alignItems: 'center',
   },
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    gap: 3,
-    minHeight: 30,
+    gap: 4,
+    minHeight: 32,
   },
   filterChipActive: {
-    backgroundColor: '#4A7DFF',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderColor: '#4A7DFF',
   },
   filterChipText: {
@@ -1008,62 +1029,39 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   filterChipTextActive: {
-    color: '#FFFFFF',
+    color: '#4A7DFF',
   },
   filterChipBadge: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#4A7DFF',
     borderRadius: 8,
     paddingHorizontal: 4,
     paddingVertical: 1,
     minWidth: 16,
     alignItems: 'center',
   },
-  filterChipBadgeActive: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-  },
   filterChipBadgeText: {
-    color: '#8A8AAE',
-    fontSize: 9,
-    fontWeight: '600',
-  },
-  filterChipBadgeTextActive: {
     color: '#FFFFFF',
+    fontSize: 8,
+    fontWeight: 'bold',
   },
 
-  // Results count
-  resultsCountContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(13, 13, 26, 0.9)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.03)',
-  },
-  resultsCountText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  clearFilterText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-
-  // Grid
+  // ============================================================
+  // GRID STYLES (Matches Explore)
+  // ============================================================
   gridContainer: {
-    padding: 8,
+    padding: 4,
     paddingBottom: 20,
   },
   gridCard: {
     flex: 1,
-    margin: 6,
-    borderRadius: 12,
+    margin: 1,
+    borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#1A1A2E',
     position: 'relative',
     aspectRatio: 0.9,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   gridImage: {
     width: '100%',
@@ -1073,6 +1071,19 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+  },
+  gridImagePlaceholder: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    borderRadius: 12,
+    padding: 4,
+    zIndex: 5,
   },
   gridOverlay: {
     position: 'absolute',
@@ -1119,38 +1130,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
 
-  // Recommendation footer
-  recommendationFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 8,
-    backgroundColor: 'rgba(241, 196, 15, 0.05)',
-    borderRadius: 8,
-    marginHorizontal: 8,
-    marginTop: 8,
-  },
-  recommendationFooterText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-
-  // Empty state
-  noResults: {
+  emptyGrid: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 60,
   },
-  noResultsTitle: {
+  emptyGridTitle: {
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
     marginTop: 12,
   },
-  noResultsSubtext: {
+  emptyGridSubtext: {
     color: '#8A8AAE',
     fontSize: 14,
     marginTop: 4,
@@ -1168,7 +1160,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Fullscreen
+  // ============================================================
+  // FULLSCREEN STYLES
+  // ============================================================
   backButton: {
     position: 'absolute',
     top: 50,
@@ -1195,7 +1189,9 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
 
-  // Empty State
+  // ============================================================
+  // EMPTY STATE
+  // ============================================================
   emptyContainer: {
     flex: 1,
     backgroundColor: '#0D0D1A',

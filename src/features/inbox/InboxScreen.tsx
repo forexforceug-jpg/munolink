@@ -7,16 +7,12 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   Dimensions,
   StatusBar,
   FlatList,
   TextInput,
   Alert,
   Modal,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,7 +25,36 @@ import { supabase } from '../../lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
-// --- Types ---
+// ============================================================
+// TYPES
+// ============================================================
+
+interface PaymentRequest {
+  id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount: number;
+  reason: string | null;
+  status: 'pending' | 'accepted' | 'locked' | 'completed' | 'cancelled' | 'disputed';
+  is_request: boolean;
+  transaction_id: string | null;
+  message_id: string | null;
+  created_at: string;
+  accepted_at: string | null;
+  locked_at: string | null;
+  completed_at: string | null;
+  from_user?: {
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  };
+  to_user?: {
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  };
+}
+
 interface Message {
   id: string;
   sender_id: string;
@@ -37,6 +62,8 @@ interface Message {
   text: string;
   is_read: boolean;
   created_at: string;
+  payment_request_id?: string;
+  payment?: PaymentRequest | null;
 }
 
 interface Conversation {
@@ -48,12 +75,13 @@ interface Conversation {
   online?: boolean;
   avatar?: string;
   isVerified?: boolean;
-  status?: string;
-  statusColor?: string;
-  type?: 'chat' | 'ai' | 'order' | 'booking' | 'payment' | 'support';
+  type?: 'chat' | 'ai';
 }
 
-// --- Helper Functions ---
+// ============================================================
+// HELPERS
+// ============================================================
+
 const formatTime = (timestamp: string | null | undefined) => {
   if (!timestamp) return '';
   const date = new Date(timestamp);
@@ -68,121 +96,431 @@ const formatTime = (timestamp: string | null | undefined) => {
   return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 };
 
-// --- Sub-components ---
-const ConversationCard = ({ item, onPress, onLongPress }: any) => {
-  const statusColors: Record<string, string> = {
-    'Order Ready': '#2ECC71',
-    'Completed': '#4A7DFF',
-    'Price Alert': '#4A7DFF',
-    'Delivered': '#2ECC71',
-    'Upcoming': '#F1C40F',
-    'Open': '#4A7DFF',
-    'Active': '#2ECC71',
-  };
+// ============================================================
+// SUB-COMPONENTS
+// ============================================================
 
-  const statusColor = statusColors[item.status] || '#8A8AAE';
-
-  return (
-    <TouchableOpacity
-      style={styles.conversationCard}
-      onPress={() => onPress(item)}
-      onLongPress={() => onLongPress(item)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.conversationAvatar}>
-        {item.type === 'ai' ? (
-          <LinearGradient
-            colors={['#4A7DFF', '#6B94FF']}
-            style={styles.aiAvatarGradient}
-          >
-            <Text style={styles.aiAvatarText}>AI</Text>
-          </LinearGradient>
-        ) : (
-          <View style={[styles.avatarCircle, { backgroundColor: item.type === 'chat' ? 'rgba(74, 125, 255, 0.15)' : 'rgba(255,255,255,0.05)' }]}>
-            <Text style={[styles.avatarText, item.type !== 'chat' && styles.avatarTextSystem]}>
-              {item.avatar || item.name?.charAt(0).toUpperCase() || 'U'}
-            </Text>
-          </View>
-        )}
-        {item.unread > 0 && (
-          <View style={styles.unreadBadge}>
-            <Text style={styles.unreadBadgeText}>{item.unread}</Text>
-          </View>
-        )}
+const ConversationCard = ({ item, onPress, onLongPress }: any) => (
+  <TouchableOpacity
+    style={styles.conversationCard}
+    onPress={() => onPress(item)}
+    onLongPress={() => onLongPress(item)}
+    activeOpacity={0.7}
+  >
+    <View style={styles.conversationAvatar}>
+      <View style={[styles.avatarCircle, { backgroundColor: 'rgba(74, 125, 255, 0.15)' }]}>
+        <Text style={styles.avatarText}>
+          {item.avatar || item.name?.charAt(0).toUpperCase() || 'U'}
+        </Text>
       </View>
-
-      <View style={styles.conversationContent}>
-        <View style={styles.conversationHeader}>
-          <View style={styles.conversationTitleRow}>
-            <Text style={styles.conversationTitle} numberOfLines={1}>
-              {item.name || item.title}
-            </Text>
-            {item.isVerified && (
-              <View style={styles.verifiedBadge}>
-                <Text style={styles.verifiedBadgeText}>✓</Text>
-              </View>
-            )}
-          </View>
-          <Text style={styles.conversationTime}>{item.time}</Text>
+      {item.unread > 0 && (
+        <View style={styles.unreadBadge}>
+          <Text style={styles.unreadBadgeText}>{item.unread}</Text>
         </View>
-
-        <View style={styles.conversationFooter}>
-          <Text style={[styles.conversationMessage, item.unread > 0 && styles.conversationMessageUnread]} numberOfLines={1}>
-            {item.lastMessage}
-          </Text>
-          {item.status && (
-            <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
-              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              <Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-};
-
-// Message Bubble
-const MessageBubble = ({ message, isMe }: any) => (
-  <View style={[styles.messageWrapper, isMe ? styles.messageMeWrapper : styles.messageThemWrapper]}>
-    {!isMe && (
-      <View style={styles.messageAvatar}>
-        <Text style={styles.messageAvatarText}>U</Text>
-      </View>
-    )}
-    <View style={[styles.messageBubble, isMe ? styles.messageMe : styles.messageThem]}>
-      <Text style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextThem]}>
-        {message.text}
-      </Text>
-      <Text style={[styles.messageTime, isMe ? styles.messageTimeMe : styles.messageTimeThem]}>
-        {message.time}
-      </Text>
+      )}
     </View>
-  </View>
+
+    <View style={styles.conversationContent}>
+      <View style={styles.conversationHeader}>
+        <Text style={styles.conversationTitle} numberOfLines={1}>
+          {item.name || 'User'}
+        </Text>
+        <Text style={styles.conversationTime}>{item.time}</Text>
+      </View>
+
+      <View style={styles.conversationFooter}>
+        <Text style={[styles.conversationMessage, item.unread > 0 && styles.conversationMessageUnread]} numberOfLines={1}>
+          {item.lastMessage}
+        </Text>
+      </View>
+    </View>
+  </TouchableOpacity>
 );
 
-// AI Quick Reply Suggestions
-const AISuggestions = ({ onPress }: any) => {
-  const suggestions = [
-    'Ask about price',
-    'Check availability',
-    'Compare products',
-    'Ask about warranty',
-  ];
+// ============================================================
+// PAYMENT CARD - CORRECT BUTTON LOGIC
+// ============================================================
+
+const PaymentCard = ({ 
+  payment, 
+  currentUserId,
+  onAccept,
+  onPay,
+  onCancel,
+  onEdit,
+  onReject,
+  onView
+}: any) => {
+  const isRequest = payment.is_request;
+  const isFromMe = payment.from_user_id === currentUserId;
+  const isToMe = payment.to_user_id === currentUserId;
+  
+  const getStatusDisplay = () => {
+    switch (payment.status) {
+      case 'pending':
+        return isRequest ? '⏳ Awaiting Payment' : '⏳ Pending';
+      case 'accepted':
+        return '🔒 Payment Locked';
+      case 'locked':
+        return '🔒 Awaiting Confirmation';
+      case 'completed':
+        return '✅ Completed';
+      case 'cancelled':
+        return '❌ Cancelled';
+      case 'disputed':
+        return '⚠️ Disputed';
+      default:
+        return '⏳ Pending';
+    }
+  };
+
+  const getStatusColor = () => {
+    switch (payment.status) {
+      case 'pending':
+        return '#F1C40F';
+      case 'accepted':
+        return '#4A7DFF';
+      case 'locked':
+        return '#4A7DFF';
+      case 'completed':
+        return '#2ECC71';
+      case 'cancelled':
+        return '#E74C3C';
+      case 'disputed':
+        return '#E74C3C';
+      default:
+        return '#8A8AAE';
+    }
+  };
+
+  const displayName = isFromMe 
+    ? payment.to_user?.full_name || 'User'
+    : payment.from_user?.full_name || 'User';
+
+  // ============================================================
+  // CORRECT PAYMENT FLOW LOGIC - SIMPLIFIED
+  // ============================================================
+  
+  // PAY NOW - Sender (from_user = me)
+  const isMyPayNow = isFromMe && !isRequest && payment.status === 'pending';
+  
+  // PAY NOW - Receiver (to_user = me)
+  const isReceivedPayNow = isToMe && !isRequest && payment.status === 'pending';
+  
+  // REQUEST - Sender (from_user = me)
+  const isMyRequest = isFromMe && isRequest && payment.status === 'pending';
+  
+  // REQUEST - Receiver (to_user = me)
+  const isReceivedRequest = isToMe && isRequest && payment.status === 'pending';
+
+  // LOCKED - Buyer (to_user) sees Confirm in Pay
+  const isLocked = payment.status === 'locked';
+  
+  // COMPLETED or LOCKED (seller) - View Details
+  const isCompleted = payment.status === 'completed';
+
+  // Determine what buttons to show
+  // PAY NOW - Sender: Cancel + Edit
+  const showPayNowCancel = isMyPayNow;
+  const showPayNowEdit = isMyPayNow;
+  
+  // PAY NOW - Receiver: Accept + Reject
+  const showPayNowAccept = isReceivedPayNow;
+  const showPayNowReject = isReceivedPayNow;
+  
+  // REQUEST - Sender: Edit + Cancel
+  const showRequestEdit = isMyRequest;
+  const showRequestCancel = isMyRequest;
+  
+  // REQUEST - Receiver: Pay Now + Reject
+  const showRequestPay = isReceivedRequest;
+  const showRequestReject = isReceivedRequest;
+  
+  // LOCKED / COMPLETED
+  const showConfirmInPay = isLocked && isToMe;
+  const showViewDetails = isCompleted || (isLocked && isFromMe);
 
   return (
-    <View style={styles.aiSuggestions}>
-      {suggestions.map((suggestion, i) => (
-        <TouchableOpacity key={i} style={styles.aiSuggestionChip} onPress={() => onPress(suggestion)}>
-          <Ionicons name="sparkles" size={12} color="#4A7DFF" />
-          <Text style={styles.aiSuggestionText}>{suggestion}</Text>
-        </TouchableOpacity>
-      ))}
+    <View style={[styles.paymentCard, { borderLeftColor: getStatusColor() }]}>
+      <View style={styles.paymentCardHeader}>
+        <Text style={styles.paymentCardIcon}>
+          {isRequest ? '💰' : '💳'}
+        </Text>
+        <Text style={styles.paymentCardTitle}>
+          {isRequest ? 'Payment Request' : 'Payment Initiated'}
+        </Text>
+        <View style={[styles.paymentCardStatus, { backgroundColor: getStatusColor() + '20' }]}>
+          <Text style={[styles.paymentCardStatusText, { color: getStatusColor() }]}>
+            {getStatusDisplay()}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.paymentCardBody}>
+        <Text style={styles.paymentCardAmount}>
+          UGX {payment.amount.toLocaleString()}
+        </Text>
+        {payment.reason && (
+          <Text style={styles.paymentCardReason}>{payment.reason}</Text>
+        )}
+        <Text style={styles.paymentCardUser}>
+          {isFromMe ? `To: ${displayName}` : `From: ${displayName}`}
+        </Text>
+        <Text style={styles.paymentCardDate}>
+          {formatTime(payment.created_at)}
+        </Text>
+      </View>
+
+      <View style={styles.paymentCardActions}>
+        {/* ============================================================ */}
+        {/* PAY NOW - Sender (from_user = me): Cancel + Edit              */}
+        {/* ============================================================ */}
+        {showPayNowCancel && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardCancel]}
+            onPress={() => onCancel(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#E74C3C', '#C0392B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Cancel</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+        {showPayNowEdit && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardEdit]}
+            onPress={() => onEdit(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#F39C12', '#E67E22']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="pencil-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Edit</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* ============================================================ */}
+        {/* PAY NOW - Receiver (to_user = me): Accept + Reject            */}
+        {/* ============================================================ */}
+        {showPayNowAccept && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardAccept]}
+            onPress={() => onAccept(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#2ECC71', '#27AE60']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Accept</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+        {showPayNowReject && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardReject]}
+            onPress={() => onReject(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#E74C3C', '#C0392B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Reject</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* ============================================================ */}
+        {/* REQUEST - Sender (from_user = me): Edit + Cancel              */}
+        {/* ============================================================ */}
+        {showRequestEdit && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardEdit]}
+            onPress={() => onEdit(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#F39C12', '#E67E22']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="pencil-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Edit</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+        {showRequestCancel && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardCancel]}
+            onPress={() => onCancel(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#E74C3C', '#C0392B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Cancel</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* ============================================================ */}
+        {/* REQUEST - Receiver (to_user = me): Pay Now + Reject           */}
+        {/* ============================================================ */}
+        {showRequestPay && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardPay]}
+            onPress={() => onPay(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#4A7DFF', '#6B94FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="wallet-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Pay Now</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+        {showRequestReject && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardReject]}
+            onPress={() => onReject(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#E74C3C', '#C0392B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Reject</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* ============================================================ */}
+        {/* LOCKED - Buyer (to_user): Confirm in Pay                      */}
+        {/* ============================================================ */}
+        {showConfirmInPay && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardConfirm]}
+            onPress={() => onView(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#4A7DFF', '#6B94FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="checkmark-done-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Confirm in Pay</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* ============================================================ */}
+        {/* COMPLETED or LOCKED (seller) - View Details                   */}
+        {/* ============================================================ */}
+        {showViewDetails && !showConfirmInPay && (
+          <TouchableOpacity 
+            style={[styles.paymentCardButton, styles.paymentCardView]}
+            onPress={() => onView(payment)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.paymentCardViewText}>View Details</Text>
+            <Ionicons name="chevron-forward" size={16} color="#4A7DFF" />
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 };
 
-// --- Guest Mode Component ---
+// ============================================================
+// MESSAGE BUBBLE
+// ============================================================
+
+const MessageBubble = ({ 
+  message, 
+  isMe, 
+  currentUserId,
+  onPaymentAccept,
+  onPaymentPay,
+  onPaymentCancel,
+  onPaymentEdit,
+  onPaymentReject,
+  onPaymentView,
+}: any) => {
+  const isPayment = message.payment_request_id;
+  
+  if (isPayment && message.payment) {
+    return (
+      <View style={[styles.messageWrapper, isMe ? styles.messageMeWrapper : styles.messageThemWrapper]}>
+        <PaymentCard 
+          payment={message.payment}
+          currentUserId={currentUserId}
+          onAccept={onPaymentAccept}
+          onPay={onPaymentPay}
+          onCancel={onPaymentCancel}
+          onEdit={onPaymentEdit}
+          onReject={onPaymentReject}
+          onView={onPaymentView}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.messageWrapper, isMe ? styles.messageMeWrapper : styles.messageThemWrapper]}>
+      {!isMe && (
+        <View style={styles.messageAvatar}>
+          <Text style={styles.messageAvatarText}>U</Text>
+        </View>
+      )}
+      
+      <View style={[styles.messageBubble, isMe ? styles.messageMe : styles.messageThem]}>
+        <Text style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextThem]}>
+          {message.text}
+        </Text>
+        <Text style={[styles.messageTime, isMe ? styles.messageTimeMe : styles.messageTimeThem]}>
+          {formatTime(message.created_at)}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+// ============================================================
+// GUEST MODE
+// ============================================================
+
 const GuestInboxView = ({ navigation }: any) => (
   <View style={styles.guestContainer}>
     <Text style={styles.guestIcon}>💬</Text>
@@ -190,9 +528,8 @@ const GuestInboxView = ({ navigation }: any) => (
     <Text style={styles.guestSubtext}>
       After signing in you'll receive:{'\n'}
       • Chats{'\n'}
-      • Booking updates{'\n'}
-      • Delivery updates{'\n'}
-      • AI notifications
+      • Payment updates{'\n'}
+      • Notifications
     </Text>
     <TouchableOpacity 
       style={styles.guestButton} 
@@ -206,14 +543,16 @@ const GuestInboxView = ({ navigation }: any) => (
   </View>
 );
 
-// --- Desktop Inbox Content ---
-const DesktopInboxContent = ({ navigation, route }: any) => {
+// ============================================================
+// MAIN INBOX CONTENT
+// ============================================================
+
+const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const { isAuthenticated, user } = useAuth();
   
   const routeParams = route?.params || {};
   const directUserId = routeParams.userId || null;
   const directUserName = routeParams.userName || null;
-  const directShopId = routeParams.shopId || null;
   
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
@@ -227,11 +566,21 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
   const [hasOpenedDirectChat, setHasOpenedDirectChat] = useState(false);
   
+  // Payment modal states
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentReason, setPaymentReason] = useState('');
+  const [paymentIsRequest, setPaymentIsRequest] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<PaymentRequest | null>(null);
+  
   const flatListRef = useRef<FlatList>(null);
   const subscriptionRef = useRef<any>(null);
   const isMounted = useRef(true);
 
-  // --- Load Conversations ---
+  // ============================================================
+  // FETCH FUNCTIONS
+  // ============================================================
+
   const loadConversations = useCallback(async () => {
     if (!user?.id || !isMounted.current) {
       setLoading(false);
@@ -252,86 +601,63 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
         return;
       }
 
-      if (!allMessages || allMessages.length === 0) {
-        setLoading(false);
-        setConversations([]);
-        setFilteredConversations([]);
-        openDirectChatIfNeeded([]);
-        return;
-      }
+      let convos: Conversation[] = [];
 
-      // Group by partner
-      const convoMap = new Map();
-      allMessages.forEach((msg: any) => {
-        const partnerId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
-        if (!convoMap.has(partnerId)) {
-          convoMap.set(partnerId, {
-            partnerId,
-            lastMessage: msg.text || '',
-            lastMessageTime: msg.created_at,
-            unreadCount: msg.receiver_id === user.id && !msg.is_read ? 1 : 0,
-          });
-        } else {
-          const existing = convoMap.get(partnerId);
-          if (msg.receiver_id === user.id && !msg.is_read) {
-            existing.unreadCount++;
+      if (allMessages && allMessages.length > 0) {
+        const convoMap = new Map();
+        allMessages.forEach((msg: any) => {
+          const partnerId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+          if (!convoMap.has(partnerId)) {
+            convoMap.set(partnerId, {
+              partnerId,
+              lastMessage: msg.text || '',
+              lastMessageTime: msg.created_at,
+              unreadCount: msg.receiver_id === user.id && !msg.is_read ? 1 : 0,
+            });
+          } else {
+            const existing = convoMap.get(partnerId);
+            if (msg.receiver_id === user.id && !msg.is_read) {
+              existing.unreadCount++;
+            }
+          }
+        });
+
+        const partnerIds = [...convoMap.keys()];
+        let partnerMap: Record<string, string> = {};
+
+        if (partnerIds.length > 0) {
+          const { data: users } = await supabase
+            .from('users')
+            .select('id, full_name')
+            .in('id', partnerIds);
+          
+          if (users) {
+            users.forEach((u: any) => { 
+              partnerMap[u.id] = u.full_name || 'User'; 
+            });
           }
         }
-      });
 
-      // Get partner names
-      const partnerIds = [...convoMap.keys()];
-      let partnerMap: Record<string, string> = {};
-
-      if (partnerIds.length > 0) {
-        const { data: users } = await supabase
-          .from('users')
-          .select('id, full_name')
-          .in('id', partnerIds);
-        
-        if (users) {
-          users.forEach((u: any) => { 
-            partnerMap[u.id] = u.full_name || 'User'; 
+        convoMap.forEach((convo: any, partnerId: string) => {
+          const name = partnerMap[partnerId] || 'Unknown User';
+          convos.push({
+            id: partnerId,
+            name: name,
+            lastMessage: convo.lastMessage || 'No messages yet',
+            time: formatTime(convo.lastMessageTime),
+            unread: convo.unreadCount,
+            online: false,
+            avatar: name.charAt(0).toUpperCase(),
+            type: 'chat',
+            isVerified: false,
           });
-        }
-
-        // Try to get shop names for partners who are shop owners
-        const { data: shops } = await supabase
-          .from('shops')
-          .select('id, name, owner_id')
-          .in('owner_id', partnerIds);
-        
-        if (shops) {
-          shops.forEach((s: any) => {
-            if (!partnerMap[s.owner_id] || partnerMap[s.owner_id] === 'User') {
-              partnerMap[s.owner_id] = s.name;
-            }
-          });
-        }
+        });
       }
 
-      // Build conversation list
-      const convos: Conversation[] = [];
-      convoMap.forEach((convo: any, partnerId: string) => {
-        const name = partnerMap[partnerId] || 'Unknown User';
-        convos.push({
-          id: partnerId,
-          name: name,
-          lastMessage: convo.lastMessage || 'No messages yet',
-          time: formatTime(convo.lastMessageTime),
-          unread: convo.unreadCount,
-          online: false,
-          avatar: name.charAt(0).toUpperCase(),
-          type: 'chat',
-          isVerified: false,
-        });
-      });
-
-      // Sort by last message time
       convos.sort((a, b) => {
-        const timeA = convoMap.get(a.id)?.lastMessageTime || '';
-        const timeB = convoMap.get(b.id)?.lastMessageTime || '';
-        return timeB.localeCompare(timeA);
+        const timeA = a.time === 'Just now' ? Date.now() : 0;
+        const timeB = b.time === 'Just now' ? Date.now() : 0;
+        return timeB - timeA;
       });
 
       if (isMounted.current) {
@@ -348,14 +674,708 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
     }
   }, [user?.id]);
 
-  // --- Open Direct Chat ---
+  const loadMessages = useCallback(async (partnerId: string) => {
+    if (!user?.id || !partnerId || !isMounted.current) return;
+
+    try {
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
+        .order('created_at', { ascending: true })
+        .limit(100);
+
+      if (messagesError) {
+        console.error('Error loading messages:', messagesError);
+        return;
+      }
+
+      let filtered = messagesData?.filter((m: any) => 
+        (m.sender_id === user.id && m.receiver_id === partnerId) || 
+        (m.sender_id === partnerId && m.receiver_id === user.id)
+      ) || [];
+
+      const messageIds = filtered.map((m: any) => m.id).filter(Boolean);
+      let paymentRequests: PaymentRequest[] = [];
+
+      if (messageIds.length > 0) {
+        const { data: paymentsData, error: paymentsError } = await supabase
+          .from('payment_requests')
+          .select('*')
+          .in('message_id', messageIds);
+
+        if (!paymentsError && paymentsData) {
+          const userIds = paymentsData.flatMap((p: any) => [p.from_user_id, p.to_user_id]).filter(Boolean);
+          let userMap: Record<string, { id: string; full_name: string; avatar_url: string | null }> = {};
+
+          if (userIds.length > 0) {
+            const { data: users, error: usersError } = await supabase
+              .from('users')
+              .select('id, full_name, avatar_url')
+              .in('id', userIds);
+
+            if (!usersError && users) {
+              users.forEach((u: any) => {
+                userMap[u.id] = { 
+                  id: u.id,
+                  full_name: u.full_name || 'User', 
+                  avatar_url: u.avatar_url || null 
+                };
+              });
+            }
+          }
+
+          paymentRequests = paymentsData.map((p: any) => {
+            const fromId = p.from_user_id;
+            const toId = p.to_user_id;
+            
+            return {
+              ...p,
+              created_at: p.created_at || new Date().toISOString(),
+              from_user_id: fromId,
+              to_user_id: toId,
+              from_user: userMap[fromId] || { id: fromId, full_name: 'User', avatar_url: null },
+              to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
+            };
+          });
+        }
+      }
+
+      const mergedMessages = filtered.map((msg: any) => {
+        const payment = paymentRequests.find(p => p.message_id === msg.id);
+        return {
+          ...msg,
+          payment: payment || null,
+          payment_request_id: payment?.id || null,
+        };
+      });
+
+      if (isMounted.current) {
+        setMessages(mergedMessages);
+      }
+
+      await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('sender_id', partnerId)
+        .eq('receiver_id', user.id)
+        .eq('is_read', false);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }, [user?.id]);
+
+  // ============================================================
+  // PAYMENT FUNCTIONS
+  // ============================================================
+
+  const createPayment = useCallback(async (
+    amount: number, 
+    reason: string, 
+    isRequest: boolean,
+    receiverId: string
+  ) => {
+    if (!user?.id || !receiverId) {
+      Alert.alert('Error', 'Invalid user');
+      return null;
+    }
+
+    try {
+      const buyerId = isRequest ? receiverId : user.id;
+      const sellerId = isRequest ? user.id : receiverId;
+
+      const { data: paymentData, error: paymentError } = await supabase
+        .from('payment_requests')
+        .insert({
+          buyer_id: buyerId,
+          seller_id: sellerId,
+          from_user_id: isRequest ? receiverId : user.id,
+          to_user_id: isRequest ? user.id : receiverId,
+          amount: amount,
+          reason: reason || 'Payment',
+          status: 'pending',
+          is_request: isRequest,
+          currency: 'UGX',
+        } as any)
+        .select('*')
+        .single();
+
+      if (paymentError) {
+        console.error('Error creating payment:', paymentError);
+        Alert.alert('Error', 'Failed to create payment: ' + paymentError.message);
+        return null;
+      }
+
+      if (!paymentData) {
+        Alert.alert('Error', 'Failed to create payment - no data returned');
+        return null;
+      }
+
+      const paymentText = isRequest
+        ? `💰 Payment Request: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`
+        : `💰 Payment Initiated: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`;
+
+      const { data: messageData, error: messageError } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: user.id,
+          receiver_id: receiverId,
+          text: paymentText,
+          is_read: false,
+        })
+        .select()
+        .single();
+
+      if (messageError) {
+        console.error('Error sending payment message:', messageError);
+        Alert.alert('Error', 'Failed to send payment message');
+        return null;
+      }
+
+      if (paymentData && messageData) {
+        await supabase
+          .from('payment_requests')
+          .update({ message_id: messageData.id })
+          .eq('id', paymentData.id);
+      }
+
+      // For "Pay Now", immediately lock funds
+      if (!isRequest) {
+        const { error: txError } = await supabase
+          .from('transactions')
+          .insert({
+            buyer_id: user.id,
+            seller_id: receiverId,
+            amount: amount,
+            locked_amount: amount,
+            type: 'payment',
+            status: 'locked',
+            reference: `PAY-${Date.now()}`,
+          } as any)
+          .select()
+          .single();
+
+        if (txError) {
+          console.error('Error creating transaction:', txError);
+          Alert.alert('Error', 'Failed to lock funds');
+          return null;
+        }
+
+        await supabase
+          .from('payment_requests')
+          .update({
+            status: 'locked',
+            locked_at: new Date().toISOString(),
+          })
+          .eq('id', paymentData.id);
+
+        const { data: userData } = await supabase
+          .from('users')
+          .select('wallet_balance')
+          .eq('id', user.id)
+          .single();
+
+        if (userData) {
+          await supabase
+            .from('users')
+            .update({
+              wallet_balance: (userData.wallet_balance || 0) - amount,
+            })
+            .eq('id', user.id);
+        }
+      }
+
+      const userIds = [paymentData.from_user_id, paymentData.to_user_id].filter(Boolean);
+      let userMap: Record<string, { id: string; full_name: string; avatar_url: string | null }> = {};
+
+      if (userIds.length > 0) {
+        const { data: users, error: usersError } = await supabase
+          .from('users')
+          .select('id, full_name, avatar_url')
+          .in('id', userIds);
+
+        if (!usersError && users) {
+          users.forEach((u: any) => {
+            userMap[u.id] = { 
+              id: u.id,
+              full_name: u.full_name || 'User', 
+              avatar_url: u.avatar_url || null 
+            };
+          });
+        }
+      }
+
+      const fromId = paymentData.from_user_id;
+      const toId = paymentData.to_user_id;
+
+      return {
+        ...paymentData,
+        message_id: messageData?.id,
+        created_at: paymentData.created_at || new Date().toISOString(),
+        from_user_id: fromId,
+        to_user_id: toId,
+        from_user: userMap[fromId] || { id: fromId, full_name: 'User', avatar_url: null },
+        to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
+      };
+    } catch (error) {
+      console.error('Error creating payment:', error);
+      Alert.alert('Error', 'Failed to create payment');
+      return null;
+    }
+  }, [user?.id]);
+
+  // --- Accept Payment (For Pay Now received) ---
+  const handleAcceptPayment = useCallback(async (payment: PaymentRequest) => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please login');
+      return;
+    }
+
+    try {
+      const { data: userData, error: balanceError } = await supabase
+        .from('users')
+        .select('wallet_balance')
+        .eq('id', user.id)
+        .single();
+
+      if (balanceError) {
+        console.error('Error checking balance:', balanceError);
+        Alert.alert('Error', 'Failed to check balance');
+        return;
+      }
+
+      if ((userData?.wallet_balance || 0) < payment.amount) {
+        Alert.alert(
+          'Insufficient Balance',
+          `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(userData?.wallet_balance || 0).toLocaleString()}`
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Accept Payment',
+        `You are about to accept a payment of UGX ${payment.amount.toLocaleString()}\n\n` +
+        `From: ${payment.from_user?.full_name || 'User'}\n` +
+        `Reason: ${payment.reason || 'No reason provided'}\n\n` +
+        `This amount will be locked from your wallet until you confirm the transaction.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Accept & Lock',
+            onPress: async () => {
+              try {
+                const { data: txData, error: txError } = await supabase
+                  .from('transactions')
+                  .insert({
+                    buyer_id: user.id,
+                    seller_id: payment.from_user_id,
+                    amount: payment.amount,
+                    locked_amount: payment.amount,
+                    type: 'payment',
+                    status: 'locked',
+                    reference: `PAY-${Date.now()}`,
+                  } as any)
+                  .select()
+                  .single();
+
+                if (txError) {
+                  console.error('Error creating transaction:', txError);
+                  Alert.alert('Error', 'Failed to lock funds');
+                  return;
+                }
+
+                await supabase
+                  .from('payment_requests')
+                  .update({
+                    status: 'locked',
+                    locked_at: new Date().toISOString(),
+                    accepted_at: new Date().toISOString(),
+                    transaction_id: txData.id,
+                    buyer_id: user.id,
+                    seller_id: payment.from_user_id,
+                  } as any)
+                  .eq('id', payment.id);
+
+                const { data: userBalance } = await supabase
+                  .from('users')
+                  .select('wallet_balance')
+                  .eq('id', user.id)
+                  .single();
+
+                if (userBalance) {
+                  await supabase
+                    .from('users')
+                    .update({
+                      wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
+                    })
+                    .eq('id', user.id);
+                }
+
+                const { data: msgData } = await supabase
+                  .from('messages')
+                  .insert({
+                    sender_id: user.id,
+                    receiver_id: payment.from_user_id,
+                    text: `✅ Payment accepted and locked: UGX ${payment.amount.toLocaleString()}${payment.reason ? ` - ${payment.reason}` : ''}`,
+                    is_read: false,
+                  })
+                  .select()
+                  .single();
+
+                if (msgData) {
+                  setMessages(prev => {
+                    const newMsg = {
+                      ...msgData,
+                      payment: null,
+                      payment_request_id: null,
+                    };
+                    return [...prev, newMsg];
+                  });
+                }
+
+                if (selectedConversation?.id) {
+                  loadMessages(selectedConversation.id);
+                }
+
+                Alert.alert(
+                  '✅ Payment Locked',
+                  `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
+                  `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
+                );
+              } catch (error) {
+                console.error('Error processing payment:', error);
+                Alert.alert('Error', 'Failed to process payment');
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error:', error);
+      Alert.alert('Error', 'Failed to process payment');
+    }
+  }, [user?.id, selectedConversation, loadMessages]);
+
+  // --- Pay Now (For Request received - to_user pays) ---
+  const handlePayNow = useCallback(async (payment: PaymentRequest) => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please login');
+      return;
+    }
+
+    try {
+      const { data: userData, error: balanceError } = await supabase
+        .from('users')
+        .select('wallet_balance')
+        .eq('id', user.id)
+        .single();
+
+      if (balanceError) {
+        console.error('Error checking balance:', balanceError);
+        Alert.alert('Error', 'Failed to check balance');
+        return;
+      }
+
+      if ((userData?.wallet_balance || 0) < payment.amount) {
+        Alert.alert(
+          'Insufficient Balance',
+          `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(userData?.wallet_balance || 0).toLocaleString()}`
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Pay Request',
+        `You are about to pay UGX ${payment.amount.toLocaleString()}\n\n` +
+        `To: ${payment.from_user?.full_name || 'User'}\n` +
+        `Reason: ${payment.reason || 'No reason provided'}\n\n` +
+        `This amount will be locked from your wallet until you confirm the transaction.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Pay Now',
+            onPress: async () => {
+              try {
+                const { data: txData, error: txError } = await supabase
+                  .from('transactions')
+                  .insert({
+                    buyer_id: user.id,
+                    seller_id: payment.from_user_id,
+                    amount: payment.amount,
+                    locked_amount: payment.amount,
+                    type: 'payment',
+                    status: 'locked',
+                    reference: `PAY-${Date.now()}`,
+                  } as any)
+                  .select()
+                  .single();
+
+                if (txError) {
+                  console.error('Error creating transaction:', txError);
+                  Alert.alert('Error', 'Failed to lock funds');
+                  return;
+                }
+
+                await supabase
+                  .from('payment_requests')
+                  .update({
+                    status: 'locked',
+                    locked_at: new Date().toISOString(),
+                    accepted_at: new Date().toISOString(),
+                    transaction_id: txData.id,
+                    buyer_id: user.id,
+                    seller_id: payment.from_user_id,
+                  } as any)
+                  .eq('id', payment.id);
+
+                const { data: userBalance } = await supabase
+                  .from('users')
+                  .select('wallet_balance')
+                  .eq('id', user.id)
+                  .single();
+
+                if (userBalance) {
+                  await supabase
+                    .from('users')
+                    .update({
+                      wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
+                    })
+                    .eq('id', user.id);
+                }
+
+                const { data: msgData } = await supabase
+                  .from('messages')
+                  .insert({
+                    sender_id: user.id,
+                    receiver_id: payment.from_user_id,
+                    text: `✅ Payment locked: UGX ${payment.amount.toLocaleString()}${payment.reason ? ` - ${payment.reason}` : ''}`,
+                    is_read: false,
+                  })
+                  .select()
+                  .single();
+
+                if (msgData) {
+                  setMessages(prev => {
+                    const newMsg = {
+                      ...msgData,
+                      payment: null,
+                      payment_request_id: null,
+                    };
+                    return [...prev, newMsg];
+                  });
+                }
+
+                if (selectedConversation?.id) {
+                  loadMessages(selectedConversation.id);
+                }
+
+                Alert.alert(
+                  '✅ Payment Locked',
+                  `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
+                  `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
+                );
+              } catch (error) {
+                console.error('Error processing payment:', error);
+                Alert.alert('Error', 'Failed to process payment');
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error:', error);
+      Alert.alert('Error', 'Failed to process payment');
+    }
+  }, [user?.id, selectedConversation, loadMessages]);
+
+  // --- Cancel Payment/Request (Sender cancels) ---
+  const handleCancelPayment = useCallback(async (payment: PaymentRequest) => {
+    Alert.alert(
+      'Cancel Payment',
+      `Are you sure you want to cancel this ${payment.is_request ? 'request' : 'payment'}?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await supabase
+                .from('payment_requests')
+                .update({ status: 'cancelled' })
+                .eq('id', payment.id);
+
+              const { data: msgData } = await supabase
+                .from('messages')
+                .insert({
+                  sender_id: user?.id,
+                  receiver_id: payment.is_request ? payment.to_user_id : payment.from_user_id,
+                  text: `❌ Payment ${payment.is_request ? 'request' : ''} cancelled`,
+                  is_read: false,
+                })
+                .select()
+                .single();
+
+              if (msgData) {
+                setMessages(prev => {
+                  const newMsg = {
+                    ...msgData,
+                    payment: null,
+                    payment_request_id: null,
+                  };
+                  return [...prev, newMsg];
+                });
+              }
+
+              if (selectedConversation?.id) {
+                loadMessages(selectedConversation.id);
+              }
+
+              Alert.alert('✅ Cancelled', 'Payment has been cancelled.');
+            } catch (error) {
+              console.error('Error cancelling payment:', error);
+              Alert.alert('Error', 'Failed to cancel payment.');
+            }
+          }
+        }
+      ]
+    );
+  }, [user?.id, selectedConversation, loadMessages]);
+
+  // --- Reject Payment/Request (Receiver rejects) ---
+  const handleRejectPayment = useCallback(async (payment: PaymentRequest) => {
+    Alert.alert(
+      'Reject Payment',
+      `Are you sure you want to reject this ${payment.is_request ? 'request' : 'payment'}?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Reject',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await supabase
+                .from('payment_requests')
+                .update({ status: 'cancelled' })
+                .eq('id', payment.id);
+
+              const { data: msgData } = await supabase
+                .from('messages')
+                .insert({
+                  sender_id: user?.id,
+                  receiver_id: payment.from_user_id,
+                  text: `❌ ${payment.is_request ? 'Payment request' : 'Payment'} rejected`,
+                  is_read: false,
+                })
+                .select()
+                .single();
+
+              if (msgData) {
+                setMessages(prev => {
+                  const newMsg = {
+                    ...msgData,
+                    payment: null,
+                    payment_request_id: null,
+                  };
+                  return [...prev, newMsg];
+                });
+              }
+
+              if (selectedConversation?.id) {
+                loadMessages(selectedConversation.id);
+              }
+
+              Alert.alert('✅ Rejected', 'Payment has been rejected.');
+            } catch (error) {
+              console.error('Error rejecting payment:', error);
+              Alert.alert('Error', 'Failed to reject payment.');
+            }
+          }
+        }
+      ]
+    );
+  }, [user?.id, selectedConversation, loadMessages]);
+
+  // --- Edit Payment Request (Sender edits) ---
+  const handleEditPayment = useCallback((payment: PaymentRequest) => {
+    setEditingPayment(payment);
+    setPaymentAmount(String(payment.amount));
+    setPaymentReason(payment.reason || '');
+    setPaymentIsRequest(true);
+    setShowPaymentModal(true);
+  }, []);
+
+  // --- Navigate to Pay Screen ---
+  const handleViewInPay = useCallback((payment: PaymentRequest) => {
+    navigation.navigate('Pay', {
+      pendingPaymentId: payment.id,
+    });
+    setShowChat(false);
+  }, [navigation]);
+
+  // ============================================================
+  // OTHER FUNCTIONS
+  // ============================================================
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current) return;
+
+    const receiverId = selectedConversation.id;
+    
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: user.id,
+          receiver_id: receiverId,
+          text: newMessage.trim(),
+          is_read: false,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error sending message:', error);
+        Alert.alert('Error', 'Failed to send message. Please try again.');
+        return;
+      }
+
+      if (data && isMounted.current) {
+        const newMsg = {
+          ...data,
+          payment: null,
+          payment_request_id: null,
+        };
+        setMessages(prev => [...prev, newMsg]);
+        setNewMessage('');
+        
+        setConversations(prev => {
+          const updated = prev.map(c => 
+            c.id === receiverId ? { ...c, lastMessage: data.text || 'No messages yet', time: 'Just now' } : c
+          );
+          return updated.sort((a, b) => {
+            const timeA = a.time === 'Just now' ? Date.now() : 0;
+            const timeB = b.time === 'Just now' ? Date.now() : 0;
+            return timeB - timeA;
+          });
+        });
+
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      Alert.alert('Error', 'Failed to send message.');
+    }
+  };
+
   const openDirectChatIfNeeded = useCallback((currentConversations?: Conversation[]) => {
     if (!directUserId || !user?.id || directUserId === user.id || hasOpenedDirectChat) {
       return;
     }
 
-    console.log(`🔍 Opening direct chat with: ${directUserId} (${directUserName})`);
-    
     const convos = currentConversations || conversations;
     const existingConvo = convos.find(c => c.id === directUserId);
     
@@ -397,229 +1417,8 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
         return [newConvo, ...prev];
       });
     }
-  }, [directUserId, directUserName, user?.id, hasOpenedDirectChat, conversations]);
+  }, [directUserId, directUserName, user?.id, hasOpenedDirectChat, conversations, loadMessages]);
 
-  // --- Load Messages for a Conversation ---
-  const loadMessages = useCallback(async (partnerId: string) => {
-    if (!user?.id || !partnerId || !isMounted.current) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
-        .order('created_at', { ascending: true })
-        .limit(100);
-
-      if (error) {
-        console.error('Error loading messages:', error);
-        return;
-      }
-
-      const filtered = data?.filter((m: any) => 
-        (m.sender_id === user.id && m.receiver_id === partnerId) || 
-        (m.sender_id === partnerId && m.receiver_id === user.id)
-      ) || [];
-
-      if (isMounted.current) {
-        setMessages(filtered.map((m: any) => ({
-          id: m.id,
-          from: m.sender_id === user.id ? 'me' : 'them',
-          text: m.text,
-          time: formatTime(m.created_at),
-          sender_id: m.sender_id,
-          receiver_id: m.receiver_id,
-          is_read: m.is_read,
-        })));
-      }
-
-      // Mark messages as read
-      await supabase
-        .from('messages')
-        .update({ is_read: true })
-        .eq('sender_id', partnerId)
-        .eq('receiver_id', user.id)
-        .eq('is_read', false);
-
-      // Update unread count in conversation list
-      setConversations(prev => 
-        prev.map(c => 
-          c.id === partnerId ? { ...c, unread: 0 } : c
-        )
-      );
-      setFilteredConversations(prev => 
-        prev.map(c => 
-          c.id === partnerId ? { ...c, unread: 0 } : c
-        )
-      );
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
-  }, [user?.id]);
-
-  // --- Send Message ---
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current) return;
-
-    const receiverId = selectedConversation.id;
-    
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .insert({
-          sender_id: user.id,
-          receiver_id: receiverId,
-          text: newMessage.trim(),
-          is_read: false,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error sending message:', error);
-        Alert.alert('Error', 'Failed to send message. Please try again.');
-        return;
-      }
-
-      if (data && isMounted.current) {
-        setMessages(prev => [...prev, {
-          id: data.id,
-          from: 'me',
-          text: data.text,
-          time: 'Just now',
-          sender_id: data.sender_id,
-          receiver_id: data.receiver_id,
-          is_read: data.is_read,
-        }]);
-
-        setNewMessage('');
-
-        const messageText = data.text || 'No messages yet';
-        const messageTime = formatTime(data.created_at);
-        
-        setConversations(prev => {
-          const updated = prev.map(c => 
-            c.id === receiverId 
-              ? { ...c, lastMessage: messageText, time: messageTime }
-              : c
-          );
-          return updated.sort((a, b) => {
-            const timeA = a.time === 'Just now' ? Date.now() : 0;
-            const timeB = b.time === 'Just now' ? Date.now() : 0;
-            return timeB - timeA;
-          });
-        });
-
-        setFilteredConversations(prev => {
-          const updated = prev.map(c => 
-            c.id === receiverId 
-              ? { ...c, lastMessage: messageText, time: messageTime }
-              : c
-          );
-          return updated.sort((a, b) => {
-            const timeA = a.time === 'Just now' ? Date.now() : 0;
-            const timeB = b.time === 'Just now' ? Date.now() : 0;
-            return timeB - timeA;
-          });
-        });
-
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      Alert.alert('Error', 'Failed to send message.');
-    }
-  };
-
-  // ============================================================
-  // ✅ FIXED: Setup Real-time Subscription - Only once
-  // ============================================================
-  useEffect(() => {
-    if (!user?.id || !isMounted.current) return;
-
-    // Create the channel
-    const channel = supabase.channel('messages-channel');
-
-    // ✅ Add all callbacks BEFORE subscribing
-    channel
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${user.id}`,
-      }, () => {
-        if (isMounted.current) {
-          loadConversations();
-        }
-      })
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `sender_id=eq.${user.id}`,
-      }, () => {
-        if (isMounted.current) {
-          const chatId = selectedConversation?.id;
-          if (chatId && typeof chatId === 'string') {
-            loadMessages(chatId);
-          }
-          loadConversations();
-        }
-      });
-
-    // ✅ Then subscribe
-    channel.subscribe((status) => {
-      console.log('📡 Subscription status:', status);
-    });
-
-    subscriptionRef.current = channel;
-
-    return () => {
-      if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
-        subscriptionRef.current = null;
-      }
-    };
-  }, [user?.id, selectedConversation, loadConversations, loadMessages]);
-
-  // --- Load data on mount ---
-  useEffect(() => {
-    isMounted.current = true;
-    loadConversations();
-
-    return () => {
-      isMounted.current = false;
-    };
-  }, [loadConversations]);
-
-  // --- Load messages when chat is selected ---
-  useEffect(() => {
-    if (selectedConversation && selectedConversation.id && isMounted.current) {
-      loadMessages(selectedConversation.id);
-    }
-  }, [selectedConversation, loadMessages]);
-
-  // --- Apply filters ---
-  useEffect(() => {
-    let filtered = [...conversations];
-
-    if (searchQuery) {
-      filtered = filtered.filter(c => 
-        c.name?.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    if (activeFilter === 'unread') {
-      filtered = filtered.filter(c => c.unread > 0);
-    }
-
-    setFilteredConversations(filtered);
-  }, [searchQuery, activeFilter, conversations]);
-
-  // --- Handle conversation press ---
   const handleConversationPress = (conversation: Conversation) => {
     setSelectedConversation(conversation);
     setShowChat(true);
@@ -628,527 +1427,86 @@ const DesktopInboxContent = ({ navigation, route }: any) => {
     }
   };
 
-  // --- Filter options ---
-  const filterOptions = [
-    { key: 'all', label: 'All' },
-    { key: 'unread', label: 'Unread' },
-  ];
+  // ============================================================
+  // PAYMENT MODAL - For new payments and editing
+  // ============================================================
 
-  if (!isAuthenticated) {
-    return (
-      <View style={styles.desktopContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
-        <GuestInboxView navigation={navigation} />
-      </View>
+  const handleSendPayment = useCallback(async () => {
+    if (!selectedConversation?.id || !user?.id) {
+      Alert.alert('Error', 'Please select a conversation');
+      return;
+    }
+
+    const amountNum = parseFloat(paymentAmount);
+    if (!amountNum || amountNum <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+
+    // If editing an existing payment
+    if (editingPayment) {
+      try {
+        await supabase
+          .from('payment_requests')
+          .update({
+            amount: amountNum,
+            reason: paymentReason || 'Payment Request',
+          })
+          .eq('id', editingPayment.id);
+
+        if (selectedConversation?.id) {
+          loadMessages(selectedConversation.id);
+        }
+
+        setShowPaymentModal(false);
+        setPaymentAmount('');
+        setPaymentReason('');
+        setEditingPayment(null);
+        Alert.alert('✅ Updated', 'Payment request has been updated.');
+        return;
+      } catch (error) {
+        console.error('Error updating payment:', error);
+        Alert.alert('Error', 'Failed to update payment request.');
+        return;
+      }
+    }
+
+    // New payment
+    const result = await createPayment(
+      amountNum,
+      paymentReason || (paymentIsRequest ? 'Payment Request' : 'Payment'),
+      paymentIsRequest,
+      selectedConversation.id
     );
-  }
 
-  return (
-    <View style={styles.desktopContainer}>
-      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+    if (result) {
+      setShowPaymentModal(false);
+      setPaymentAmount('');
+      setPaymentReason('');
+      setEditingPayment(null);
       
-      <View style={styles.desktopHeader}>
-        <Text style={styles.desktopHeaderTitle}>Inbox</Text>
-        <Text style={styles.desktopHeaderSubtitle}>Your conversations and updates</Text>
-      </View>
+      Alert.alert(
+        paymentIsRequest ? '💰 Payment Request Sent' : '💰 Payment Initiated',
+        paymentIsRequest
+          ? `UGX ${amountNum.toLocaleString()} payment request sent to ${selectedConversation.name}.`
+          : `UGX ${amountNum.toLocaleString()} has been locked from your wallet.`
+      );
 
-      <View style={styles.desktopGrid}>
-        {/* Left Column - Conversation List */}
-        <View style={styles.desktopLeftColumn}>
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <Ionicons name="search-outline" size={20} color="#8A8AAE" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search conversations..."
-              placeholderTextColor="#8A8AAE"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-          </View>
-
-          {/* Filter Chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterContainer}
-            contentContainerStyle={styles.filterContent}
-          >
-            {filterOptions.map((filter) => {
-              const count = filter.key === 'all'
-                ? conversations.filter(c => c.unread > 0).length
-                : filter.key === 'unread'
-                  ? conversations.filter(c => c.unread > 0).length
-                  : 0;
-
-              return (
-                <TouchableOpacity
-                  key={filter.key}
-                  style={[
-                    styles.filterChip,
-                    activeFilter === filter.key && styles.filterChipActive,
-                  ]}
-                  onPress={() => setActiveFilter(filter.key)}
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      activeFilter === filter.key && styles.filterChipTextActive,
-                    ]}
-                  >
-                    {filter.label}
-                  </Text>
-                  {count > 0 && (
-                    <View style={styles.filterBadge}>
-                      <Text style={styles.filterBadgeText}>{count}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* Conversations List */}
-          {loading ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <ActivityIndicator size="large" color="#4A7DFF" />
-              <Text style={{ color: '#8A8AAE', marginTop: 10 }}>Loading conversations...</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={filteredConversations}
-              renderItem={({ item }) => (
-                <ConversationCard
-                  item={item}
-                  onPress={handleConversationPress}
-                  onLongPress={(convo: Conversation) => {
-                    Alert.alert(
-                      convo.name,
-                      'Choose an action',
-                      [
-                        { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
-                        { text: 'Mute', onPress: () => console.log('Mute') },
-                        { text: 'Archive', onPress: () => console.log('Archive') },
-                        { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
-                        { text: 'Cancel', style: 'cancel' },
-                      ]
-                    );
-                  }}
-                />
-              )}
-              keyExtractor={(item) => item.id}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.conversationsList}
-              ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyIcon}>💬</Text>
-                  <Text style={styles.emptyTitle}>No conversations</Text>
-                  <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
-                </View>
-              }
-            />
-          )}
-        </View>
-
-        {/* Right Column - Chat View */}
-        <View style={styles.desktopRightColumn}>
-          {selectedConversation ? (
-            <View style={styles.desktopChatContainer}>
-              <View style={styles.chatHeader}>
-                <View style={styles.chatHeaderInfo}>
-                  <Text style={styles.chatHeaderTitle}>{selectedConversation.name}</Text>
-                  <Text style={styles.chatHeaderStatus}>Online</Text>
-                </View>
-                <View style={styles.chatHeaderRight}>
-                  <TouchableOpacity style={styles.chatHeaderIcon}>
-                    <Ionicons name="call-outline" size={20} color="#4A7DFF" />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.chatHeaderIcon}>
-                    <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <FlatList
-                ref={flatListRef}
-                data={messages}
-                keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
-                contentContainerStyle={styles.messagesList}
-                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-                renderItem={({ item }) => (
-                  <MessageBubble message={item} isMe={item.from === 'me'} />
-                )}
-                ListEmptyComponent={
-                  <View style={styles.emptyChatContainer}>
-                    <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
-                    <Text style={styles.emptyChatTitle}>No messages yet</Text>
-                    <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
-                  </View>
-                }
-              />
-
-              <AISuggestions onPress={(suggestion: string) => {
-                setNewMessage(suggestion);
-                setTimeout(() => handleSendMessage(), 100);
-              }} />
-
-              <View style={styles.chatInputContainer}>
-                <TouchableOpacity style={styles.attachButton}>
-                  <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
-                </TouchableOpacity>
-                <TextInput
-                  style={styles.chatInput}
-                  placeholder="Type a message..."
-                  placeholderTextColor="#8A8AAE"
-                  value={newMessage}
-                  onChangeText={setNewMessage}
-                  multiline
-                />
-                <TouchableOpacity style={styles.aiChatButton}>
-                  <Ionicons name="sparkles" size={20} color="#4A7DFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-                  onPress={handleSendMessage}
-                  disabled={!newMessage.trim()}
-                >
-                  <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.desktopEmptyChat}>
-              <Text style={styles.desktopEmptyChatIcon}>💬</Text>
-              <Text style={styles.desktopEmptyChatTitle}>Select a conversation</Text>
-              <Text style={styles.desktopEmptyChatSubtext}>Choose a conversation from the list to start chatting</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </View>
-  );
-};
-
-// --- Mobile Inbox Content ---
-const MobileInboxContent = ({ navigation, route }: any) => {
-  const { isAuthenticated, user } = useAuth();
-  
-  const routeParams = route?.params || {};
-  const directUserId = routeParams.userId || null;
-  const directUserName = routeParams.userName || null;
-  const directShopId = routeParams.shopId || null;
-  
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [showChat, setShowChat] = useState(false);
-  const [newMessage, setNewMessage] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showSearch, setShowSearch] = useState(false);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
-  const [hasOpenedDirectChat, setHasOpenedDirectChat] = useState(false);
-  
-  const flatListRef = useRef<FlatList>(null);
-  const subscriptionRef = useRef<any>(null);
-  const isMounted = useRef(true);
-
-  // --- Load Conversations ---
-  const loadConversations = useCallback(async () => {
-    if (!user?.id || !isMounted.current) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const { data: allMessages, error: msgError } = await supabase
-        .from('messages')
-        .select('*')
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (msgError) {
-        console.error('Error loading messages:', msgError);
-        setLoading(false);
-        return;
-      }
-
-      if (!allMessages || allMessages.length === 0) {
-        setLoading(false);
-        setConversations([]);
-        setFilteredConversations([]);
-        openDirectChatIfNeeded([]);
-        return;
-      }
-
-      const convoMap = new Map();
-      allMessages.forEach((msg: any) => {
-        const partnerId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
-        if (!convoMap.has(partnerId)) {
-          convoMap.set(partnerId, {
-            partnerId,
-            lastMessage: msg.text || '',
-            lastMessageTime: msg.created_at,
-            unreadCount: msg.receiver_id === user.id && !msg.is_read ? 1 : 0,
-          });
-        } else {
-          const existing = convoMap.get(partnerId);
-          if (msg.receiver_id === user.id && !msg.is_read) {
-            existing.unreadCount++;
-          }
-        }
-      });
-
-      const partnerIds = [...convoMap.keys()];
-      let partnerMap: Record<string, string> = {};
-
-      if (partnerIds.length > 0) {
-        const { data: users } = await supabase
-          .from('users')
-          .select('id, full_name')
-          .in('id', partnerIds);
-        
-        if (users) {
-          users.forEach((u: any) => { 
-            partnerMap[u.id] = u.full_name || 'User'; 
-          });
-        }
-
-        const { data: shops } = await supabase
-          .from('shops')
-          .select('id, name, owner_id')
-          .in('owner_id', partnerIds);
-        
-        if (shops) {
-          shops.forEach((s: any) => {
-            if (!partnerMap[s.owner_id] || partnerMap[s.owner_id] === 'User') {
-              partnerMap[s.owner_id] = s.name;
-            }
-          });
-        }
-      }
-
-      const convos: Conversation[] = [];
-      convoMap.forEach((convo: any, partnerId: string) => {
-        const name = partnerMap[partnerId] || 'Unknown User';
-        convos.push({
-          id: partnerId,
-          name: name,
-          lastMessage: convo.lastMessage || 'No messages yet',
-          time: formatTime(convo.lastMessageTime),
-          unread: convo.unreadCount,
-          online: false,
-          avatar: name.charAt(0).toUpperCase(),
-          type: 'chat',
-          isVerified: false,
-        });
-      });
-
-      convos.sort((a, b) => {
-        const timeA = convoMap.get(a.id)?.lastMessageTime || '';
-        const timeB = convoMap.get(b.id)?.lastMessageTime || '';
-        return timeB.localeCompare(timeA);
-      });
-
-      if (isMounted.current) {
-        setConversations(convos);
-        setFilteredConversations(convos);
-        setLoading(false);
-        openDirectChatIfNeeded(convos);
-      }
-    } catch (error) {
-      console.error('Error loading conversations:', error);
-      if (isMounted.current) {
-        setLoading(false);
+      if (selectedConversation?.id) {
+        loadMessages(selectedConversation.id);
       }
     }
-  }, [user?.id]);
-
-  // --- Open Direct Chat ---
-  const openDirectChatIfNeeded = useCallback((currentConversations?: Conversation[]) => {
-    if (!directUserId || !user?.id || directUserId === user.id || hasOpenedDirectChat) {
-      return;
-    }
-
-    console.log(`🔍 Opening direct chat with: ${directUserId} (${directUserName})`);
-    
-    const convos = currentConversations || conversations;
-    const existingConvo = convos.find(c => c.id === directUserId);
-    
-    if (existingConvo) {
-      setSelectedConversation(existingConvo);
-      setShowChat(true);
-      setHasOpenedDirectChat(true);
-      loadMessages(directUserId);
-    } else {
-      const newConvo: Conversation = {
-        id: directUserId,
-        name: directUserName || 'User',
-        lastMessage: 'Start chatting...',
-        time: 'Just now',
-        unread: 0,
-        online: false,
-        avatar: directUserName?.charAt(0).toUpperCase() || 'U',
-        type: 'chat',
-        isVerified: false,
-      };
-      
-      setConversations(prev => {
-        const exists = prev.find(c => c.id === directUserId);
-        if (exists) {
-          setSelectedConversation(exists);
-          setShowChat(true);
-          setHasOpenedDirectChat(true);
-          return prev;
-        }
-        setSelectedConversation(newConvo);
-        setShowChat(true);
-        setHasOpenedDirectChat(true);
-        return [newConvo, ...prev];
-      });
-      
-      setFilteredConversations(prev => {
-        const exists = prev.find(c => c.id === directUserId);
-        if (exists) return prev;
-        return [newConvo, ...prev];
-      });
-    }
-  }, [directUserId, directUserName, user?.id, hasOpenedDirectChat, conversations]);
-
-  // --- Load Messages for a Conversation ---
-  const loadMessages = useCallback(async (partnerId: string) => {
-    if (!user?.id || !partnerId || !isMounted.current) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*')
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
-        .order('created_at', { ascending: true })
-        .limit(100);
-
-      if (error) {
-        console.error('Error loading messages:', error);
-        return;
-      }
-
-      const filtered = data?.filter((m: any) => 
-        (m.sender_id === user.id && m.receiver_id === partnerId) || 
-        (m.sender_id === partnerId && m.receiver_id === user.id)
-      ) || [];
-
-      if (isMounted.current) {
-        setMessages(filtered.map((m: any) => ({
-          id: m.id,
-          from: m.sender_id === user.id ? 'me' : 'them',
-          text: m.text,
-          time: formatTime(m.created_at),
-          sender_id: m.sender_id,
-          receiver_id: m.receiver_id,
-          is_read: m.is_read,
-        })));
-      }
-
-      await supabase
-        .from('messages')
-        .update({ is_read: true })
-        .eq('sender_id', partnerId)
-        .eq('receiver_id', user.id)
-        .eq('is_read', false);
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
-  }, [user?.id]);
-
-  // --- Send Message ---
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current) return;
-
-    const receiverId = selectedConversation.id;
-    
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .insert({
-          sender_id: user.id,
-          receiver_id: receiverId,
-          text: newMessage.trim(),
-          is_read: false,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error sending message:', error);
-        Alert.alert('Error', 'Failed to send message. Please try again.');
-        return;
-      }
-
-      if (data && isMounted.current) {
-        setMessages(prev => [...prev, {
-          id: data.id,
-          from: 'me',
-          text: data.text,
-          time: 'Just now',
-          sender_id: data.sender_id,
-          receiver_id: data.receiver_id,
-          is_read: data.is_read,
-        }]);
-
-        setNewMessage('');
-
-        const messageText = data.text || 'No messages yet';
-        const messageTime = formatTime(data.created_at);
-        
-        setConversations(prev => {
-          const updated = prev.map(c => 
-            c.id === receiverId 
-              ? { ...c, lastMessage: messageText, time: messageTime }
-              : c
-          );
-          return updated.sort((a, b) => {
-            const timeA = a.time === 'Just now' ? Date.now() : 0;
-            const timeB = b.time === 'Just now' ? Date.now() : 0;
-            return timeB - timeA;
-          });
-        });
-
-        setFilteredConversations(prev => {
-          const updated = prev.map(c => 
-            c.id === receiverId 
-              ? { ...c, lastMessage: messageText, time: messageTime }
-              : c
-          );
-          return updated.sort((a, b) => {
-            const timeA = a.time === 'Just now' ? Date.now() : 0;
-            const timeB = b.time === 'Just now' ? Date.now() : 0;
-            return timeB - timeA;
-          });
-        });
-
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      Alert.alert('Error', 'Failed to send message.');
-    }
-  };
+  }, [selectedConversation, user?.id, paymentAmount, paymentReason, paymentIsRequest, editingPayment, createPayment, loadMessages]);
 
   // ============================================================
-  // ✅ FIXED: Setup Real-time Subscription - Only once
+  // REAL-TIME SUBSCRIPTION
   // ============================================================
+
   useEffect(() => {
     if (!user?.id || !isMounted.current) return;
 
-    // Create the channel
     const channel = supabase.channel('messages-channel');
 
-    // ✅ Add all callbacks BEFORE subscribing
     channel
       .on('postgres_changes', {
         event: 'INSERT',
@@ -1158,6 +1516,9 @@ const MobileInboxContent = ({ navigation, route }: any) => {
       }, () => {
         if (isMounted.current) {
           loadConversations();
+          if (selectedConversation?.id) {
+            loadMessages(selectedConversation.id);
+          }
         }
       })
       .on('postgres_changes', {
@@ -1173,12 +1534,19 @@ const MobileInboxContent = ({ navigation, route }: any) => {
           }
           loadConversations();
         }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'payment_requests',
+      }, () => {
+        if (isMounted.current && selectedConversation?.id) {
+          loadMessages(selectedConversation.id);
+          loadConversations();
+        }
       });
 
-    // ✅ Then subscribe
-    channel.subscribe((status) => {
-      console.log('📡 Subscription status:', status);
-    });
+    channel.subscribe();
 
     subscriptionRef.current = channel;
 
@@ -1190,7 +1558,10 @@ const MobileInboxContent = ({ navigation, route }: any) => {
     };
   }, [user?.id, selectedConversation, loadConversations, loadMessages]);
 
-  // --- Load data on mount ---
+  // ============================================================
+  // EFFECTS
+  // ============================================================
+
   useEffect(() => {
     isMounted.current = true;
     loadConversations();
@@ -1200,20 +1571,19 @@ const MobileInboxContent = ({ navigation, route }: any) => {
     };
   }, [loadConversations]);
 
-  // --- Load messages when chat is selected ---
   useEffect(() => {
     if (selectedConversation && selectedConversation.id && isMounted.current) {
       loadMessages(selectedConversation.id);
     }
   }, [selectedConversation, loadMessages]);
 
-  // --- Apply filters ---
   useEffect(() => {
     let filtered = [...conversations];
 
     if (searchQuery) {
       filtered = filtered.filter(c => 
-        c.name?.toLowerCase().includes(searchQuery.toLowerCase())
+        c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.lastMessage?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
@@ -1224,21 +1594,366 @@ const MobileInboxContent = ({ navigation, route }: any) => {
     setFilteredConversations(filtered);
   }, [searchQuery, activeFilter, conversations]);
 
-  // --- Filter options ---
-  const filterOptions = [
-    { key: 'all', label: 'All' },
-    { key: 'unread', label: 'Unread' },
-  ];
+  // ============================================================
+  // RENDER FUNCTIONS
+  // ============================================================
+
+  const renderChatView = () => {
+    if (!selectedConversation) return null;
+
+    return (
+      <View style={isDesktop ? styles.desktopChatContainer : styles.chatContainerFull}>
+        <View style={styles.chatHeader}>
+          <TouchableOpacity onPress={() => {
+            setShowChat(false);
+            setSelectedConversation(null);
+            setMessages([]);
+            loadConversations();
+          }}>
+            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={styles.chatHeaderInfo}>
+            <Text style={styles.chatHeaderTitle}>{selectedConversation.name}</Text>
+            <Text style={styles.chatHeaderStatus}>Online</Text>
+          </View>
+          <TouchableOpacity style={styles.chatHeaderIcon}>
+            <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
+          </TouchableOpacity>
+        </View>
+
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+          contentContainerStyle={styles.messagesList}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          renderItem={({ item }) => (
+            <MessageBubble 
+              message={item} 
+              isMe={item.sender_id === user?.id}
+              currentUserId={user?.id}
+              onPaymentAccept={handleAcceptPayment}
+              onPaymentPay={handlePayNow}
+              onPaymentCancel={handleCancelPayment}
+              onPaymentEdit={handleEditPayment}
+              onPaymentReject={handleRejectPayment}
+              onPaymentView={handleViewInPay}
+            />
+          )}
+          ListEmptyComponent={
+            <View style={styles.emptyChatContainer}>
+              <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
+              <Text style={styles.emptyChatTitle}>No messages yet</Text>
+              <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
+            </View>
+          }
+        />
+
+        <View style={styles.chatInputContainer}>
+          <View style={styles.chatInputRow}>
+            <TouchableOpacity style={styles.attachButton}>
+              <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
+            </TouchableOpacity>
+
+            <TextInput
+              style={styles.chatInput}
+              placeholder="Type a message..."
+              placeholderTextColor="#8A8AAE"
+              value={newMessage}
+              onChangeText={setNewMessage}
+              multiline
+            />
+
+            <TouchableOpacity
+              style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+              onPress={sendMessage}
+              disabled={!newMessage.trim()}
+            >
+              <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.paymentButtonsRow}>
+            <TouchableOpacity 
+              style={styles.paymentChatButton}
+              onPress={() => {
+                setPaymentIsRequest(false);
+                setPaymentAmount('');
+                setPaymentReason('');
+                setEditingPayment(null);
+                setShowPaymentModal(true);
+              }}
+              activeOpacity={0.7}
+            >
+              <LinearGradient
+                colors={['#4A7DFF', '#6B94FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.paymentChatGradient}
+              >
+                <Ionicons name="send-outline" size={14} color="#FFFFFF" />
+                <Text style={styles.paymentChatButtonText}>Pay Now</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.paymentChatButton, styles.requestPaymentChatButton]}
+              onPress={() => {
+                setPaymentIsRequest(true);
+                setPaymentAmount('');
+                setPaymentReason('');
+                setEditingPayment(null);
+                setShowPaymentModal(true);
+              }}
+              activeOpacity={0.7}
+            >
+              <LinearGradient
+                colors={['#F1C40F', '#F39C12']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.paymentChatGradient}
+              >
+                <Ionicons name="cash-outline" size={14} color="#FFFFFF" />
+                <Text style={styles.paymentChatButtonText}>Request</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  const renderPaymentModal = () => (
+    <Modal
+      visible={showPaymentModal}
+      transparent
+      animationType="slide"
+      onRequestClose={() => {
+        setShowPaymentModal(false);
+        setPaymentAmount('');
+        setPaymentReason('');
+        setEditingPayment(null);
+      }}
+    >
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity 
+          style={styles.modalBackdrop} 
+          activeOpacity={1}
+          onPress={() => {
+            setShowPaymentModal(false);
+            setPaymentAmount('');
+            setPaymentReason('');
+            setEditingPayment(null);
+          }}
+        />
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {editingPayment ? 'Edit Payment Request' : paymentIsRequest ? 'Request Payment' : 'Pay Now'}
+            </Text>
+            <TouchableOpacity onPress={() => {
+              setShowPaymentModal(false);
+              setPaymentAmount('');
+              setPaymentReason('');
+              setEditingPayment(null);
+            }}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modalBody}>
+            <Text style={styles.modalLabel}>Amount (UGX) *</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Enter amount"
+              placeholderTextColor="#6A7A9E"
+              keyboardType="numeric"
+              value={paymentAmount}
+              onChangeText={setPaymentAmount}
+            />
+
+            <Text style={styles.modalLabel}>Reason (Optional)</Text>
+            <TextInput
+              style={[styles.modalInput, styles.modalTextArea]}
+              placeholder="What is this for?"
+              placeholderTextColor="#6A7A9E"
+              multiline
+              numberOfLines={3}
+              value={paymentReason}
+              onChangeText={setPaymentReason}
+            />
+
+            <Text style={styles.modalHelperText}>
+              {editingPayment 
+                ? `✏️ Editing payment request to ${selectedConversation?.name}`
+                : paymentIsRequest 
+                  ? `💰 You are requesting payment from ${selectedConversation?.name}`
+                  : `💳 You are sending payment to ${selectedConversation?.name}`
+              }
+              {'\n\n'}⚠️ Funds will be locked when the recipient accepts.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.modalSendButton}
+              onPress={handleSendPayment}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={editingPayment ? ['#F39C12', '#E67E22'] : paymentIsRequest ? ['#F1C40F', '#F39C12'] : ['#4A7DFF', '#6B94FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.modalSendGradient}
+              >
+                <Ionicons 
+                  name={editingPayment ? 'pencil-outline' : paymentIsRequest ? 'cash-outline' : 'send-outline'} 
+                  size={20} 
+                  color="#FFFFFF" 
+                />
+                <Text style={styles.modalSendText}>
+                  {editingPayment ? 'Update Request' : paymentIsRequest ? 'Send Request' : 'Send Payment'}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
 
   if (!isAuthenticated) {
     return <GuestInboxView navigation={navigation} />;
   }
 
-  return (
-  <SafeAreaView style={styles.mobileContainer} edges={['top']}>
-          <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+  if (isDesktop) {
+    return (
+      <View style={styles.desktopContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+        
+        <View style={styles.desktopHeader}>
+          <Text style={styles.desktopHeaderTitle}>Inbox</Text>
+          <Text style={styles.desktopHeaderSubtitle}>Your conversations and updates</Text>
+        </View>
 
-      {/* Header */}
+        <View style={styles.desktopGrid}>
+          <View style={styles.desktopLeftColumn}>
+            <View style={styles.searchContainer}>
+              <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search conversations..."
+                placeholderTextColor="#8A8AAE"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterContainer}
+              contentContainerStyle={styles.filterContent}
+            >
+              {[
+                { key: 'all', label: 'All' },
+                { key: 'unread', label: 'Unread' },
+              ].map((filter) => {
+                const count = filter.key === 'all'
+                  ? conversations.filter(c => c.unread > 0).length
+                  : conversations.filter(c => c.unread > 0).length;
+
+                return (
+                  <TouchableOpacity
+                    key={filter.key}
+                    style={[
+                      styles.filterChip,
+                      activeFilter === filter.key && styles.filterChipActive,
+                    ]}
+                    onPress={() => setActiveFilter(filter.key)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        activeFilter === filter.key && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {filter.label}
+                    </Text>
+                    {count > 0 && (
+                      <View style={styles.filterBadge}>
+                        <Text style={styles.filterBadgeText}>{count}</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {loading ? (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#4A7DFF" />
+                <Text style={{ color: '#8A8AAE', marginTop: 10 }}>Loading conversations...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredConversations}
+                renderItem={({ item }) => (
+                  <ConversationCard
+                    item={item}
+                    onPress={handleConversationPress}
+                    onLongPress={(convo: Conversation) => {
+                      Alert.alert(
+                        convo.name,
+                        'Choose an action',
+                        [
+                          { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
+                          { text: 'Mute', onPress: () => console.log('Mute') },
+                          { text: 'Archive', onPress: () => console.log('Archive') },
+                          { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
+                          { text: 'Cancel', style: 'cancel' },
+                        ]
+                      );
+                    }}
+                  />
+                )}
+                keyExtractor={(item) => item.id}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.conversationsList}
+                ListEmptyComponent={
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyIcon}>💬</Text>
+                    <Text style={styles.emptyTitle}>No conversations</Text>
+                    <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
+                  </View>
+                }
+              />
+            )}
+          </View>
+
+          <View style={styles.desktopRightColumn}>
+            {selectedConversation ? renderChatView() : (
+              <View style={styles.desktopEmptyChat}>
+                <Text style={styles.desktopEmptyChatIcon}>💬</Text>
+                <Text style={styles.desktopEmptyChatTitle}>Select a conversation</Text>
+                <Text style={styles.desktopEmptyChatSubtext}>Choose a conversation from the list to start chatting</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {renderPaymentModal()}
+      </View>
+    );
+  }
+
+  // Mobile View
+  return (
+    <SafeAreaView style={styles.mobileContainer} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+
       <View style={styles.mobileHeader}>
         <Text style={styles.mobileHeaderTitle}>Inbox</Text>
         <View style={styles.headerRight}>
@@ -1251,7 +1966,6 @@ const MobileInboxContent = ({ navigation, route }: any) => {
         </View>
       </View>
 
-      {/* Search Bar */}
       {showSearch && (
         <View style={styles.searchContainer}>
           <Ionicons name="search-outline" size={20} color="#8A8AAE" />
@@ -1269,19 +1983,19 @@ const MobileInboxContent = ({ navigation, route }: any) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Filter Chips */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.filterContainer}
           contentContainerStyle={styles.filterContent}
         >
-          {filterOptions.map((filter) => {
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'unread', label: 'Unread' },
+          ].map((filter) => {
             const count = filter.key === 'all'
               ? conversations.filter(c => c.unread > 0).length
-              : filter.key === 'unread'
-                ? conversations.filter(c => c.unread > 0).length
-                : 0;
+              : conversations.filter(c => c.unread > 0).length;
 
             return (
               <TouchableOpacity
@@ -1310,7 +2024,6 @@ const MobileInboxContent = ({ navigation, route }: any) => {
           })}
         </ScrollView>
 
-        {/* Conversations List */}
         {loading ? (
           <View style={{ paddingVertical: 40, alignItems: 'center' }}>
             <ActivityIndicator size="large" color="#4A7DFF" />
@@ -1328,13 +2041,7 @@ const MobileInboxContent = ({ navigation, route }: any) => {
             renderItem={({ item }) => (
               <ConversationCard
                 item={item}
-                onPress={(convo: Conversation) => {
-                  setSelectedConversation(convo);
-                  setShowChat(true);
-                  if (convo.id) {
-                    loadMessages(convo.id);
-                  }
-                }}
+                onPress={handleConversationPress}
                 onLongPress={(convo: Conversation) => {
                   Alert.alert(
                     convo.name,
@@ -1359,7 +2066,6 @@ const MobileInboxContent = ({ navigation, route }: any) => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* Chat Modal */}
       <Modal
         visible={showChat}
         animationType="slide"
@@ -1368,91 +2074,23 @@ const MobileInboxContent = ({ navigation, route }: any) => {
           setShowChat(false);
           setSelectedConversation(null);
           setMessages([]);
+          loadConversations();
         }}
       >
         <SafeAreaView style={styles.chatContainer}>
-          {/* Chat Header */}
-          <View style={styles.chatHeader}>
-            <TouchableOpacity onPress={() => {
-              setShowChat(false);
-              setSelectedConversation(null);
-              setMessages([]);
-              loadConversations();
-            }}>
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <View style={styles.chatHeaderInfo}>
-              <Text style={styles.chatHeaderTitle}>{selectedConversation?.name || 'Chat'}</Text>
-              <Text style={styles.chatHeaderStatus}>Online</Text>
-            </View>
-            <View style={styles.chatHeaderRight}>
-              <TouchableOpacity style={styles.chatHeaderIcon}>
-                <Ionicons name="call-outline" size={20} color="#4A7DFF" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.chatHeaderIcon}>
-                <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.encryptBanner}>
-            <Ionicons name="lock-closed" size={14} color="#F57C00" />
-            <Text style={styles.encryptText}>Messages are end-to-end encrypted</Text>
-          </View>
-
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
-            contentContainerStyle={styles.messagesList}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-            renderItem={({ item }) => (
-              <MessageBubble message={item} isMe={item.from === 'me'} />
-            )}
-            ListEmptyComponent={
-              <View style={styles.emptyChatContainer}>
-                <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
-                <Text style={styles.emptyChatTitle}>No messages yet</Text>
-                <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
-              </View>
-            }
-          />
-
-          <AISuggestions onPress={(suggestion: string) => {
-            setNewMessage(suggestion);
-            setTimeout(handleSendMessage, 100);
-          }} />
-
-          <View style={styles.chatInputContainer}>
-            <TouchableOpacity style={styles.attachButton}>
-              <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
-            </TouchableOpacity>
-            <TextInput
-              style={styles.chatInput}
-              placeholder="Type a message..."
-              placeholderTextColor="#8A8AAE"
-              value={newMessage}
-              onChangeText={setNewMessage}
-              multiline
-            />
-            <TouchableOpacity style={styles.aiChatButton}>
-              <Ionicons name="sparkles" size={20} color="#4A7DFF" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-              onPress={handleSendMessage}
-              disabled={!newMessage.trim()}
-            >
-              <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
-            </TouchableOpacity>
-          </View>
+          {renderChatView()}
         </SafeAreaView>
       </Modal>
+
+      {renderPaymentModal()}
     </SafeAreaView>
   );
 };
 
-// --- Main InboxScreen Component ---
+// ============================================================
+// EXPORT
+// ============================================================
+
 export const InboxScreen = ({ navigation, route }: any) => {
   const { isDesktop } = useBreakpoint();
 
@@ -1464,11 +2102,7 @@ export const InboxScreen = ({ navigation, route }: any) => {
       hideContextPanel={true}
       fullWidth={true}
     >
-      {isDesktop ? (
-        <DesktopInboxContent navigation={navigation} route={route} />
-      ) : (
-        <MobileInboxContent navigation={navigation} route={route} />
-      )}
+      <InboxContent navigation={navigation} route={route} isDesktop={isDesktop} />
     </ResponsiveLayout>
   );
 };
@@ -1476,10 +2110,31 @@ export const InboxScreen = ({ navigation, route }: any) => {
 // ============================================================
 // STYLES
 // ============================================================
+
 const styles = StyleSheet.create({
-  // ============================================================
-  // DESKTOP STYLES - DARK THEME
-  // ============================================================
+  // Mobile Container
+  mobileContainer: {
+    flex: 1,
+    backgroundColor: '#1F2F5F',
+  },
+  mobileHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(31, 47, 95, 0.9)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  mobileHeaderTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+
+  // Desktop Container
   desktopContainer: {
     flex: 1,
     backgroundColor: '#1A2A4F',
@@ -1549,33 +2204,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ============================================================
-  // MOBILE STYLES - DARK THEME
-  // ============================================================
-  mobileContainer: {
-    flex: 1,
-    backgroundColor: '#1F2F5F',
-  },
-  mobileHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    backgroundColor: 'rgba(31, 47, 95, 0.9)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  mobileHeaderTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-
-  // ============================================================
-  // SHARED STYLES - DARK THEME
-  // ============================================================
+  // Shared Styles
   headerRight: {
     flexDirection: 'row',
     gap: 8,
@@ -1607,6 +2236,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingBottom: 40,
+  },
+  bottomSpacer: {
+    height: 20,
   },
 
   // Guest Mode
@@ -1744,25 +2376,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
   },
   avatarText: {
     color: '#4A7DFF',
     fontSize: 18,
-    fontWeight: 'bold',
-  },
-  avatarTextSystem: {
-    color: '#FFFFFF',
-  },
-  aiAvatarGradient: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  aiAvatarText: {
-    color: '#FFFFFF',
-    fontSize: 14,
     fontWeight: 'bold',
   },
   unreadBadge: {
@@ -1790,26 +2408,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  conversationTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
   conversationTitle: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
-  },
-  verifiedBadge: {
-    backgroundColor: '#4A7DFF',
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-  },
-  verifiedBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 7,
-    fontWeight: 'bold',
   },
   conversationTime: {
     color: '#8A8AAE',
@@ -1830,29 +2432,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '500',
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    gap: 4,
-  },
-  statusDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-  },
-  statusText: {
-    fontSize: 9,
-    fontWeight: '500',
-  },
-  bottomSpacer: {
-    height: 20,
-  },
 
   // Chat View
   chatContainer: {
+    flex: 1,
+    backgroundColor: '#1A2A4F',
+  },
+  chatContainerFull: {
     flex: 1,
     backgroundColor: '#1A2A4F',
   },
@@ -1879,27 +2465,10 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 12,
   },
-  chatHeaderRight: {
-    flexDirection: 'row',
-    gap: 8,
-  },
   chatHeaderIcon: {
     padding: 6,
     borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  encryptBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFF8E1',
-    paddingVertical: 8,
-    gap: 6,
-  },
-  encryptText: {
-    fontSize: 11,
-    color: '#F57C00',
-    fontWeight: '500',
   },
   messagesList: {
     paddingHorizontal: 16,
@@ -1967,6 +2536,193 @@ const styles = StyleSheet.create({
   messageTimeThem: {
     color: '#8A8AAE',
   },
+
+  // Payment Card
+  paymentCard: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 12,
+    marginVertical: 4,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4A7DFF',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    maxWidth: '85%',
+  },
+  paymentCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    flexWrap: 'wrap',
+  },
+  paymentCardIcon: {
+    fontSize: 16,
+    marginRight: 6,
+  },
+  paymentCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  paymentCardStatus: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 4,
+  },
+  paymentCardStatusText: {
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  paymentCardBody: {
+    marginBottom: 8,
+  },
+  paymentCardAmount: {
+    color: '#4A7DFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  paymentCardReason: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  paymentCardUser: {
+    color: '#8A8AAE',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  paymentCardDate: {
+    color: '#6A7A9E',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  paymentCardActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  paymentCardButton: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    flex: 1,
+    minWidth: '45%',
+  },
+  paymentCardButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 4,
+  },
+  paymentCardButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  paymentCardAccept: {
+    flex: 1,
+  },
+  paymentCardPay: {
+    flex: 1,
+  },
+  paymentCardCancel: {
+    flex: 1,
+  },
+  paymentCardEdit: {
+    flex: 1,
+  },
+  paymentCardReject: {
+    flex: 1,
+  },
+  paymentCardConfirm: {
+    flex: 1,
+  },
+  paymentCardView: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  paymentCardViewText: {
+    color: '#4A7DFF',
+    fontSize: 11,
+    fontWeight: '500',
+    marginRight: 4,
+  },
+
+  // Chat Input
+  chatInputContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  chatInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  paymentButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 6,
+    width: '100%',
+  },
+  attachButton: {
+    padding: 4,
+  },
+  chatInput: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    color: '#FFFFFF',
+    fontSize: 14,
+    maxHeight: 80,
+    minHeight: 36,
+  },
+  paymentChatButton: {
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  requestPaymentChatButton: {
+    marginLeft: 0,
+  },
+  paymentChatGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  paymentChatButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  sendButton: {
+    backgroundColor: '#4A7DFF',
+    padding: 8,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+
   emptyChatContainer: {
     alignItems: 'center',
     paddingVertical: 60,
@@ -1982,69 +2738,79 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
   },
 
-  // AI Suggestions
-  aiSuggestions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 6,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-    backgroundColor: 'rgba(255,255,255,0.02)',
-  },
-  aiSuggestionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(74, 125, 255, 0.1)',
-  },
-  aiSuggestionText: {
-    color: '#4A7DFF',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-
-  // Chat Input
-  chatInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-    gap: 8,
-  },
-  attachButton: {
-    padding: 4,
-  },
-  chatInput: {
+  // Payment Modal
+  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#1A1A2E',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: height * 0.8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  modalBody: {
+    paddingTop: 16,
+  },
+  modalLabel: {
     color: '#FFFFFF',
     fontSize: 14,
-    maxHeight: 80,
+    fontWeight: '500',
+    marginBottom: 6,
   },
-  aiChatButton: {
-    padding: 4,
-  },
-  sendButton: {
-    backgroundColor: '#4A7DFF',
-    padding: 8,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
+  modalInput: {
     backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#FFFFFF',
+    fontSize: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    marginBottom: 16,
+  },
+  modalTextArea: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+  modalHelperText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginBottom: 16,
+  },
+  modalSendButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  modalSendGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    gap: 8,
+  },
+  modalSendText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

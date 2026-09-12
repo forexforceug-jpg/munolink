@@ -15,7 +15,6 @@ import {
   Alert,
   RefreshControl,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,27 +25,68 @@ import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { supabase } from '../../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 
-const supabaseAny = supabase as any;
 const { width, height } = Dimensions.get('window');
+const supabaseAny = supabase as any;
 
-// --- Types ---
+// ============================================================
+// TYPES
+// ============================================================
+
+interface PaymentRequest {
+  id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount: number;
+  reason: string | null;
+  status: 'pending' | 'accepted' | 'locked' | 'completed' | 'cancelled' | 'disputed';
+  is_request: boolean;
+  transaction_id: string | null;
+  message_id: string | null;
+  created_at: string;
+  accepted_at: string | null;
+  locked_at: string | null;
+  completed_at: string | null;
+  from_user?: {
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  };
+  to_user?: {
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  };
+}
+
 interface Transaction {
   id: string;
   type: 'payment' | 'topup' | 'refund' | 'withdrawal' | 'transfer';
   merchant: string;
   amount: number;
   date: string;
-  status: 'completed' | 'pending' | 'failed';
+  status: 'pending' | 'locked' | 'completed' | 'disputed' | 'cancelled' | 'refunded';
   method: string;
   reference?: string;
-  shop_id?: string;
+  user_id?: string;
+  buyer_id?: string;
+  seller_id?: string;
+  locked_amount?: number;
+  confirmed_at?: string;
+  disputed_at?: string;
+  dispute_reason?: string;
+  released_at?: string;
+  admin_confirmed_at?: string;
+  // For payment requests
+  payment_request_id?: string;
+  is_request?: boolean;
+  reason?: string;
 }
 
 interface PaymentMethod {
   id: string;
   name: string;
   icon: string;
-  type: 'mobile_money' | 'card' | 'bank';
+  type: 'mobile_money' | 'card' | 'bank' | 'wallet';
   default: boolean;
   details?: {
     phone?: string;
@@ -56,259 +96,30 @@ interface PaymentMethod {
   };
 }
 
-interface CartItem {
-  id: string;
-  title: string;
-  price: number;
-  quantity: number;
-  image?: string;
-  shop_id: string;
-  shop_name: string;
-  provider?: string;
-  variation?: string;
-  delivery?: string;
-  catalog_id?: string;
-  interaction_id?: string;
-  item_type?: 'product' | 'service';
-}
-
-interface Booking {
-  id: string;
-  service: string;
-  provider: string;
-  provider_id: string;
-  date: string;
-  time: string;
-  status: string;
-  location: string;
-  image: string;
-  providerAvatar: string;
-  price: number;
-  item_id: string;
-  interaction_id: string;
-  metadata?: any;
-}
-
-interface WishlistItem {
-  id: string;
-  title: string;
-  provider: string;
-  price: number;
-  image: string;
-  rating: number;
-  priceDrop: boolean;
-  stockAlert: boolean;
-}
-
 // ============================================================
 // SUB-COMPONENTS
 // ============================================================
 
-// --- AI Suggestion Banner ---
-const AISuggestionBanner = () => {
-  const suggestions = [
-    "🛒 You have items in your cart ready for checkout.",
-    "📅 Don't forget your upcoming bookings.",
-    "💰 Items in your wishlist may have price drops.",
-    "📦 Group purchases into one payment to save on delivery.",
-  ];
-  const [currentIndex, setCurrentIndex] = useState(0);
-
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % suggestions.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <View style={styles.aiBanner}>
-      <View style={styles.aiBannerIcon}>
-        <Ionicons name="sparkles" size={18} color="#4A7DFF" />
-      </View>
-      <Text style={styles.aiBannerText}>{suggestions[currentIndex]}</Text>
-      <View style={styles.aiBannerDots}>
-        {suggestions.map((_, i) => (
-          <View
-            key={i}
-            style={[
-              styles.aiBannerDot,
-              i === currentIndex && styles.aiBannerDotActive,
-            ]}
-          />
-        ))}
-      </View>
-    </View>
-  );
-};
-
-// --- Cart Item Card ---
-const CartItemCard = ({ item, onRemove, onUpdateQuantity }: any) => (
-  <View style={styles.cartCard}>
-    <Image source={{ uri: item.image || 'https://via.placeholder.com/80/4A7DFF/FFFFFF?text=Product' }} style={styles.cartImage} />
-    <View style={styles.cartContent}>
-      <View style={styles.cartHeader}>
-        <Text style={styles.cartTitle} numberOfLines={1}>{item.title}</Text>
-        <TouchableOpacity onPress={() => onRemove(item.id)}>
-          <Ionicons name="close" size={18} color="#8A8AAE" />
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.cartProvider}>{item.provider || item.shop_name || 'Shop'}</Text>
-      {item.variation && <Text style={styles.cartVariation}>{item.variation}</Text>}
-      <View style={styles.cartFooter}>
-        <View style={styles.cartPriceQuantity}>
-          <Text style={styles.cartPrice}>UGX {item.price.toLocaleString()}</Text>
-          <View style={styles.cartQuantity}>
-            <TouchableOpacity
-              style={styles.cartQtyButton}
-              onPress={() => onUpdateQuantity(item.id, Math.max(1, item.quantity - 1))}
-            >
-              <Text style={styles.cartQtyButtonText}>−</Text>
-            </TouchableOpacity>
-            <Text style={styles.cartQtyText}>{item.quantity}</Text>
-            <TouchableOpacity
-              style={styles.cartQtyButton}
-              onPress={() => onUpdateQuantity(item.id, item.quantity + 1)}
-            >
-              <Text style={styles.cartQtyButtonText}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <Text style={styles.cartDelivery}>{item.delivery || '2-3 days'}</Text>
-      </View>
-    </View>
-  </View>
-);
-
-// --- Booking Card ---
-const BookingCard = ({ item, onCancel }: any) => {
-  const statusColors = {
-    Confirmed: '#2ECC71',
-    Pending: '#F1C40F',
-    Completed: '#4A7DFF',
-    Cancelled: '#E74C3C',
-  };
-
-  return (
-    <View style={styles.bookingCard}>
-      <View style={styles.bookingHeader}>
-        <View style={styles.bookingProvider}>
-          <View style={styles.bookingAvatar}>
-            <Text style={styles.bookingAvatarText}>{item.providerAvatar || item.provider?.charAt(0).toUpperCase() || 'P'}</Text>
-          </View>
-          <View>
-            <Text style={styles.bookingProviderName}>{item.provider || 'Provider'}</Text>
-            <Text style={styles.bookingService}>{item.service}</Text>
-          </View>
-        </View>
-        <View style={[styles.bookingStatus, { backgroundColor: statusColors[item.status as keyof typeof statusColors] + '20' }]}>
-          <Text style={[styles.bookingStatusText, { color: statusColors[item.status as keyof typeof statusColors] }]}>
-            {item.status}
-          </Text>
-        </View>
-      </View>
-      <View style={styles.bookingDetails}>
-        <View style={styles.bookingDetail}>
-          <Ionicons name="calendar-outline" size={14} color="#8A8AAE" />
-          <Text style={styles.bookingDetailText}>{item.date}</Text>
-        </View>
-        <View style={styles.bookingDetail}>
-          <Ionicons name="time-outline" size={14} color="#8A8AAE" />
-          <Text style={styles.bookingDetailText}>{item.time}</Text>
-        </View>
-        <View style={styles.bookingDetail}>
-          <Ionicons name="location-outline" size={14} color="#8A8AAE" />
-          <Text style={styles.bookingDetailText}>{item.location || 'Location TBD'}</Text>
-        </View>
-        <View style={styles.bookingDetail}>
-          <Ionicons name="cash-outline" size={14} color="#8A8AAE" />
-          <Text style={styles.bookingDetailText}>UGX {item.price.toLocaleString()}</Text>
-        </View>
-      </View>
-      <View style={styles.bookingActions}>
-        <TouchableOpacity style={styles.bookingActionButton}>
-          <Text style={styles.bookingActionText}>View Details</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.bookingActionButton}>
-          <Text style={styles.bookingActionText}>Reschedule</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.bookingActionButton, styles.bookingActionDanger]} 
-          onPress={() => onCancel(item.id)}
-        >
-          <Text style={[styles.bookingActionText, styles.bookingActionDangerText]}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
-
-// --- Wishlist Item Card ---
-const WishlistItemCard = ({ item, onRemove }: any) => (
-  <TouchableOpacity style={styles.wishlistCard}>
-    <Image source={{ uri: item.image || 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Product' }} style={styles.wishlistImage} />
-    <TouchableOpacity 
-      style={styles.wishlistRemoveButton}
-      onPress={() => onRemove(item.id)}
-    >
-      <Ionicons name="close" size={16} color="#8A8AAE" />
-    </TouchableOpacity>
-    <View style={styles.wishlistInfo}>
-      <Text style={styles.wishlistTitle} numberOfLines={1}>{item.title}</Text>
-      <Text style={styles.wishlistProvider}>{item.provider}</Text>
-      <Text style={styles.wishlistPrice}>UGX {item.price.toLocaleString()}</Text>
-      <Text style={styles.wishlistRating}>⭐ {item.rating || 4.0}</Text>
-      {item.priceDrop && (
-        <View style={styles.wishlistAlert}>
-          <Ionicons name="arrow-down" size={12} color="#2ECC71" />
-          <Text style={styles.wishlistAlertText}>Price reduced!</Text>
-        </View>
-      )}
-      {item.stockAlert && (
-        <View style={[styles.wishlistAlert, styles.wishlistAlertDanger]}>
-          <Ionicons name="alert-circle" size={12} color="#E74C3C" />
-          <Text style={[styles.wishlistAlertText, styles.wishlistAlertDangerText]}>Only 2 left!</Text>
-        </View>
-      )}
-    </View>
-  </TouchableOpacity>
-);
-
-// --- Payment Method Item ---
-const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
-  <TouchableOpacity 
-    style={[styles.paymentMethodItem, isSelected && styles.paymentMethodItemSelected]} 
-    onPress={() => onSelect(method.id)}
-  >
-    <Text style={styles.paymentMethodIcon}>{method.icon}</Text>
-    <View style={styles.paymentMethodContent}>
-      <Text style={styles.paymentMethodName}>{method.name}</Text>
-      {method.default && (
-        <View style={styles.defaultBadge}>
-          <Text style={styles.defaultBadgeText}>Default</Text>
-        </View>
-      )}
-      {method.details?.phone && (
-        <Text style={styles.paymentMethodDetail}>{method.details.phone}</Text>
-      )}
-    </View>
-    <View style={[styles.paymentMethodRadio, isSelected && styles.paymentMethodRadioSelected]} />
-  </TouchableOpacity>
-);
-
-// --- Transaction Item ---
 const TransactionItem = ({ item }: { item: Transaction }) => {
   const isIncoming = item.amount > 0;
-  const statusColors = {
+  const statusColors: Record<string, string> = {
     completed: '#2ECC71',
     pending: '#F1C40F',
+    locked: '#4A7DFF',
     failed: '#E74C3C',
+    disputed: '#E74C3C',
+    cancelled: '#95A5A6',
+    refunded: '#3498DB',
   };
 
-  const statusLabels = {
+  const statusLabels: Record<string, string> = {
     completed: 'Completed',
     pending: 'Pending',
+    locked: 'Locked',
     failed: 'Failed',
+    disputed: 'Disputed',
+    cancelled: 'Cancelled',
+    refunded: 'Refunded',
   };
 
   return (
@@ -334,7 +145,7 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
           </Text>
           <View style={[styles.transactionStatus, { backgroundColor: statusColors[item.status] + '20' }]}>
             <Text style={[styles.transactionStatusText, { color: statusColors[item.status] }]}>
-              {statusLabels[item.status]}
+              {statusLabels[item.status] || item.status}
             </Text>
           </View>
         </View>
@@ -350,6 +161,172 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
 };
 
 // ============================================================
+// PENDING TRANSACTION CARD
+// ============================================================
+
+const PendingTransactionCard = ({ 
+  transaction, 
+  onConfirm, 
+  onDispute,
+  onActivate,
+  isSeller,
+  timeRemaining 
+}: any) => {
+  const isLocked = transaction.status === 'locked';
+  const isPending = transaction.status === 'pending';
+  const isDisputed = transaction.status === 'disputed';
+  
+  const canConfirm = isLocked && !isSeller; // Buyer can confirm
+  const canActivate = isLocked && isSeller && timeRemaining <= 0; // Seller can activate after 24hrs
+  const canDispute = isLocked && !isDisputed; // Buyer can dispute
+
+  return (
+    <View style={[styles.pendingCard, isDisputed && styles.pendingCardDisputed]}>
+      <View style={styles.pendingCardHeader}>
+        <View style={styles.pendingCardIcon}>
+          <Text style={styles.pendingCardIconText}>
+            {isDisputed ? '⚠️' : isLocked ? '🔒' : '⏳'}
+          </Text>
+        </View>
+        <View style={styles.pendingCardInfo}>
+          <Text style={styles.pendingCardTitle}>
+            {transaction.merchant || 'Payment'}
+          </Text>
+          <Text style={styles.pendingCardAmount}>
+            UGX {transaction.amount.toLocaleString()}
+          </Text>
+        </View>
+        <View style={[
+          styles.pendingCardStatus,
+          isDisputed && styles.pendingCardStatusDisputed,
+          isLocked && styles.pendingCardStatusLocked,
+        ]}>
+          <Text style={styles.pendingCardStatusText}>
+            {isDisputed ? 'Disputed' : isLocked ? 'Locked' : 'Pending'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.pendingCardBody}>
+        {transaction.reference && (
+          <Text style={styles.pendingCardReference}>
+            Ref: {transaction.reference}
+          </Text>
+        )}
+        <Text style={styles.pendingCardDate}>
+          {new Date(transaction.date).toLocaleDateString('en-UG', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </Text>
+        {transaction.reason && (
+          <Text style={styles.pendingCardReason}>Reason: {transaction.reason}</Text>
+        )}
+        {isLocked && timeRemaining > 0 && !isSeller && (
+          <Text style={styles.pendingCardTimer}>
+            ⏰ Auto-confirm in {Math.floor(timeRemaining)}h {Math.floor((timeRemaining % 1) * 60)}m
+          </Text>
+        )}
+        {isLocked && isSeller && timeRemaining > 0 && (
+          <Text style={styles.pendingCardTimer}>
+            ⏳ Buyer has {Math.floor(timeRemaining)}h to confirm
+          </Text>
+        )}
+        {transaction.dispute_reason && (
+          <Text style={styles.pendingCardDisputeReason}>
+            Dispute: {transaction.dispute_reason}
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.pendingCardActions}>
+        {canConfirm && (
+          <TouchableOpacity 
+            style={[styles.pendingCardButton, styles.pendingCardConfirm]}
+            onPress={() => onConfirm(transaction)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#2ECC71', '#27AE60']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.pendingCardButtonGradient}
+            >
+              <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.pendingCardButtonText}>Confirm Payment</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {canActivate && (
+          <TouchableOpacity 
+            style={[styles.pendingCardButton, styles.pendingCardActivate]}
+            onPress={() => onActivate(transaction)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#F39C12', '#E67E22']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.pendingCardButtonGradient}
+            >
+              <Ionicons name="rocket-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.pendingCardButtonText}>Activate Payment</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {canDispute && (
+          <TouchableOpacity 
+            style={[styles.pendingCardButton, styles.pendingCardDispute]}
+            onPress={() => onDispute(transaction)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#E74C3C', '#C0392B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.pendingCardButtonGradient}
+            >
+              <Ionicons name="alert-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.pendingCardButtonText}>Raise Dispute</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+};
+
+// ============================================================
+// PAYMENT METHOD ITEM
+// ============================================================
+
+const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
+  <TouchableOpacity 
+    style={[styles.paymentMethodItem, isSelected && styles.paymentMethodItemSelected]} 
+    onPress={() => onSelect(method.id)}
+  >
+    <Text style={styles.paymentMethodIcon}>{method.icon}</Text>
+    <View style={styles.paymentMethodContent}>
+      <Text style={styles.paymentMethodName}>{method.name}</Text>
+      {method.default && (
+        <View style={styles.defaultBadge}>
+          <Text style={styles.defaultBadgeText}>Default</Text>
+        </View>
+      )}
+      {method.details?.phone && (
+        <Text style={styles.paymentMethodDetail}>{method.details.phone}</Text>
+      )}
+    </View>
+    <View style={[styles.paymentMethodRadio, isSelected && styles.paymentMethodRadioSelected]} />
+  </TouchableOpacity>
+);
+
+// ============================================================
 // MAIN COMPONENT
 // ============================================================
 
@@ -358,11 +335,14 @@ const PayContent = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
   
   // --- State ---
-  // Payment states
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [pendingTransactions, setPendingTransactions] = useState<Transaction[]>([]);
+  const [lockedTransactions, setLockedTransactions] = useState<Transaction[]>([]);
+  const [completedTransactions, setCompletedTransactions] = useState<Transaction[]>([]);
+  const [disputedTransactions, setDisputedTransactions] = useState<Transaction[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedMethod, setSelectedMethod] = useState<string>('');
   const [amount, setAmount] = useState('');
@@ -370,23 +350,13 @@ const PayContent = ({ navigation }: any) => {
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('All');
-  
-  // Hub states
-  const [activeTab, setActiveTab] = useState('cart');
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
-  const [showCheckout, setShowCheckout] = useState(false);
+  const [activeTab, setActiveTab] = useState<'pending' | 'locked' | 'completed' | 'disputed'>('pending');
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [disputeReason, setDisputeReason] = useState('');
+  const [timeRemainingMap, setTimeRemainingMap] = useState<Record<string, number>>({});
 
-  // Transaction filters
   const transactionFilters = ['All', 'Payments', 'Top Ups', 'Refunds', 'Withdrawals'];
-  
-  // Hub tabs
-  const hubTabs = [
-    { key: 'cart', label: 'Cart', count: cartItems.length },
-    { key: 'bookings', label: 'Bookings', count: bookings.length },
-    { key: 'wishlist', label: 'Wishlist', count: wishlistItems.length },
-  ];
 
   // ============================================================
   // FETCH FUNCTIONS
@@ -410,6 +380,7 @@ const PayContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
+  // Fetch regular transactions (topups, withdrawals, etc.)
   const fetchTransactions = useCallback(async () => {
     if (!user?.id) return [];
 
@@ -417,25 +388,106 @@ const PayContent = ({ navigation }: any) => {
       const { data, error } = await supabaseAny
         .from('transactions')
         .select('*')
-        .eq('user_id', user.id)
+        .or(`user_id.eq.${user.id},buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(100);
 
-      if (error) return [];
+      if (error) {
+        console.error('Error fetching transactions:', error);
+        return [];
+      }
+
+      if (!data) return [];
 
       return data.map((t: any) => ({
         id: t.id,
-        type: t.type,
-        merchant: t.shop_id || 'Munolink',
-        amount: t.amount,
+        type: t.type || 'payment',
+        merchant: t.merchant || 'Munolink',
+        amount: t.amount || t.locked_amount || 0,
         date: t.created_at || new Date().toISOString(),
-        status: t.status || 'completed',
-        method: t.payment_code || 'Wallet',
+        status: t.status || 'pending',
+        method: t.method || 'Wallet',
         reference: t.reference,
-        shop_id: t.shop_id,
+        user_id: t.user_id,
+        buyer_id: t.buyer_id,
+        seller_id: t.seller_id,
+        locked_amount: t.locked_amount,
+        confirmed_at: t.confirmed_at,
+        disputed_at: t.disputed_at,
+        dispute_reason: t.dispute_reason,
+        released_at: t.released_at,
+        admin_confirmed_at: t.admin_confirmed_at,
       }));
     } catch (error) {
       console.error('Error fetching transactions:', error);
+      return [];
+    }
+  }, [user?.id]);
+
+  // Fetch payment requests - THIS IS THE KEY FIX
+  const fetchPaymentRequests = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      // First, get the payment requests
+      const { data: requests, error: requestsError } = await supabaseAny
+        .from('payment_requests')
+        .select('*')
+        .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
+        .order('created_at', { ascending: false });
+
+      if (requestsError) {
+        console.error('Error fetching payment requests:', requestsError);
+        return [];
+      }
+
+      if (!requests || requests.length === 0) return [];
+
+      // Get all unique user IDs from the requests
+      const userIds = new Set<string>();
+      requests.forEach((r: any) => {
+        if (r.from_user_id) userIds.add(r.from_user_id);
+        if (r.to_user_id) userIds.add(r.to_user_id);
+      });
+
+      // Fetch user details separately (to avoid foreign key errors)
+      let userMap: Record<string, { id: string; full_name: string; avatar_url: string | null }> = {};
+      
+      if (userIds.size > 0) {
+        const { data: users, error: usersError } = await supabaseAny
+          .from('users')
+          .select('id, full_name, avatar_url')
+          .in('id', Array.from(userIds));
+
+        if (!usersError && users) {
+          users.forEach((u: any) => {
+            userMap[u.id] = {
+              id: u.id,
+              full_name: u.full_name || 'User',
+              avatar_url: u.avatar_url || null
+            };
+          });
+        }
+      }
+
+      // Map users back to payment requests
+      const mappedRequests = requests.map((r: any) => ({
+        ...r,
+        from_user: userMap[r.from_user_id] || { 
+          id: r.from_user_id, 
+          full_name: 'User', 
+          avatar_url: null 
+        },
+        to_user: userMap[r.to_user_id] || { 
+          id: r.to_user_id, 
+          full_name: 'User', 
+          avatar_url: null 
+        }
+      }));
+
+      return mappedRequests;
+    } catch (error) {
+      console.error('Error fetching payment requests:', error);
       return [];
     }
   }, [user?.id]);
@@ -478,7 +530,7 @@ const PayContent = ({ navigation }: any) => {
         id: 'wallet',
         name: 'Munolink Wallet',
         icon: '💰',
-        type: 'mobile_money',
+        type: 'wallet',
         default: phone ? false : true,
       });
 
@@ -489,227 +541,10 @@ const PayContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  const fetchCartItems = useCallback(async () => {
-    if (!user?.id) return [];
+  // ============================================================
+  // LOAD ALL DATA - TRANSFORMS PAYMENT REQUESTS TO TRANSACTIONS
+  // ============================================================
 
-    try {
-      const { data: interactions, error: interactionsError } = await supabaseAny
-        .from('user_interactions')
-        .select('id, item_id, metadata, created_at')
-        .eq('user_id', user.id)
-        .eq('action', 'purchase')
-        .order('created_at', { ascending: false });
-
-      if (interactionsError || !interactions || interactions.length === 0) {
-        return [];
-      }
-
-      const itemIds = interactions.map((i: any) => i.item_id);
-      
-      const { data: catalogItems, error: catalogError } = await supabaseAny
-        .from('catalog')
-        .select('*')
-        .in('id', itemIds);
-
-      if (catalogError) return [];
-
-      const productIds = catalogItems?.map((item: any) => item.id) || [];
-      let shopProducts: any[] = [];
-      if (productIds.length > 0) {
-        const { data, error } = await supabaseAny
-          .from('shop_products')
-          .select('*')
-          .in('catalog_id', productIds);
-        if (!error) shopProducts = data || [];
-      }
-
-      const shopIds = shopProducts.map((sp: any) => sp.shop_id).filter(Boolean);
-      let shops: any[] = [];
-      if (shopIds.length > 0) {
-        const { data, error } = await supabaseAny
-          .from('shops')
-          .select('id, name, area')
-          .in('id', shopIds);
-        if (!error) shops = data || [];
-      }
-
-      const cartItems: CartItem[] = [];
-
-      for (const interaction of interactions) {
-        const item = catalogItems?.find((i: any) => i.id === interaction.item_id);
-        if (!item) continue;
-
-        const shopProduct = shopProducts.find((sp: any) => sp.catalog_id === item.id);
-        const shop = shops.find((s: any) => s.id === shopProduct?.shop_id);
-
-        cartItems.push({
-          id: interaction.id,
-          title: item.name || 'Product',
-          price: shopProduct?.regular_price || 0,
-          quantity: interaction.metadata?.quantity || 1,
-          image: item.images?.[0],
-          shop_id: shop?.id || '',
-          shop_name: shop?.name || 'Shop',
-          provider: shop?.name || 'Shop',
-          variation: item.brand || item.category || 'Standard',
-          delivery: '2-3 business days',
-          catalog_id: item.id,
-          interaction_id: interaction.id,
-          item_type: 'product',
-        });
-      }
-
-      return cartItems;
-    } catch (error) {
-      console.error('Error fetching cart items:', error);
-      return [];
-    }
-  }, [user?.id]);
-
-  const fetchBookings = useCallback(async () => {
-    if (!user?.id) return [];
-
-    try {
-      const { data: interactions, error: interactionsError } = await supabaseAny
-        .from('user_interactions')
-        .select('id, item_id, metadata, created_at')
-        .eq('user_id', user.id)
-        .eq('action', 'booking')
-        .order('created_at', { ascending: false });
-
-      if (interactionsError || !interactions || interactions.length === 0) {
-        return [];
-      }
-
-      const itemIds = interactions.map((i: any) => i.item_id);
-      
-      const { data: serviceItems, error: serviceError } = await supabaseAny
-        .from('service_catalog')
-        .select('*')
-        .in('id', itemIds);
-
-      if (serviceError) return [];
-
-      const serviceCatalogIds = serviceItems?.map((item: any) => item.id) || [];
-      let providerServices: any[] = [];
-      if (serviceCatalogIds.length > 0) {
-        const { data, error } = await supabaseAny
-          .from('provider_services')
-          .select('*')
-          .in('service_id', serviceCatalogIds);
-        if (!error) providerServices = data || [];
-      }
-
-      const userIds = providerServices.map((ps: any) => ps.user_id).filter(Boolean);
-      let users: any[] = [];
-      if (userIds.length > 0) {
-        const { data, error } = await supabaseAny
-          .from('users')
-          .select('id, full_name')
-          .in('id', userIds);
-        if (!error) users = data || [];
-      }
-
-      const bookingItems: Booking[] = [];
-
-      for (const interaction of interactions) {
-        const item = serviceItems?.find((i: any) => i.id === interaction.item_id);
-        if (!item) continue;
-
-        const providerService = providerServices.find((ps: any) => ps.service_id === item.id);
-        const user = users.find((u: any) => u.id === providerService?.user_id);
-
-        bookingItems.push({
-          id: interaction.id,
-          service: item.name || 'Service',
-          provider: user?.full_name || 'Provider',
-          provider_id: providerService?.user_id || '',
-          date: interaction.metadata?.date || new Date().toLocaleDateString(),
-          time: interaction.metadata?.time || '2:00 PM',
-          status: interaction.metadata?.status || 'Pending',
-          location: interaction.metadata?.location || 'Location TBD',
-          image: item.images?.[0] || 'https://via.placeholder.com/80/6B94FF/FFFFFF?text=Service',
-          providerAvatar: user?.full_name?.charAt(0).toUpperCase() || 'P',
-          price: providerService?.price || 0,
-          item_id: item.id,
-          interaction_id: interaction.id,
-        });
-      }
-
-      return bookingItems;
-    } catch (error) {
-      console.error('Error fetching bookings:', error);
-      return [];
-    }
-  }, [user?.id]);
-
-  const fetchWishlist = useCallback(async () => {
-    if (!user?.id) return [];
-
-    try {
-      const { data: interactions, error: interactionsError } = await supabaseAny
-        .from('user_interactions')
-        .select('item_id, created_at')
-        .eq('user_id', user.id)
-        .eq('action', 'save')
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      if (interactionsError || !interactions || interactions.length === 0) {
-        return [];
-      }
-
-      const itemIds = interactions.map((i: any) => i.item_id);
-      
-      const { data: catalogItems, error: catalogError } = await supabaseAny
-        .from('catalog')
-        .select('*')
-        .in('id', itemIds)
-        .limit(20);
-
-      if (catalogError) return [];
-
-      const productIds = catalogItems?.map((item: any) => item.id) || [];
-      let shopProducts: any[] = [];
-      if (productIds.length > 0) {
-        const { data, error } = await supabaseAny
-          .from('shop_products')
-          .select('regular_price, shop_id')
-          .in('catalog_id', productIds);
-        if (!error) shopProducts = data || [];
-      }
-
-      const shopIds = shopProducts.map((sp: any) => sp.shop_id).filter(Boolean);
-      let shops: any[] = [];
-      if (shopIds.length > 0) {
-        const { data, error } = await supabaseAny
-          .from('shops')
-          .select('id, name, rating')
-          .in('id', shopIds);
-        if (!error) shops = data || [];
-      }
-
-      return catalogItems.map((item: any) => {
-        const shopProduct = shopProducts.find((sp: any) => sp.catalog_id === item.id);
-        const shop = shops.find((s: any) => s.id === shopProduct?.shop_id);
-        return {
-          id: item.id,
-          title: item.name || 'Product',
-          provider: shop?.name || 'Unknown Shop',
-          price: shopProduct?.regular_price || 0,
-          image: item.images?.[0] || 'https://via.placeholder.com/150/4A7DFF/FFFFFF?text=Product',
-          rating: shop?.rating || 4.0,
-          priceDrop: Math.random() > 0.7,
-          stockAlert: Math.random() > 0.8,
-        };
-      });
-    } catch (error) {
-      console.error('Error fetching wishlist:', error);
-      return [];
-    }
-  }, [user?.id]);
-
-  // --- Load All Data ---
   const loadAllData = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
@@ -718,21 +553,15 @@ const PayContent = ({ navigation }: any) => {
 
     setLoading(true);
     try {
-      const [balance, transactionsData, methods, cartData, bookingData, wishlistData] = await Promise.all([
+      const [balance, transactionsData, paymentRequestsData, methods] = await Promise.all([
         fetchWalletBalance(),
         fetchTransactions(),
+        fetchPaymentRequests(),
         fetchPaymentMethods(),
-        fetchCartItems(),
-        fetchBookings(),
-        fetchWishlist(),
       ]);
 
       setWalletBalance(balance);
-      setTransactions(transactionsData);
       setPaymentMethods(methods);
-      setCartItems(cartData);
-      setBookings(bookingData);
-      setWishlistItems(wishlistData);
 
       const defaultMethod = methods.find(m => m.default);
       if (defaultMethod) {
@@ -740,12 +569,112 @@ const PayContent = ({ navigation }: any) => {
       } else if (methods.length > 0) {
         setSelectedMethod(methods[0].id);
       }
+
+      // --- TRANSFORM PAYMENT REQUESTS TO TRANSACTION-LIKE OBJECTS ---
+      const pending: Transaction[] = [];
+      const locked: Transaction[] = [];
+      const completed: Transaction[] = [];
+      const disputed: Transaction[] = [];
+
+      // Process payment requests first (these are the source of truth)
+      paymentRequestsData.forEach((pr: PaymentRequest) => {
+        const isFromMe = pr.from_user_id === user.id;
+        const isToMe = pr.to_user_id === user.id;
+        
+        // Determine the other party's name
+        let merchant = 'User';
+        if (isFromMe && pr.to_user) {
+          merchant = pr.to_user.full_name || 'User';
+        } else if (isToMe && pr.from_user) {
+          merchant = pr.from_user.full_name || 'User';
+        }
+
+        // Determine if this is a request (seller requesting from buyer)
+        // For display: if from_user is the other party, they're the seller
+        const isSeller = isToMe && pr.is_request;
+        const isBuyer = isFromMe && pr.is_request;
+
+        const tx: Transaction = {
+          id: pr.id,
+          type: 'payment',
+          merchant: merchant,
+          amount: pr.amount,
+          date: pr.created_at,
+          status: pr.status as any,
+          method: 'Wallet',
+          reference: `PAY-${pr.id.slice(0, 8)}`,
+          user_id: user.id,
+          buyer_id: pr.to_user_id,
+          seller_id: pr.from_user_id,
+          locked_amount: pr.status === 'locked' || pr.status === 'accepted' ? pr.amount : 0,
+          confirmed_at: pr.completed_at || undefined,
+          dispute_reason: pr.status === 'disputed' ? 'Disputed' : undefined,
+          payment_request_id: pr.id,
+          is_request: pr.is_request,
+          reason: pr.reason || undefined,
+        };
+
+        // Categorize by status
+        switch (pr.status) {
+          case 'pending':
+            pending.push(tx);
+            break;
+          case 'accepted':
+          case 'locked':
+            locked.push(tx);
+            break;
+          case 'completed':
+            completed.push(tx);
+            break;
+          case 'disputed':
+            disputed.push(tx);
+            break;
+          default:
+            break;
+        }
+      });
+
+      // Also add regular transactions (topups, withdrawals, etc.)
+      transactionsData.forEach((t: Transaction) => {
+        // Check if this transaction is already represented by a payment request
+        const exists = [...pending, ...locked, ...completed, ...disputed].some(p => 
+          p.reference === t.reference || 
+          (t.buyer_id && t.seller_id && 
+           pending.some(pr => pr.buyer_id === t.buyer_id && pr.seller_id === t.seller_id && pr.amount === t.amount))
+        );
+        
+        if (!exists) {
+          switch (t.status) {
+            case 'pending':
+              pending.push(t);
+              break;
+            case 'locked':
+              locked.push(t);
+              break;
+            case 'completed':
+              completed.push(t);
+              break;
+            case 'disputed':
+              disputed.push(t);
+              break;
+            default:
+              break;
+          }
+        }
+      });
+
+      setPendingTransactions(pending);
+      setLockedTransactions(locked);
+      setCompletedTransactions(completed);
+      setDisputedTransactions(disputed);
+      setTransactions([...pending, ...locked, ...completed, ...disputed]);
+
     } catch (error) {
       console.error('Error loading pay data:', error);
     } finally {
       setLoading(false);
     }
-  }, [user?.id, fetchWalletBalance, fetchTransactions, fetchPaymentMethods, fetchCartItems, fetchBookings, fetchWishlist]);
+  }, [user?.id, fetchWalletBalance, fetchTransactions, fetchPaymentRequests, fetchPaymentMethods]);
 
   // --- Auto-refresh when screen comes into focus ---
   useFocusEffect(
@@ -775,322 +704,415 @@ const PayContent = ({ navigation }: any) => {
     setRefreshing(false);
   }, [loadAllData]);
 
-  // ============================================================
-  // CART CALCULATIONS
-  // ============================================================
+  // --- Time Remaining Calculator ---
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const newMap: Record<string, number> = {};
+      
+      lockedTransactions.forEach((t: Transaction) => {
+        const createdAt = new Date(t.date).getTime();
+        const now = Date.now();
+        const diff = 24 * 60 * 60 * 1000 - (now - createdAt);
+        newMap[t.id] = Math.max(0, diff / (60 * 60 * 1000));
+      });
+      
+      setTimeRemainingMap(newMap);
+    }, 60000);
 
-  const cartTotals = useMemo(() => {
-    const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const deliveryFee = cartItems.length > 0 ? 15000 : 0;
-    const walletSavings = Math.round(subtotal * 0.05);
-    return { subtotal, deliveryFee, walletSavings, total: subtotal + deliveryFee - walletSavings };
-  }, [cartItems]);
-
-  const { subtotal, deliveryFee, walletSavings, total } = cartTotals;
+    return () => clearInterval(interval);
+  }, [lockedTransactions]);
 
   // ============================================================
   // ACTION HANDLERS
   // ============================================================
 
+  // --- Confirm Payment (Buyer confirms receipt) ---
+  const handleConfirmPayment = useCallback(async (transaction: Transaction) => {
+    Alert.alert(
+      '✅ Confirm Payment',
+      `You are about to confirm payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+      `To: ${transaction.merchant || 'Seller'}\n\n` +
+      `⚠️ This action is irreversible. Only confirm if you have received the product/service.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          style: 'default',
+          onPress: async () => {
+            try {
+              // Check if this is a payment request
+              const { data: paymentRequest } = await supabaseAny
+                .from('payment_requests')
+                .select('*')
+                .eq('id', transaction.id)
+                .single();
+
+              if (paymentRequest) {
+                // It's a payment request - update it
+                const { error: prError } = await supabaseAny
+                  .from('payment_requests')
+                  .update({
+                    status: 'completed',
+                    completed_at: new Date().toISOString(),
+                  })
+                  .eq('id', transaction.id);
+
+                if (prError) throw prError;
+
+                // Also update the linked transaction if exists
+                if (paymentRequest.transaction_id) {
+                  await supabaseAny
+                    .from('transactions')
+                    .update({
+                      status: 'completed',
+                      confirmed_at: new Date().toISOString(),
+                    })
+                    .eq('id', paymentRequest.transaction_id);
+                }
+
+                // Update seller's wallet balance
+                const sellerId = paymentRequest.from_user_id;
+                const { data: sellerData } = await supabaseAny
+                  .from('users')
+                  .select('wallet_balance')
+                  .eq('id', sellerId)
+                  .single();
+
+                if (sellerData) {
+                  await supabaseAny
+                    .from('users')
+                    .update({
+                      wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
+                    })
+                    .eq('id', sellerId);
+                }
+
+              } else {
+                // It's a regular transaction
+                const { error: txError } = await supabaseAny
+                  .from('transactions')
+                  .update({
+                    status: 'completed',
+                    confirmed_at: new Date().toISOString(),
+                  })
+                  .eq('id', transaction.id);
+
+                if (txError) throw txError;
+
+                // Update seller's wallet
+                const sellerId = transaction.seller_id || transaction.user_id;
+                const { data: sellerData } = await supabaseAny
+                  .from('users')
+                  .select('wallet_balance')
+                  .eq('id', sellerId)
+                  .single();
+
+                if (sellerData) {
+                  await supabaseAny
+                    .from('users')
+                    .update({
+                      wallet_balance: (sellerData.wallet_balance || 0) + transaction.amount,
+                    })
+                    .eq('id', sellerId);
+                }
+              }
+
+              Alert.alert('✅ Success', 'Payment confirmed successfully!');
+              loadAllData();
+            } catch (error) {
+              console.error('Error confirming payment:', error);
+              Alert.alert('❌ Error', 'Failed to confirm payment. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  }, [loadAllData]);
+
+  // --- Activate Payment (Seller after 24hrs) ---
+  const handleActivatePayment = useCallback(async (transaction: Transaction) => {
+    Alert.alert(
+      '🚀 Activate Payment',
+      `You are about to activate payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+      `From: ${transaction.merchant || 'Buyer'}\n\n` +
+      `⚠️ This action will release the locked funds to your wallet. Only do this if the buyer has not confirmed within 24 hours.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Activate',
+          style: 'default',
+          onPress: async () => {
+            try {
+              // Check if this is a payment request
+              const { data: paymentRequest } = await supabaseAny
+                .from('payment_requests')
+                .select('*')
+                .eq('id', transaction.id)
+                .single();
+
+              if (paymentRequest) {
+                // Update payment request
+                await supabaseAny
+                  .from('payment_requests')
+                  .update({
+                    status: 'completed',
+                    completed_at: new Date().toISOString(),
+                  })
+                  .eq('id', transaction.id);
+
+                // Update linked transaction
+                if (paymentRequest.transaction_id) {
+                  await supabaseAny
+                    .from('transactions')
+                    .update({
+                      status: 'completed',
+                      released_at: new Date().toISOString(),
+                      admin_confirmed_at: new Date().toISOString(),
+                    })
+                    .eq('id', paymentRequest.transaction_id);
+                }
+
+                // Update seller's wallet
+                const sellerId = paymentRequest.from_user_id;
+                const { data: sellerData } = await supabaseAny
+                  .from('users')
+                  .select('wallet_balance')
+                  .eq('id', sellerId)
+                  .single();
+
+                if (sellerData) {
+                  await supabaseAny
+                    .from('users')
+                    .update({
+                      wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
+                    })
+                    .eq('id', sellerId);
+                }
+              } else {
+                // Regular transaction
+                await supabaseAny
+                  .from('transactions')
+                  .update({
+                    status: 'completed',
+                    released_at: new Date().toISOString(),
+                    admin_confirmed_at: new Date().toISOString(),
+                  })
+                  .eq('id', transaction.id);
+              }
+
+              Alert.alert('✅ Success', 'Payment activated and funds released to your wallet!');
+              loadAllData();
+            } catch (error) {
+              console.error('Error activating payment:', error);
+              Alert.alert('❌ Error', 'Failed to activate payment. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  }, [loadAllData]);
+
+  // --- Raise Dispute ---
+  const handleRaiseDispute = useCallback((transaction: Transaction) => {
+    setSelectedTransaction(transaction);
+    setDisputeReason('');
+    setShowDisputeModal(true);
+  }, []);
+
+  const submitDispute = useCallback(async () => {
+    if (!selectedTransaction || !disputeReason.trim()) {
+      Alert.alert('Error', 'Please provide a reason for the dispute');
+      return;
+    }
+
+    try {
+      // Check if this is a payment request
+      const { data: paymentRequest } = await supabaseAny
+        .from('payment_requests')
+        .select('*')
+        .eq('id', selectedTransaction.id)
+        .single();
+
+      if (paymentRequest) {
+        // Update payment request
+        await supabaseAny
+          .from('payment_requests')
+          .update({
+            status: 'disputed',
+          })
+          .eq('id', selectedTransaction.id);
+
+        // Update linked transaction
+        if (paymentRequest.transaction_id) {
+          await supabaseAny
+            .from('transactions')
+            .update({
+              status: 'disputed',
+              disputed_at: new Date().toISOString(),
+              dispute_reason: disputeReason.trim(),
+            })
+            .eq('id', paymentRequest.transaction_id);
+        }
+      } else {
+        // Regular transaction
+        await supabaseAny
+          .from('transactions')
+          .update({
+            status: 'disputed',
+            disputed_at: new Date().toISOString(),
+            dispute_reason: disputeReason.trim(),
+          })
+          .eq('id', selectedTransaction.id);
+      }
+
+      Alert.alert('⚠️ Dispute Raised', 'Your dispute has been submitted. An admin will review it shortly.');
+      setShowDisputeModal(false);
+      setSelectedTransaction(null);
+      setDisputeReason('');
+      loadAllData();
+    } catch (error) {
+      console.error('Error raising dispute:', error);
+      Alert.alert('❌ Error', 'Failed to raise dispute. Please try again.');
+    }
+  }, [selectedTransaction, disputeReason, loadAllData]);
+
+  // --- Add Money ---
   const handleAddMoney = useCallback(async () => {
     if (!user?.id) {
-      Alert.alert('Error', 'Please login to add money');
+      Alert.alert('🔒 Login Required', 'Please login to add money');
       return;
     }
 
     const amountNum = parseInt(amount);
     if (!amountNum || amountNum <= 0) {
-      Alert.alert('Error', 'Please enter a valid amount');
+      Alert.alert('❌ Invalid Amount', 'Please enter a valid amount');
       return;
     }
 
     if (!selectedMethod) {
-      Alert.alert('Error', 'Please select a payment method');
+      Alert.alert('💳 Payment Method', 'Please select a payment method');
       return;
     }
 
     Alert.alert(
-      'Confirm Add Money',
-      `Add UGX ${amountNum.toLocaleString()} to your wallet?`,
+      '💰 Confirm Add Money',
+      `Add UGX ${amountNum.toLocaleString()} to your wallet?\n\n` +
+      `💳 From: ${paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown'}\n` +
+      `💰 New Balance: UGX ${(walletBalance + amountNum).toLocaleString()}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
           onPress: async () => {
             try {
-              const { data, error } = await supabaseAny
-                .rpc('process_payment', {
-                  p_amount: amountNum,
-                  p_pin: '1234',
-                  p_shop_id: '',
-                  p_user_id: user.id,
+              // Update wallet balance
+              const { error } = await supabaseAny
+                .from('users')
+                .update({
+                  wallet_balance: walletBalance + amountNum,
+                })
+                .eq('id', user.id);
+
+              if (error) throw error;
+
+              // Create transaction record
+              await supabaseAny
+                .from('transactions')
+                .insert({
+                  user_id: user.id,
+                  type: 'topup',
+                  amount: amountNum,
+                  status: 'completed',
+                  merchant: 'Munolink Wallet',
+                  method: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown',
+                  reference: `TOP-${Date.now()}`,
                 });
 
-              if (error) {
-                Alert.alert('Error', 'Failed to add money. Please try again.');
-                return;
-              }
-
               setWalletBalance(walletBalance + amountNum);
-              setTransactions(prev => [{
-                id: Date.now().toString(),
-                type: 'topup',
-                merchant: 'MTN Mobile Money',
-                amount: amountNum,
-                date: new Date().toISOString(),
-                status: 'completed',
-                method: 'MTN',
-                reference: `TOP-${Date.now()}`,
-              }, ...prev]);
-
               setAmount('');
               setShowAddMoney(false);
-              Alert.alert('Success', `UGX ${amountNum.toLocaleString()} added successfully!`);
+              Alert.alert('✅ Success', `UGX ${amountNum.toLocaleString()} added successfully!`);
+              loadAllData();
             } catch (error) {
               console.error('Error adding money:', error);
-              Alert.alert('Error', 'Failed to add money. Please try again.');
+              Alert.alert('❌ Error', 'Failed to add money. Please try again.');
             }
           }
         }
       ]
     );
-  }, [amount, selectedMethod, user?.id, walletBalance]);
+  }, [amount, selectedMethod, user?.id, walletBalance, paymentMethods, loadAllData]);
 
+  // --- Withdraw ---
   const handleWithdraw = useCallback(async () => {
     if (!user?.id) {
-      Alert.alert('Error', 'Please login to withdraw');
+      Alert.alert('🔒 Login Required', 'Please login to withdraw');
       return;
     }
 
     const amountNum = parseInt(amount);
     if (!amountNum || amountNum <= 0) {
-      Alert.alert('Error', 'Please enter a valid amount');
+      Alert.alert('❌ Invalid Amount', 'Please enter a valid amount');
       return;
     }
 
     if (amountNum > walletBalance) {
-      Alert.alert('Error', 'Insufficient balance');
+      Alert.alert('❌ Insufficient Balance', `Your balance is UGX ${walletBalance.toLocaleString()}`);
       return;
     }
 
     if (!selectedMethod) {
-      Alert.alert('Error', 'Please select a withdrawal method');
+      Alert.alert('💳 Withdrawal Method', 'Please select a withdrawal method');
       return;
     }
 
     Alert.alert(
-      'Confirm Withdrawal',
-      `Withdraw UGX ${amountNum.toLocaleString()} to ${paymentMethods.find(m => m.id === selectedMethod)?.name}?`,
+      '💰 Confirm Withdrawal',
+      `Withdraw UGX ${amountNum.toLocaleString()} to ${paymentMethods.find(m => m.id === selectedMethod)?.name}?\n\n` +
+      `💰 New Balance: UGX ${(walletBalance - amountNum).toLocaleString()}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
           onPress: async () => {
             try {
-              setWalletBalance(walletBalance - amountNum);
-              setTransactions(prev => [{
-                id: Date.now().toString(),
-                type: 'withdrawal',
-                merchant: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Withdrawal',
-                amount: -amountNum,
-                date: new Date().toISOString(),
-                status: 'pending',
-                method: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown',
-                reference: `WTH-${Date.now()}`,
-              }, ...prev]);
+              // Update wallet balance
+              const { error } = await supabaseAny
+                .from('users')
+                .update({
+                  wallet_balance: walletBalance - amountNum,
+                })
+                .eq('id', user.id);
 
-              setAmount('');
-              setShowWithdraw(false);
-              Alert.alert('Success', `UGX ${amountNum.toLocaleString()} withdrawal initiated!`);
-            } catch (error) {
-              console.error('Error withdrawing:', error);
-              Alert.alert('Error', 'Failed to withdraw. Please try again.');
-            }
-          }
-        }
-      ]
-    );
-  }, [amount, selectedMethod, walletBalance, paymentMethods, user?.id]);
+              if (error) throw error;
 
-  const handleCheckout = useCallback(async () => {
-    if (!user?.id) {
-      Alert.alert('Error', 'Please login to checkout');
-      return;
-    }
-
-    if (cartItems.length === 0) {
-      Alert.alert('Error', 'Your cart is empty');
-      return;
-    }
-
-    if (!selectedMethod) {
-      Alert.alert('Error', 'Please select a payment method');
-      return;
-    }
-
-    Alert.alert(
-      'Confirm Payment',
-      `Pay UGX ${total.toLocaleString()} for ${cartItems.length} item(s)?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pay Now',
-          onPress: async () => {
-            try {
-              const { data, error } = await supabaseAny
-                .rpc('process_payment', {
-                  p_amount: total,
-                  p_pin: '1234',
-                  p_shop_id: cartItems[0]?.shop_id || '',
-                  p_user_id: user.id,
+              // Create transaction record
+              await supabaseAny
+                .from('transactions')
+                .insert({
+                  user_id: user.id,
+                  type: 'withdrawal',
+                  amount: -amountNum,
+                  status: 'pending',
+                  merchant: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Withdrawal',
+                  method: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown',
+                  reference: `WTH-${Date.now()}`,
                 });
 
-              if (error) {
-                Alert.alert('Error', 'Payment failed. Please try again.');
-                return;
-              }
-
-              setCartItems([]);
-              setShowCheckout(false);
-              Alert.alert('Success', 'Payment completed successfully!');
+              setWalletBalance(walletBalance - amountNum);
+              setAmount('');
+              setShowWithdraw(false);
+              Alert.alert('✅ Success', `UGX ${amountNum.toLocaleString()} withdrawal initiated!`);
+              loadAllData();
             } catch (error) {
-              console.error('Error processing payment:', error);
-              Alert.alert('Error', 'Payment failed. Please try again.');
+              console.error('Error withdrawing:', error);
+              Alert.alert('❌ Error', 'Failed to withdraw. Please try again.');
             }
           }
         }
       ]
     );
-  }, [cartItems, total, selectedMethod, user?.id]);
-
-  // --- Cart Actions ---
-  const handleRemoveItem = async (id: string) => {
-    const removedItem = cartItems.find(item => item.id === id);
-    setCartItems(prev => prev.filter(item => item.id !== id));
-
-    try {
-      const { error } = await supabaseAny
-        .from('user_interactions')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        console.error('Error removing item:', error);
-        if (removedItem) setCartItems(prev => [...prev, removedItem]);
-        Alert.alert('Error', 'Failed to remove item from cart');
-      }
-    } catch (error) {
-      console.error('Error removing item:', error);
-      if (removedItem) setCartItems(prev => [...prev, removedItem]);
-      Alert.alert('Error', 'Failed to remove item');
-    }
-  };
-
-  const handleUpdateQuantity = useCallback(async (id: string, quantity: number) => {
-    const originalItem = cartItems.find(i => i.id === id);
-    setCartItems(prev =>
-      prev.map(item =>
-        item.id === id ? { ...item, quantity } : item
-      )
-    );
-
-    try {
-      const item = cartItems.find(i => i.id === id);
-      if (!item) return;
-
-      const { error } = await supabaseAny
-        .from('user_interactions')
-        .update({
-          metadata: { ...item, quantity, updated_at: new Date().toISOString() },
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
-
-      if (error) {
-        console.error('Error updating quantity:', error);
-        if (originalItem) {
-          setCartItems(prev =>
-            prev.map(item => item.id === id ? originalItem : item)
-          );
-        }
-        Alert.alert('Error', 'Failed to update quantity');
-      }
-    } catch (error) {
-      console.error('Error updating quantity:', error);
-      if (originalItem) {
-        setCartItems(prev =>
-          prev.map(item => item.id === id ? originalItem : item)
-        );
-      }
-      Alert.alert('Error', 'Failed to update quantity');
-    }
-  }, [cartItems]);
-
-  const handleCancelBooking = async (id: string) => {
-    Alert.alert(
-      'Cancel Booking',
-      'Are you sure you want to cancel this booking?',
-      [
-        { text: 'No', style: 'cancel' },
-        { 
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            const cancelledBooking = bookings.find(b => b.id === id);
-            setBookings(prev => prev.filter(item => item.id !== id));
-
-            try {
-              const { error } = await supabaseAny
-                .from('user_interactions')
-                .update({
-                  metadata: { ...cancelledBooking?.metadata, status: 'Cancelled', cancelled_at: new Date().toISOString() },
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', id);
-
-              if (error) {
-                if (cancelledBooking) setBookings(prev => [...prev, cancelledBooking]);
-                Alert.alert('Error', 'Failed to cancel booking');
-              }
-            } catch (error) {
-              if (cancelledBooking) setBookings(prev => [...prev, cancelledBooking]);
-              Alert.alert('Error', 'Failed to cancel booking');
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleRemoveFromWishlist = useCallback(async (itemId: string) => {
-    const removedItem = wishlistItems.find(item => item.id === itemId);
-    setWishlistItems(prev => prev.filter(item => item.id !== itemId));
-
-    try {
-      const { data: interactions } = await supabaseAny
-        .from('user_interactions')
-        .select('id')
-        .eq('user_id', user?.id)
-        .eq('item_id', itemId)
-        .eq('action', 'save')
-        .single();
-
-      if (interactions) {
-        const { error } = await supabaseAny
-          .from('user_interactions')
-          .delete()
-          .eq('id', interactions.id);
-
-        if (error) {
-          if (removedItem) setWishlistItems(prev => [...prev, removedItem]);
-          Alert.alert('Error', 'Failed to remove from wishlist');
-        }
-      }
-    } catch (error) {
-      console.error('Error removing from wishlist:', error);
-      if (removedItem) setWishlistItems(prev => [...prev, removedItem]);
-    }
-  }, [wishlistItems, user?.id]);
+  }, [amount, selectedMethod, walletBalance, paymentMethods, user?.id, loadAllData]);
 
   // --- Filtered Transactions ---
   const filteredTransactions = useMemo(() => {
@@ -1106,269 +1128,28 @@ const PayContent = ({ navigation }: any) => {
     });
   }, [transactions, selectedFilter]);
 
+  // --- Get Current Tab Data ---
+  const getTabData = useCallback(() => {
+    switch (activeTab) {
+      case 'pending':
+        return pendingTransactions;
+      case 'locked':
+        return lockedTransactions;
+      case 'completed':
+        return completedTransactions;
+      case 'disputed':
+        return disputedTransactions;
+      default:
+        return [];
+    }
+  }, [activeTab, pendingTransactions, lockedTransactions, completedTransactions, disputedTransactions]);
+
+  const currentTabData = getTabData();
+
   // ============================================================
   // RENDER FUNCTIONS
   // ============================================================
 
-  // Render Hub Tabs Content
-  const renderHubTabContent = () => {
-    switch (activeTab) {
-      case 'cart':
-        return (
-          <View style={styles.tabContent}>
-            {cartItems.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>🛒</Text>
-                <Text style={styles.emptyTitle}>Your cart is empty</Text>
-                <Text style={styles.emptySubtext}>Start shopping to add items</Text>
-              </View>
-            ) : (
-              <>
-                {cartItems.map((item) => (
-                  <CartItemCard
-                    key={item.id}
-                    item={item}
-                    onRemove={handleRemoveItem}
-                    onUpdateQuantity={handleUpdateQuantity}
-                  />
-                ))}
-                <TouchableOpacity 
-                  style={styles.viewCheckoutButton}
-                  onPress={() => setShowCheckout(true)}
-                >
-                  <LinearGradient
-                    colors={['#4A7DFF', '#6B94FF']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.viewCheckoutGradient}
-                  >
-                    <Text style={styles.viewCheckoutText}>
-                      View Checkout ({cartItems.length} items)
-                    </Text>
-                    <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
-                  </LinearGradient>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        );
-
-      case 'bookings':
-        return (
-          <View style={styles.tabContent}>
-            {bookings.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>📅</Text>
-                <Text style={styles.emptyTitle}>No bookings yet</Text>
-                <Text style={styles.emptySubtext}>Your appointments will appear here</Text>
-              </View>
-            ) : (
-              bookings.map((item) => (
-                <BookingCard
-                  key={item.id}
-                  item={item}
-                  onCancel={handleCancelBooking}
-                />
-              ))
-            )}
-          </View>
-        );
-
-      case 'wishlist':
-        return (
-          <View style={styles.tabContent}>
-            {wishlistItems.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>❤️</Text>
-                <Text style={styles.emptyTitle}>Your wishlist is empty</Text>
-                <Text style={styles.emptySubtext}>Save items you love for later</Text>
-              </View>
-            ) : (
-              <FlatList
-                data={wishlistItems}
-                renderItem={({ item }) => (
-                  <WishlistItemCard 
-                    item={item} 
-                    onRemove={handleRemoveFromWishlist} 
-                  />
-                )}
-                keyExtractor={(item) => item.id}
-                numColumns={isDesktop ? 3 : 2}
-                scrollEnabled={false}
-                contentContainerStyle={styles.wishlistGrid}
-              />
-            )}
-          </View>
-        );
-
-      default:
-        return null;
-    }
-  };
-
-  // Render Checkout Modal
-  const renderCheckoutModal = () => (
-    <Modal
-      visible={showCheckout}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowCheckout(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowCheckout(false)}>
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Checkout</Text>
-            <TouchableOpacity onPress={() => setShowCheckout(false)}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.checkoutContent}>
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Order Items ({cartItems.length})</Text>
-              {cartItems.map((item) => (
-                <View key={item.id} style={styles.orderItem}>
-                  <View style={styles.orderItemImage}>
-                    {item.image && (
-                      <Image source={{ uri: item.image }} style={styles.orderItemImageActual} />
-                    )}
-                  </View>
-                  <View style={styles.orderItemInfo}>
-                    <Text style={styles.orderItemName}>{item.title}</Text>
-                    <Text style={styles.orderItemShop}>{item.shop_name}</Text>
-                    <Text style={styles.orderItemPrice}>UGX {item.price.toLocaleString()}</Text>
-                  </View>
-                  <Text style={styles.orderItemQty}>x{item.quantity}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Price Summary</Text>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Subtotal</Text>
-                <Text style={styles.priceValue}>UGX {subtotal.toLocaleString()}</Text>
-              </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Delivery Fee</Text>
-                <Text style={styles.priceValue}>UGX {deliveryFee.toLocaleString()}</Text>
-              </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Wallet Savings</Text>
-                <Text style={[styles.priceValue, { color: '#2ECC71' }]}>- UGX {walletSavings.toLocaleString()}</Text>
-              </View>
-              <View style={[styles.priceRow, styles.priceTotal]}>
-                <Text style={styles.priceTotalLabel}>Total</Text>
-                <Text style={styles.priceTotalValue}>UGX {total.toLocaleString()}</Text>
-              </View>
-            </View>
-
-            <View style={styles.checkoutSection}>
-              <Text style={styles.checkoutSectionTitle}>Payment Method</Text>
-              {paymentMethods.map((method) => (
-                <PaymentMethodItem 
-                  key={method.id} 
-                  method={method} 
-                  isSelected={selectedMethod === method.id}
-                  onSelect={setSelectedMethod}
-                />
-              ))}
-            </View>
-
-            <View style={styles.bottomSpacer} />
-          </ScrollView>
-
-          <View style={styles.stickyCheckoutBar}>
-            <View style={styles.checkoutTotalPreview}>
-              <Text style={styles.checkoutTotalLabel}>Total</Text>
-              <Text style={styles.checkoutTotalAmount}>UGX {total.toLocaleString()}</Text>
-            </View>
-            <TouchableOpacity style={styles.payNowButton} onPress={handleCheckout}>
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.payNowGradient}
-              >
-                <Text style={styles.payNowText}>Pay Now</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // Render Transactions Modal
-  const renderTransactionsModal = () => (
-    <Modal
-      visible={showTransactions}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowTransactions(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={[styles.modalContent, styles.transactionsModal]}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowTransactions(false)}>
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Transactions</Text>
-            <TouchableOpacity onPress={() => setShowTransactions(false)}>
-              <Ionicons name="close" size={24} color="#8A8AAE" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterContainer}
-            contentContainerStyle={styles.filterContent}
-          >
-            {transactionFilters.map((filter) => (
-              <TouchableOpacity
-                key={filter}
-                style={[
-                  styles.filterChip,
-                  selectedFilter === filter && styles.filterChipActive,
-                ]}
-                onPress={() => setSelectedFilter(filter)}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    selectedFilter === filter && styles.filterChipTextActive,
-                  ]}
-                >
-                  {filter}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          <FlatList
-            data={filteredTransactions}
-            renderItem={({ item }) => <TransactionItem item={item} />}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.transactionsList}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>📭</Text>
-                <Text style={styles.emptyTitle}>No transactions yet</Text>
-                <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
-              </View>
-            }
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // Render Add Money Modal
   const renderAddMoneyModal = () => (
     <Modal
       visible={showAddMoney}
@@ -1439,7 +1220,6 @@ const PayContent = ({ navigation }: any) => {
     </Modal>
   );
 
-  // Render Withdraw Modal
   const renderWithdrawModal = () => (
     <Modal
       visible={showWithdraw}
@@ -1500,6 +1280,130 @@ const PayContent = ({ navigation }: any) => {
     </Modal>
   );
 
+  const renderTransactionsModal = () => (
+    <Modal
+      visible={showTransactions}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowTransactions(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, styles.transactionsModal]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowTransactions(false)}>
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>All Transactions</Text>
+            <TouchableOpacity onPress={() => setShowTransactions(false)}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterContainer}
+            contentContainerStyle={styles.filterContent}
+          >
+            {transactionFilters.map((filter) => (
+              <TouchableOpacity
+                key={filter}
+                style={[
+                  styles.filterChip,
+                  selectedFilter === filter && styles.filterChipActive,
+                ]}
+                onPress={() => setSelectedFilter(filter)}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedFilter === filter && styles.filterChipTextActive,
+                  ]}
+                >
+                  {filter}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <FlatList
+            data={filteredTransactions}
+            renderItem={({ item }) => <TransactionItem item={item} />}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.transactionsList}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>📭</Text>
+                <Text style={styles.emptyTitle}>No transactions yet</Text>
+                <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
+              </View>
+            }
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderDisputeModal = () => (
+    <Modal
+      visible={showDisputeModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => {
+        setShowDisputeModal(false);
+        setSelectedTransaction(null);
+        setDisputeReason('');
+      }}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, styles.addMoneyModal]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Raise Dispute</Text>
+            <TouchableOpacity onPress={() => {
+              setShowDisputeModal(false);
+              setSelectedTransaction(null);
+              setDisputeReason('');
+            }}>
+              <Ionicons name="close" size={24} color="#8A8AAE" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.addMoneyContent}>
+            <Text style={styles.disputeInfo}>
+              You are raising a dispute for payment of UGX {selectedTransaction?.amount?.toLocaleString() || 0}
+            </Text>
+            <Text style={styles.disputeInfo}>
+              To: {selectedTransaction?.merchant || 'Seller'}
+            </Text>
+
+            <Text style={styles.addMoneyLabel}>Reason for Dispute *</Text>
+            <TextInput
+              style={[styles.amountInput, styles.disputeTextArea]}
+              placeholder="Describe why you're raising this dispute..."
+              placeholderTextColor="#8A8AAE"
+              multiline
+              numberOfLines={4}
+              value={disputeReason}
+              onChangeText={setDisputeReason}
+            />
+
+            <TouchableOpacity style={styles.fundButton} onPress={submitDispute}>
+              <LinearGradient
+                colors={['#E74C3C', '#C0392B']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.fundGradient}
+              >
+                <Text style={styles.fundButtonText}>Submit Dispute</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   // ============================================================
   // GUEST VIEW
   // ============================================================
@@ -1541,18 +1445,17 @@ const PayContent = ({ navigation }: any) => {
   }
 
   // ============================================================
-  // MAIN RENDER - Unified Pay & Hub
+  // MAIN RENDER
   // ============================================================
   return (
-  <SafeAreaView style={styles.container} edges={['top']}>   
-     <StatusBar barStyle="light-content" backgroundColor="#1F2F5F" />
+    <SafeAreaView style={styles.container} edges={['top']}>   
+      <StatusBar barStyle="light-content" backgroundColor="#1F2F5F" />
 
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Pay</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon}>
-            <Ionicons name="search-outline" size={22} color="#FFFFFF" />
+          <TouchableOpacity style={styles.headerIcon} onPress={() => setShowTransactions(true)}>
+            <Ionicons name="list-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerIcon}>
             <Ionicons name="options-outline" size={22} color="#FFFFFF" />
@@ -1594,79 +1497,71 @@ const PayContent = ({ navigation }: any) => {
           </LinearGradient>
         </View>
 
-        {/* AI Suggestion Banner */}
-        <AISuggestionBanner />
-
-        {/* Payment Methods */}
+        {/* Pending Transactions Tab */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Payment Methods</Text>
-            <TouchableOpacity>
-              <Text style={styles.sectionAction}>Manage</Text>
-            </TouchableOpacity>
+            <Text style={styles.sectionTitle}>Transactions</Text>
           </View>
-          {paymentMethods.map((method) => (
-            <PaymentMethodItem 
-              key={method.id} 
-              method={method} 
-              isSelected={selectedMethod === method.id}
-              onSelect={setSelectedMethod}
-            />
-          ))}
-        </View>
 
-        {/* Hub Tabs */}
-        <View style={styles.section}>
-          <View style={styles.tabsContainer}>
-            {hubTabs.map((tab) => (
+          {/* Tab Navigation */}
+          <View style={styles.tabContainer}>
+            {[
+              { key: 'pending', label: `Pending (${pendingTransactions.length})` },
+              { key: 'locked', label: `Locked (${lockedTransactions.length})` },
+              { key: 'completed', label: `Completed (${completedTransactions.length})` },
+              { key: 'disputed', label: `Disputed (${disputedTransactions.length})` },
+            ].map((tab) => (
               <TouchableOpacity
                 key={tab.key}
                 style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-                onPress={() => setActiveTab(tab.key)}
+                onPress={() => setActiveTab(tab.key as any)}
               >
                 <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>
                   {tab.label}
                 </Text>
-                {tab.count > 0 && (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>{tab.count}</Text>
-                  </View>
-                )}
               </TouchableOpacity>
             ))}
           </View>
 
-          {renderHubTabContent()}
-        </View>
-
-        {/* Recent Transactions */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-            <TouchableOpacity onPress={() => setShowTransactions(true)}>
-              <Text style={styles.sectionAction}>View All</Text>
-            </TouchableOpacity>
-          </View>
-          {transactions.slice(0, 3).map((item) => (
-            <TransactionItem key={item.id} item={item} />
-          ))}
-          {transactions.length === 0 && (
+          {/* Tab Content */}
+          {currentTabData.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📭</Text>
-              <Text style={styles.emptyTitle}>No transactions</Text>
-              <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
+              <Text style={styles.emptyTitle}>No {activeTab} transactions</Text>
+              <Text style={styles.emptySubtext}>
+                {activeTab === 'pending' && 'Your pending transactions will appear here'}
+                {activeTab === 'locked' && 'Your locked transactions will appear here'}
+                {activeTab === 'completed' && 'Your completed transactions will appear here'}
+                {activeTab === 'disputed' && 'Your disputed transactions will appear here'}
+              </Text>
             </View>
+          ) : (
+            currentTabData.map((item) => {
+              const timeRemaining = timeRemainingMap[item.id] || 0;
+              const isSeller = item.seller_id === user?.id;
+              
+              return (
+                <PendingTransactionCard
+                  key={item.id}
+                  transaction={item}
+                  onConfirm={handleConfirmPayment}
+                  onDispute={handleRaiseDispute}
+                  onActivate={handleActivatePayment}
+                  isSeller={isSeller}
+                  timeRemaining={timeRemaining}
+                />
+              );
+            })
           )}
         </View>
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* Modals */}
-      {renderCheckoutModal()}
       {renderTransactionsModal()}
       {renderAddMoneyModal()}
       {renderWithdrawModal()}
+      {renderDisputeModal()}
     </SafeAreaView>
   );
 };
@@ -1740,9 +1635,9 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
-
-
-  // Balance Card
+  bottomSpacer: {
+    height: 20,
+  },
   balanceCard: {
     marginBottom: 16,
     borderRadius: 16,
@@ -1781,43 +1676,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-
-  // AI Banner
-  aiBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(74, 125, 255, 0.1)',
-  },
-  aiBannerIcon: {
-    marginRight: 10,
-  },
-  aiBannerText: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  aiBannerDots: {
-    flexDirection: 'row',
-    gap: 4,
-    marginLeft: 8,
-  },
-  aiBannerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#8A8AAE',
-  },
-  aiBannerDotActive: {
-    backgroundColor: '#4A7DFF',
-  },
-
-  // Section
   section: {
     marginBottom: 20,
   },
@@ -1836,327 +1694,202 @@ const styles = StyleSheet.create({
     color: '#4A7DFF',
     fontSize: 13,
   },
-
-  // Tabs
-  tabsContainer: {
+  tabContainer: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    padding: 4,
+    flexWrap: 'wrap',
+    gap: 4,
     marginBottom: 12,
+  },
+  tab: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    gap: 4,
-    position: 'relative',
-  },
   tabActive: {
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    borderColor: '#4A7DFF',
   },
   tabText: {
     color: '#8A8AAE',
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '500',
   },
   tabTextActive: {
     color: '#4A7DFF',
-    fontWeight: '600',
   },
-  tabBadge: {
-    backgroundColor: '#E74C3C',
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    minWidth: 16,
-    alignItems: 'center',
-  },
-  tabBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: 'bold',
-  },
-  tabContent: {
-    paddingBottom: 8,
-  },
-
-  // Cart
-  cartCard: {
-    flexDirection: 'row',
+  pendingCard: {
     backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
-  cartImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    marginRight: 12,
+  pendingCardDisputed: {
+    borderColor: '#E74C3C',
+    backgroundColor: 'rgba(231, 76, 60, 0.05)',
   },
-  cartContent: {
-    flex: 1,
-  },
-  cartHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  cartTitle: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginRight: 8,
-  },
-  cartProvider: {
-    color: '#4A7DFF',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  cartVariation: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    marginTop: 1,
-  },
-  cartFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  cartPriceQuantity: {
+  pendingCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    marginBottom: 6,
   },
-  cartPrice: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  cartQuantity: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  cartQtyButton: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+  pendingCardIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.05)',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 10,
   },
-  cartQtyButtonText: {
+  pendingCardIconText: {
+    fontSize: 16,
+  },
+  pendingCardInfo: {
+    flex: 1,
+  },
+  pendingCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  pendingCardAmount: {
+    color: '#4A7DFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  pendingCardStatus: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(241, 196, 15, 0.2)',
+  },
+  pendingCardStatusDisputed: {
+    backgroundColor: 'rgba(231, 76, 60, 0.2)',
+  },
+  pendingCardStatusLocked: {
+    backgroundColor: 'rgba(74, 125, 255, 0.2)',
+  },
+  pendingCardStatusText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#8A8AAE',
+  },
+  pendingCardBody: {
+    marginBottom: 8,
+  },
+  pendingCardReference: {
+    color: '#6A7A9E',
+    fontSize: 11,
+  },
+  pendingCardDate: {
+    color: '#6A7A9E',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  pendingCardReason: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  pendingCardTimer: {
+    color: '#F1C40F',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  pendingCardDisputeReason: {
+    color: '#E74C3C',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  pendingCardActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  pendingCardButton: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    flex: 1,
+    minWidth: '45%',
+  },
+  pendingCardButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  pendingCardButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  pendingCardConfirm: {
+    flex: 2,
+  },
+  pendingCardActivate: {
+    flex: 2,
+  },
+  pendingCardDispute: {
+    flex: 1,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  emptyIcon: {
+    fontSize: 40,
+    marginBottom: 8,
+  },
+  emptyTitle: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
-  cartQtyText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-    minWidth: 20,
-    textAlign: 'center',
-  },
-  cartDelivery: {
+  emptySubtext: {
     color: '#8A8AAE',
-    fontSize: 11,
+    fontSize: 13,
+    marginTop: 4,
   },
-  viewCheckoutButton: {
-    marginTop: 8,
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
   },
-  viewCheckoutGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 10,
-    gap: 8,
+  modalContent: {
+    backgroundColor: '#1A2A4F',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
   },
-  viewCheckoutText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+  transactionsModal: {
+    height: height * 0.9,
   },
-
-  // Bookings
-  bookingCard: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+  addMoneyModal: {
+    height: height * 0.75,
   },
-  bookingHeader: {
+  modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  bookingProvider: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    marginBottom: 12,
   },
-  bookingAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bookingAvatarText: {
-    color: '#4A7DFF',
-    fontSize: 14,
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
     fontWeight: 'bold',
   },
-  bookingProviderName: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  bookingService: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  bookingStatus: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  bookingStatusText: {
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  bookingDetails: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 8,
-  },
-  bookingDetail: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  bookingDetailText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  bookingActions: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 4,
-  },
-  bookingActionButton: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  bookingActionText: {
-    color: '#4A7DFF',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  bookingActionDanger: {
-    backgroundColor: 'rgba(231, 76, 60, 0.1)',
-  },
-  bookingActionDangerText: {
-    color: '#E74C3C',
-  },
-
-  // Wishlist
-  wishlistGrid: {
-    gap: 8,
-  },
-  wishlistCard: {
-    flex: 1,
-    margin: 4,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 10,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-    position: 'relative',
-  },
-  wishlistRemoveButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 12,
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  wishlistImage: {
-    width: '100%',
-    height: 120,
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  wishlistInfo: {
-    flex: 1,
-  },
-  wishlistTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  wishlistProvider: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 1,
-  },
-  wishlistPrice: {
-    color: '#4A7DFF',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  wishlistRating: {
-    color: '#8A8AAE',
-    fontSize: 11,
-  },
-  wishlistAlert: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(46, 204, 113, 0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 4,
-  },
-  wishlistAlertDanger: {
-    backgroundColor: 'rgba(231, 76, 60, 0.1)',
-  },
-  wishlistAlertText: {
-    color: '#2ECC71',
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  wishlistAlertDangerText: {
-    color: '#E74C3C',
-  },
-
-  // Payment Methods
   paymentMethodItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2211,228 +1944,6 @@ const styles = StyleSheet.create({
     borderColor: '#4A7DFF',
     backgroundColor: '#4A7DFF',
   },
-
-  // Transactions
-  transactionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-  },
-  transactionIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  transactionIcon: {
-    fontSize: 18,
-  },
-  transactionContent: {
-    flex: 1,
-  },
-  transactionMerchant: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  transactionMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 2,
-  },
-  transactionDate: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  transactionStatus: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 10,
-  },
-  transactionStatusText: {
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  transactionReference: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  transactionAmount: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
-  // Modals
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#1A2A4F',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: height * 0.85,
-    paddingHorizontal: 16,
-    paddingBottom: 20,
-  },
-  transactionsModal: {
-    height: height * 0.9,
-  },
-  addMoneyModal: {
-    height: height * 0.75,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 12,
-  },
-  modalTitle: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-
-  // Checkout
-  checkoutContent: {
-    paddingBottom: 100,
-  },
-  checkoutSection: {
-    marginBottom: 16,
-  },
-  checkoutSectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  orderItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 6,
-  },
-  orderItemImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    marginRight: 10,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  orderItemImageActual: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 8,
-  },
-  orderItemInfo: {
-    flex: 1,
-  },
-  orderItemName: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  orderItemShop: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  orderItemPrice: {
-    color: '#4A7DFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  orderItemQty: {
-    color: '#8A8AAE',
-    fontSize: 14,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  priceLabel: {
-    color: '#8A8AAE',
-    fontSize: 13,
-  },
-  priceValue: {
-    color: '#FFFFFF',
-    fontSize: 13,
-  },
-  priceTotal: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  priceTotalLabel: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  priceTotalValue: {
-    color: '#4A7DFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  bottomSpacer: {
-    height: 20,
-  },
-  stickyCheckoutBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: 'rgba(26, 42, 79, 0.95)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-    gap: 12,
-  },
-  checkoutTotalPreview: {
-    flex: 1,
-  },
-  checkoutTotalLabel: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
-  checkoutTotalAmount: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  payNowButton: {
-    flex: 1,
-  },
-  payNowGradient: {
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  payNowText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Filter Chips
   filterContainer: {
     marginBottom: 12,
   },
@@ -2463,8 +1974,6 @@ const styles = StyleSheet.create({
   transactionsList: {
     paddingBottom: 20,
   },
-
-  // Add Money / Withdraw
   addMoneyContent: {
     paddingTop: 8,
     paddingBottom: 20,
@@ -2522,8 +2031,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-
-  // Withdraw
   withdrawBalanceInfo: {
     backgroundColor: 'rgba(74, 125, 255, 0.1)',
     borderRadius: 12,
@@ -2542,28 +2049,15 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
   },
-
-  // Empty State
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 30,
-  },
-  emptyIcon: {
-    fontSize: 40,
+  disputeInfo: {
+    color: '#8A8AAE',
+    fontSize: 14,
     marginBottom: 8,
   },
-  emptyTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+  disputeTextArea: {
+    height: 120,
+    textAlignVertical: 'top',
   },
-  emptySubtext: {
-    color: '#8A8AAE',
-    fontSize: 13,
-    marginTop: 4,
-  },
-
-  // Guest
   guestContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -2607,5 +2101,60 @@ const styles = StyleSheet.create({
   guestContinueText: {
     color: '#8A8AAE',
     fontSize: 14,
+  },
+  transactionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  transactionIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  transactionIcon: {
+    fontSize: 18,
+  },
+  transactionContent: {
+    flex: 1,
+  },
+  transactionMerchant: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  transactionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  transactionDate: {
+    color: '#8A8AAE',
+    fontSize: 12,
+  },
+  transactionStatus: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  transactionStatusText: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  transactionReference: {
+    color: '#8A8AAE',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  transactionAmount: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
