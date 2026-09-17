@@ -76,10 +76,14 @@ interface Transaction {
   dispute_reason?: string;
   released_at?: string;
   admin_confirmed_at?: string;
-  // For payment requests
+  // Payment-request-derived fields
   payment_request_id?: string;
   is_request?: boolean;
   reason?: string;
+  // ✅ For accurate timer + role detection
+  locked_at?: string | null;
+  is_me_seller?: boolean;
+  is_me_buyer?: boolean;
 }
 
 interface PaymentMethod {
@@ -124,27 +128,42 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
 
   return (
     <View style={styles.transactionItem}>
-      <View style={[styles.transactionIconContainer, { 
-        backgroundColor: isIncoming ? 'rgba(46, 204, 113, 0.1)' : 'rgba(231, 76, 60, 0.1)' 
-      }]}>
-        <Text style={styles.transactionIcon}>
-          {isIncoming ? '📥' : '📤'}
-        </Text>
+      <View
+        style={[
+          styles.transactionIconContainer,
+          {
+            backgroundColor: isIncoming
+              ? 'rgba(46, 204, 113, 0.1)'
+              : 'rgba(231, 76, 60, 0.1)',
+          },
+        ]}
+      >
+        <Text style={styles.transactionIcon}>{isIncoming ? '📥' : '📤'}</Text>
       </View>
       <View style={styles.transactionContent}>
         <Text style={styles.transactionMerchant}>{item.merchant}</Text>
         <View style={styles.transactionMeta}>
           <Text style={styles.transactionDate}>
-            {new Date(item.date).toLocaleDateString('en-UG', { 
-              day: '2-digit', 
-              month: 'short', 
+            {new Date(item.date).toLocaleDateString('en-UG', {
+              day: '2-digit',
+              month: 'short',
               year: 'numeric',
               hour: '2-digit',
-              minute: '2-digit'
+              minute: '2-digit',
             })}
           </Text>
-          <View style={[styles.transactionStatus, { backgroundColor: statusColors[item.status] + '20' }]}>
-            <Text style={[styles.transactionStatusText, { color: statusColors[item.status] }]}>
+          <View
+            style={[
+              styles.transactionStatus,
+              { backgroundColor: (statusColors[item.status] || '#8A8AAE') + '20' },
+            ]}
+          >
+            <Text
+              style={[
+                styles.transactionStatusText,
+                { color: statusColors[item.status] || '#8A8AAE' },
+              ]}
+            >
               {statusLabels[item.status] || item.status}
             </Text>
           </View>
@@ -154,7 +173,8 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
         )}
       </View>
       <Text style={[styles.transactionAmount, { color: isIncoming ? '#2ECC71' : '#E74C3C' }]}>
-        {isIncoming ? '+' : ''}{item.amount.toLocaleString()} UGX
+        {isIncoming ? '+' : ''}
+        {item.amount.toLocaleString()} UGX
       </Text>
     </View>
   );
@@ -164,21 +184,27 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
 // PENDING TRANSACTION CARD
 // ============================================================
 
-const PendingTransactionCard = ({ 
-  transaction, 
-  onConfirm, 
+const PendingTransactionCard = ({
+  transaction,
+  onConfirm,
   onDispute,
   onActivate,
   isSeller,
-  timeRemaining 
+  isBuyer,
+  timeRemaining,
 }: any) => {
   const isLocked = transaction.status === 'locked';
   const isPending = transaction.status === 'pending';
   const isDisputed = transaction.status === 'disputed';
-  
-  const canConfirm = isLocked && !isSeller; // Buyer can confirm
-  const canActivate = isLocked && isSeller && timeRemaining <= 0; // Seller can activate after 24hrs
-  const canDispute = isLocked && !isDisputed; // Buyer can dispute
+
+  // ✅ Buyer confirms; seller activates only after 24h without confirmation
+  const canConfirm = isLocked && isBuyer;
+  const canActivate = isLocked && isSeller && timeRemaining <= 0;
+  const canDispute = isLocked && isBuyer && !isDisputed;
+
+  // ✅ New: Show a status line to BOTH parties even when no button is shown
+  const showSellerWaiting = isLocked && isSeller && timeRemaining > 0;
+  const showBuyerPendingConfirm = isLocked && isBuyer;
 
   return (
     <View style={[styles.pendingCard, isDisputed && styles.pendingCardDisputed]}>
@@ -196,11 +222,13 @@ const PendingTransactionCard = ({
             UGX {transaction.amount.toLocaleString()}
           </Text>
         </View>
-        <View style={[
-          styles.pendingCardStatus,
-          isDisputed && styles.pendingCardStatusDisputed,
-          isLocked && styles.pendingCardStatusLocked,
-        ]}>
+        <View
+          style={[
+            styles.pendingCardStatus,
+            isDisputed && styles.pendingCardStatusDisputed,
+            isLocked && styles.pendingCardStatusLocked,
+          ]}
+        >
           <Text style={styles.pendingCardStatusText}>
             {isDisputed ? 'Disputed' : isLocked ? 'Locked' : 'Pending'}
           </Text>
@@ -209,9 +237,7 @@ const PendingTransactionCard = ({
 
       <View style={styles.pendingCardBody}>
         {transaction.reference && (
-          <Text style={styles.pendingCardReference}>
-            Ref: {transaction.reference}
-          </Text>
+          <Text style={styles.pendingCardReference}>Ref: {transaction.reference}</Text>
         )}
         <Text style={styles.pendingCardDate}>
           {new Date(transaction.date).toLocaleDateString('en-UG', {
@@ -225,14 +251,16 @@ const PendingTransactionCard = ({
         {transaction.reason && (
           <Text style={styles.pendingCardReason}>Reason: {transaction.reason}</Text>
         )}
-        {isLocked && timeRemaining > 0 && !isSeller && (
+        {showBuyerPendingConfirm && timeRemaining > 0 && (
           <Text style={styles.pendingCardTimer}>
-            ⏰ Auto-confirm in {Math.floor(timeRemaining)}h {Math.floor((timeRemaining % 1) * 60)}m
+            ⏰ Auto-confirm in {Math.floor(timeRemaining)}h{' '}
+            {Math.floor((timeRemaining % 1) * 60)}m
           </Text>
         )}
-        {isLocked && isSeller && timeRemaining > 0 && (
+        {showSellerWaiting && (
           <Text style={styles.pendingCardTimer}>
-            ⏳ Buyer has {Math.floor(timeRemaining)}h to confirm
+            ⏳ Buyer has {Math.floor(timeRemaining)}h{' '}
+            {Math.floor((timeRemaining % 1) * 60)}m to confirm
           </Text>
         )}
         {transaction.dispute_reason && (
@@ -244,7 +272,7 @@ const PendingTransactionCard = ({
 
       <View style={styles.pendingCardActions}>
         {canConfirm && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.pendingCardButton, styles.pendingCardConfirm]}
             onPress={() => onConfirm(transaction)}
             activeOpacity={0.8}
@@ -262,7 +290,7 @@ const PendingTransactionCard = ({
         )}
 
         {canActivate && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.pendingCardButton, styles.pendingCardActivate]}
             onPress={() => onActivate(transaction)}
             activeOpacity={0.8}
@@ -280,7 +308,7 @@ const PendingTransactionCard = ({
         )}
 
         {canDispute && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.pendingCardButton, styles.pendingCardDispute]}
             onPress={() => onDispute(transaction)}
             activeOpacity={0.8}
@@ -306,8 +334,8 @@ const PendingTransactionCard = ({
 // ============================================================
 
 const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
-  <TouchableOpacity 
-    style={[styles.paymentMethodItem, isSelected && styles.paymentMethodItemSelected]} 
+  <TouchableOpacity
+    style={[styles.paymentMethodItem, isSelected && styles.paymentMethodItemSelected]}
     onPress={() => onSelect(method.id)}
   >
     <Text style={styles.paymentMethodIcon}>{method.icon}</Text>
@@ -322,7 +350,9 @@ const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
         <Text style={styles.paymentMethodDetail}>{method.details.phone}</Text>
       )}
     </View>
-    <View style={[styles.paymentMethodRadio, isSelected && styles.paymentMethodRadioSelected]} />
+    <View
+      style={[styles.paymentMethodRadio, isSelected && styles.paymentMethodRadioSelected]}
+    />
   </TouchableOpacity>
 );
 
@@ -333,7 +363,7 @@ const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
 const PayContent = ({ navigation }: any) => {
   const { isAuthenticated, user } = useAuth();
   const { isDesktop } = useBreakpoint();
-  
+
   // --- State ---
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -350,7 +380,9 @@ const PayContent = ({ navigation }: any) => {
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('All');
-  const [activeTab, setActiveTab] = useState<'pending' | 'locked' | 'completed' | 'disputed'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'locked' | 'completed' | 'disputed'>(
+    'pending'
+  );
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [disputeReason, setDisputeReason] = useState('');
@@ -364,24 +396,25 @@ const PayContent = ({ navigation }: any) => {
 
   const fetchWalletBalance = useCallback(async () => {
     if (!user?.id) return 0;
-
     try {
       const { data, error } = await supabaseAny
         .from('users')
         .select('wallet_balance')
         .eq('id', user.id)
         .single();
-
       if (error) return 0;
       return data?.wallet_balance || 0;
-    } catch (error) {
-      console.error('Error fetching wallet balance:', error);
+    } catch {
       return 0;
     }
   }, [user?.id]);
 
-  // Fetch regular transactions (topups, withdrawals, etc.)
-  const fetchTransactions = useCallback(async () => {
+  /**
+   * ✅ FIX: Fetch ONLY non-payment transactions.
+   * Payments are owned by `payment_requests` (single source of truth).
+   * Top-ups, withdrawals, refunds live only in `transactions`.
+   */
+  const fetchNonPaymentTransactions = useCallback(async () => {
     if (!user?.id) return [];
 
     try {
@@ -389,6 +422,7 @@ const PayContent = ({ navigation }: any) => {
         .from('transactions')
         .select('*')
         .or(`user_id.eq.${user.id},buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
+        .neq('type', 'payment')                // ✅ exclude payment rows
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -401,9 +435,9 @@ const PayContent = ({ navigation }: any) => {
 
       return data.map((t: any) => ({
         id: t.id,
-        type: t.type || 'payment',
+        type: t.type || 'topup',
         merchant: t.merchant || 'Munolink',
-        amount: t.amount || t.locked_amount || 0,
+        amount: t.amount || 0,
         date: t.created_at || new Date().toISOString(),
         status: t.status || 'pending',
         method: t.method || 'Wallet',
@@ -417,19 +451,17 @@ const PayContent = ({ navigation }: any) => {
         dispute_reason: t.dispute_reason,
         released_at: t.released_at,
         admin_confirmed_at: t.admin_confirmed_at,
-      }));
+      })) as Transaction[];
     } catch (error) {
       console.error('Error fetching transactions:', error);
       return [];
     }
   }, [user?.id]);
 
-  // Fetch payment requests - THIS IS THE KEY FIX
   const fetchPaymentRequests = useCallback(async () => {
     if (!user?.id) return [];
 
     try {
-      // First, get the payment requests
       const { data: requests, error: requestsError } = await supabaseAny
         .from('payment_requests')
         .select('*')
@@ -443,16 +475,17 @@ const PayContent = ({ navigation }: any) => {
 
       if (!requests || requests.length === 0) return [];
 
-      // Get all unique user IDs from the requests
       const userIds = new Set<string>();
       requests.forEach((r: any) => {
         if (r.from_user_id) userIds.add(r.from_user_id);
         if (r.to_user_id) userIds.add(r.to_user_id);
       });
 
-      // Fetch user details separately (to avoid foreign key errors)
-      let userMap: Record<string, { id: string; full_name: string; avatar_url: string | null }> = {};
-      
+      let userMap: Record<
+        string,
+        { id: string; full_name: string; avatar_url: string | null }
+      > = {};
+
       if (userIds.size > 0) {
         const { data: users, error: usersError } = await supabaseAny
           .from('users')
@@ -464,28 +497,25 @@ const PayContent = ({ navigation }: any) => {
             userMap[u.id] = {
               id: u.id,
               full_name: u.full_name || 'User',
-              avatar_url: u.avatar_url || null
+              avatar_url: u.avatar_url || null,
             };
           });
         }
       }
 
-      // Map users back to payment requests
-      const mappedRequests = requests.map((r: any) => ({
+      return requests.map((r: any) => ({
         ...r,
-        from_user: userMap[r.from_user_id] || { 
-          id: r.from_user_id, 
-          full_name: 'User', 
-          avatar_url: null 
+        from_user: userMap[r.from_user_id] || {
+          id: r.from_user_id,
+          full_name: 'User',
+          avatar_url: null,
         },
-        to_user: userMap[r.to_user_id] || { 
-          id: r.to_user_id, 
-          full_name: 'User', 
-          avatar_url: null 
-        }
+        to_user: userMap[r.to_user_id] || {
+          id: r.to_user_id,
+          full_name: 'User',
+          avatar_url: null,
+        },
       }));
-
-      return mappedRequests;
     } catch (error) {
       console.error('Error fetching payment requests:', error);
       return [];
@@ -514,7 +544,7 @@ const PayContent = ({ navigation }: any) => {
           icon: '📱',
           type: 'mobile_money',
           default: true,
-          details: { phone: phone },
+          details: { phone },
         });
         methods.push({
           id: 'airtel',
@@ -522,7 +552,7 @@ const PayContent = ({ navigation }: any) => {
           icon: '📱',
           type: 'mobile_money',
           default: false,
-          details: { phone: phone },
+          details: { phone },
         });
       }
 
@@ -535,14 +565,13 @@ const PayContent = ({ navigation }: any) => {
       });
 
       return methods;
-    } catch (error) {
-      console.error('Error fetching payment methods:', error);
+    } catch {
       return [];
     }
   }, [user?.id]);
 
   // ============================================================
-  // LOAD ALL DATA - TRANSFORMS PAYMENT REQUESTS TO TRANSACTIONS
+  // LOAD ALL DATA
   // ============================================================
 
   const loadAllData = useCallback(async () => {
@@ -553,9 +582,9 @@ const PayContent = ({ navigation }: any) => {
 
     setLoading(true);
     try {
-      const [balance, transactionsData, paymentRequestsData, methods] = await Promise.all([
+      const [balance, nonPaymentTxs, paymentRequestsData, methods] = await Promise.all([
         fetchWalletBalance(),
-        fetchTransactions(),
+        fetchNonPaymentTransactions(),
         fetchPaymentRequests(),
         fetchPaymentMethods(),
       ]);
@@ -563,58 +592,68 @@ const PayContent = ({ navigation }: any) => {
       setWalletBalance(balance);
       setPaymentMethods(methods);
 
-      const defaultMethod = methods.find(m => m.default);
+      const defaultMethod = methods.find((m) => m.default);
       if (defaultMethod) {
         setSelectedMethod(defaultMethod.id);
       } else if (methods.length > 0) {
         setSelectedMethod(methods[0].id);
       }
 
-      // --- TRANSFORM PAYMENT REQUESTS TO TRANSACTION-LIKE OBJECTS ---
       const pending: Transaction[] = [];
       const locked: Transaction[] = [];
       const completed: Transaction[] = [];
       const disputed: Transaction[] = [];
 
-      // Process payment requests first (these are the source of truth)
+      // ✅ Single source of truth: transform each payment_request into a card
       paymentRequestsData.forEach((pr: PaymentRequest) => {
         const isFromMe = pr.from_user_id === user.id;
         const isToMe = pr.to_user_id === user.id;
-        
-        // Determine the other party's name
-        let merchant = 'User';
-        if (isFromMe && pr.to_user) {
-          merchant = pr.to_user.full_name || 'User';
-        } else if (isToMe && pr.from_user) {
-          merchant = pr.from_user.full_name || 'User';
+
+        // Merchant = the OTHER party
+        const merchant = isFromMe
+          ? pr.to_user?.full_name || 'User'
+          : pr.from_user?.full_name || 'User';
+
+        // ✅ Correct buyer/seller assignment
+        //   - Pay Now  (is_request === false): sender = buyer, receiver = seller
+        //   - Request  (is_request === true):  sender = seller, receiver = buyer
+        let buyerId: string;
+        let sellerId: string;
+        if (pr.is_request) {
+          buyerId = pr.to_user_id;    // receiver is the buyer
+          sellerId = pr.from_user_id; // sender is the seller
+        } else {
+          buyerId = pr.from_user_id;  // sender is the buyer (paid)
+          sellerId = pr.to_user_id;   // receiver is the seller
         }
 
-        // Determine if this is a request (seller requesting from buyer)
-        // For display: if from_user is the other party, they're the seller
-        const isSeller = isToMe && pr.is_request;
-        const isBuyer = isFromMe && pr.is_request;
+        const isMeBuyer = buyerId === user.id;
+        const isMeSeller = sellerId === user.id;
 
         const tx: Transaction = {
           id: pr.id,
           type: 'payment',
-          merchant: merchant,
+          merchant,
           amount: pr.amount,
           date: pr.created_at,
           status: pr.status as any,
           method: 'Wallet',
           reference: `PAY-${pr.id.slice(0, 8)}`,
           user_id: user.id,
-          buyer_id: pr.to_user_id,
-          seller_id: pr.from_user_id,
-          locked_amount: pr.status === 'locked' || pr.status === 'accepted' ? pr.amount : 0,
+          buyer_id: buyerId,
+          seller_id: sellerId,
+          locked_amount:
+            pr.status === 'locked' || pr.status === 'accepted' ? pr.amount : 0,
           confirmed_at: pr.completed_at || undefined,
           dispute_reason: pr.status === 'disputed' ? 'Disputed' : undefined,
           payment_request_id: pr.id,
           is_request: pr.is_request,
           reason: pr.reason || undefined,
+          locked_at: pr.locked_at || pr.accepted_at || null,  // ✅ timer basis
+          is_me_buyer: isMeBuyer,
+          is_me_seller: isMeSeller,
         };
 
-        // Categorize by status
         switch (pr.status) {
           case 'pending':
             pending.push(tx);
@@ -634,32 +673,23 @@ const PayContent = ({ navigation }: any) => {
         }
       });
 
-      // Also add regular transactions (topups, withdrawals, etc.)
-      transactionsData.forEach((t: Transaction) => {
-        // Check if this transaction is already represented by a payment request
-        const exists = [...pending, ...locked, ...completed, ...disputed].some(p => 
-          p.reference === t.reference || 
-          (t.buyer_id && t.seller_id && 
-           pending.some(pr => pr.buyer_id === t.buyer_id && pr.seller_id === t.seller_id && pr.amount === t.amount))
-        );
-        
-        if (!exists) {
-          switch (t.status) {
-            case 'pending':
-              pending.push(t);
-              break;
-            case 'locked':
-              locked.push(t);
-              break;
-            case 'completed':
-              completed.push(t);
-              break;
-            case 'disputed':
-              disputed.push(t);
-              break;
-            default:
-              break;
-          }
+      // Add non-payment transactions (topups, withdrawals, refunds, transfers)
+      nonPaymentTxs.forEach((t) => {
+        switch (t.status) {
+          case 'pending':
+            pending.push(t);
+            break;
+          case 'locked':
+            locked.push(t);
+            break;
+          case 'completed':
+            completed.push(t);
+            break;
+          case 'disputed':
+            disputed.push(t);
+            break;
+          default:
+            break;
         }
       });
 
@@ -668,15 +698,20 @@ const PayContent = ({ navigation }: any) => {
       setCompletedTransactions(completed);
       setDisputedTransactions(disputed);
       setTransactions([...pending, ...locked, ...completed, ...disputed]);
-
     } catch (error) {
       console.error('Error loading pay data:', error);
     } finally {
       setLoading(false);
     }
-  }, [user?.id, fetchWalletBalance, fetchTransactions, fetchPaymentRequests, fetchPaymentMethods]);
+  }, [
+    user?.id,
+    fetchWalletBalance,
+    fetchNonPaymentTransactions,
+    fetchPaymentRequests,
+    fetchPaymentMethods,
+  ]);
 
-  // --- Auto-refresh when screen comes into focus ---
+  // --- Auto-refresh on focus ---
   useFocusEffect(
     useCallback(() => {
       if (isAuthenticated && user?.id) {
@@ -688,7 +723,6 @@ const PayContent = ({ navigation }: any) => {
     }, [isAuthenticated, user?.id, loadAllData])
   );
 
-  // --- Initial load ---
   useEffect(() => {
     if (isAuthenticated && user?.id) {
       loadAllData();
@@ -697,28 +731,28 @@ const PayContent = ({ navigation }: any) => {
     }
   }, [isAuthenticated, user?.id, loadAllData]);
 
-  // --- Pull to Refresh ---
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadAllData();
     setRefreshing(false);
   }, [loadAllData]);
 
-  // --- Time Remaining Calculator ---
+  // ✅ Timer uses locked_at, not created_at
   useEffect(() => {
-    const interval = setInterval(() => {
+    const computeRemaining = () => {
       const newMap: Record<string, number> = {};
-      
-      lockedTransactions.forEach((t: Transaction) => {
-        const createdAt = new Date(t.date).getTime();
+      lockedTransactions.forEach((t) => {
+        const basis = t.locked_at || t.date;
+        const lockedAt = new Date(basis).getTime();
         const now = Date.now();
-        const diff = 24 * 60 * 60 * 1000 - (now - createdAt);
-        newMap[t.id] = Math.max(0, diff / (60 * 60 * 1000));
+        const msRemaining = 24 * 60 * 60 * 1000 - (now - lockedAt);
+        newMap[t.id] = Math.max(0, msRemaining / (60 * 60 * 1000));
       });
-      
       setTimeRemainingMap(newMap);
-    }, 60000);
+    };
 
+    computeRemaining();
+    const interval = setInterval(computeRemaining, 60 * 1000);
     return () => clearInterval(interval);
   }, [lockedTransactions]);
 
@@ -726,142 +760,160 @@ const PayContent = ({ navigation }: any) => {
   // ACTION HANDLERS
   // ============================================================
 
-  // --- Confirm Payment (Buyer confirms receipt) ---
-  const handleConfirmPayment = useCallback(async (transaction: Transaction) => {
-    Alert.alert(
-      '✅ Confirm Payment',
-      `You are about to confirm payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
-      `To: ${transaction.merchant || 'Seller'}\n\n` +
-      `⚠️ This action is irreversible. Only confirm if you have received the product/service.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: 'default',
-          onPress: async () => {
-            try {
-              // Check if this is a payment request
-              const { data: paymentRequest } = await supabaseAny
-                .from('payment_requests')
-                .select('*')
-                .eq('id', transaction.id)
-                .single();
-
-              if (paymentRequest) {
-                // It's a payment request - update it
-                const { error: prError } = await supabaseAny
+  const handleConfirmPayment = useCallback(
+    async (transaction: Transaction) => {
+      Alert.alert(
+        '✅ Confirm Payment',
+        `You are about to confirm payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+          `To: ${transaction.merchant || 'Seller'}\n\n` +
+          `⚠️ This action is irreversible. Only confirm if you have received the product/service.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Confirm',
+            style: 'default',
+            onPress: async () => {
+              try {
+                const { data: paymentRequest } = await supabaseAny
                   .from('payment_requests')
-                  .update({
-                    status: 'completed',
-                    completed_at: new Date().toISOString(),
-                  })
-                  .eq('id', transaction.id);
+                  .select('*')
+                  .eq('id', transaction.id)
+                  .single();
 
-                if (prError) throw prError;
+                if (paymentRequest) {
+                  const now = new Date().toISOString();
 
-                // Also update the linked transaction if exists
-                if (paymentRequest.transaction_id) {
-                  await supabaseAny
+                  const { error: prError } = await supabaseAny
+                    .from('payment_requests')
+                    .update({ status: 'completed', completed_at: now })
+                    .eq('id', transaction.id);
+                  if (prError) throw prError;
+
+                  if (paymentRequest.transaction_id) {
+                    await supabaseAny
+                      .from('transactions')
+                      .update({ status: 'completed', confirmed_at: now })
+                      .eq('id', paymentRequest.transaction_id);
+                  }
+
+                  // Credit seller's wallet
+                  const sellerId = paymentRequest.is_request
+                    ? paymentRequest.from_user_id
+                    : paymentRequest.to_user_id;
+
+                  const { data: sellerData } = await supabaseAny
+                    .from('users')
+                    .select('wallet_balance')
+                    .eq('id', sellerId)
+                    .single();
+
+                  if (sellerData) {
+                    await supabaseAny
+                      .from('users')
+                      .update({
+                        wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
+                      })
+                      .eq('id', sellerId);
+                  }
+                } else {
+                  const { error: txError } = await supabaseAny
                     .from('transactions')
                     .update({
                       status: 'completed',
                       confirmed_at: new Date().toISOString(),
                     })
-                    .eq('id', paymentRequest.transaction_id);
-                }
+                    .eq('id', transaction.id);
+                  if (txError) throw txError;
 
-                // Update seller's wallet balance
-                const sellerId = paymentRequest.from_user_id;
-                const { data: sellerData } = await supabaseAny
-                  .from('users')
-                  .select('wallet_balance')
-                  .eq('id', sellerId)
-                  .single();
-
-                if (sellerData) {
-                  await supabaseAny
+                  const sellerId = transaction.seller_id || transaction.user_id;
+                  const { data: sellerData } = await supabaseAny
                     .from('users')
-                    .update({
-                      wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
-                    })
-                    .eq('id', sellerId);
+                    .select('wallet_balance')
+                    .eq('id', sellerId)
+                    .single();
+
+                  if (sellerData) {
+                    await supabaseAny
+                      .from('users')
+                      .update({
+                        wallet_balance: (sellerData.wallet_balance || 0) + transaction.amount,
+                      })
+                      .eq('id', sellerId);
+                  }
                 }
 
-              } else {
-                // It's a regular transaction
-                const { error: txError } = await supabaseAny
-                  .from('transactions')
-                  .update({
-                    status: 'completed',
-                    confirmed_at: new Date().toISOString(),
-                  })
-                  .eq('id', transaction.id);
-
-                if (txError) throw txError;
-
-                // Update seller's wallet
-                const sellerId = transaction.seller_id || transaction.user_id;
-                const { data: sellerData } = await supabaseAny
-                  .from('users')
-                  .select('wallet_balance')
-                  .eq('id', sellerId)
-                  .single();
-
-                if (sellerData) {
-                  await supabaseAny
-                    .from('users')
-                    .update({
-                      wallet_balance: (sellerData.wallet_balance || 0) + transaction.amount,
-                    })
-                    .eq('id', sellerId);
-                }
+                Alert.alert('✅ Success', 'Payment confirmed successfully!');
+                loadAllData();
+              } catch (error) {
+                console.error('Error confirming payment:', error);
+                Alert.alert('❌ Error', 'Failed to confirm payment. Please try again.');
               }
+            },
+          },
+        ]
+      );
+    },
+    [loadAllData]
+  );
 
-              Alert.alert('✅ Success', 'Payment confirmed successfully!');
-              loadAllData();
-            } catch (error) {
-              console.error('Error confirming payment:', error);
-              Alert.alert('❌ Error', 'Failed to confirm payment. Please try again.');
-            }
-          }
-        }
-      ]
-    );
-  }, [loadAllData]);
-
-  // --- Activate Payment (Seller after 24hrs) ---
-  const handleActivatePayment = useCallback(async (transaction: Transaction) => {
-    Alert.alert(
-      '🚀 Activate Payment',
-      `You are about to activate payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
-      `From: ${transaction.merchant || 'Buyer'}\n\n` +
-      `⚠️ This action will release the locked funds to your wallet. Only do this if the buyer has not confirmed within 24 hours.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Activate',
-          style: 'default',
-          onPress: async () => {
-            try {
-              // Check if this is a payment request
-              const { data: paymentRequest } = await supabaseAny
-                .from('payment_requests')
-                .select('*')
-                .eq('id', transaction.id)
-                .single();
-
-              if (paymentRequest) {
-                // Update payment request
-                await supabaseAny
+  const handleActivatePayment = useCallback(
+    async (transaction: Transaction) => {
+      Alert.alert(
+        '🚀 Activate Payment',
+        `You are about to activate payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+          `From: ${transaction.merchant || 'Buyer'}\n\n` +
+          `⚠️ This action will release the locked funds to your wallet. Only do this if the buyer has not confirmed within 24 hours.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Activate',
+            style: 'default',
+            onPress: async () => {
+              try {
+                const { data: paymentRequest } = await supabaseAny
                   .from('payment_requests')
-                  .update({
-                    status: 'completed',
-                    completed_at: new Date().toISOString(),
-                  })
-                  .eq('id', transaction.id);
+                  .select('*')
+                  .eq('id', transaction.id)
+                  .single();
 
-                // Update linked transaction
-                if (paymentRequest.transaction_id) {
+                if (paymentRequest) {
+                  const now = new Date().toISOString();
+
+                  await supabaseAny
+                    .from('payment_requests')
+                    .update({ status: 'completed', completed_at: now })
+                    .eq('id', transaction.id);
+
+                  if (paymentRequest.transaction_id) {
+                    await supabaseAny
+                      .from('transactions')
+                      .update({
+                        status: 'completed',
+                        released_at: now,
+                        admin_confirmed_at: now,
+                      })
+                      .eq('id', paymentRequest.transaction_id);
+                  }
+
+                  const sellerId = paymentRequest.is_request
+                    ? paymentRequest.from_user_id
+                    : paymentRequest.to_user_id;
+
+                  const { data: sellerData } = await supabaseAny
+                    .from('users')
+                    .select('wallet_balance')
+                    .eq('id', sellerId)
+                    .single();
+
+                  if (sellerData) {
+                    await supabaseAny
+                      .from('users')
+                      .update({
+                        wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
+                      })
+                      .eq('id', sellerId);
+                  }
+                } else {
                   await supabaseAny
                     .from('transactions')
                     .update({
@@ -869,50 +921,23 @@ const PayContent = ({ navigation }: any) => {
                       released_at: new Date().toISOString(),
                       admin_confirmed_at: new Date().toISOString(),
                     })
-                    .eq('id', paymentRequest.transaction_id);
+                    .eq('id', transaction.id);
                 }
 
-                // Update seller's wallet
-                const sellerId = paymentRequest.from_user_id;
-                const { data: sellerData } = await supabaseAny
-                  .from('users')
-                  .select('wallet_balance')
-                  .eq('id', sellerId)
-                  .single();
-
-                if (sellerData) {
-                  await supabaseAny
-                    .from('users')
-                    .update({
-                      wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
-                    })
-                    .eq('id', sellerId);
-                }
-              } else {
-                // Regular transaction
-                await supabaseAny
-                  .from('transactions')
-                  .update({
-                    status: 'completed',
-                    released_at: new Date().toISOString(),
-                    admin_confirmed_at: new Date().toISOString(),
-                  })
-                  .eq('id', transaction.id);
+                Alert.alert('✅ Success', 'Payment activated and funds released to your wallet!');
+                loadAllData();
+              } catch (error) {
+                console.error('Error activating payment:', error);
+                Alert.alert('❌ Error', 'Failed to activate payment. Please try again.');
               }
+            },
+          },
+        ]
+      );
+    },
+    [loadAllData]
+  );
 
-              Alert.alert('✅ Success', 'Payment activated and funds released to your wallet!');
-              loadAllData();
-            } catch (error) {
-              console.error('Error activating payment:', error);
-              Alert.alert('❌ Error', 'Failed to activate payment. Please try again.');
-            }
-          }
-        }
-      ]
-    );
-  }, [loadAllData]);
-
-  // --- Raise Dispute ---
   const handleRaiseDispute = useCallback((transaction: Transaction) => {
     setSelectedTransaction(transaction);
     setDisputeReason('');
@@ -926,7 +951,6 @@ const PayContent = ({ navigation }: any) => {
     }
 
     try {
-      // Check if this is a payment request
       const { data: paymentRequest } = await supabaseAny
         .from('payment_requests')
         .select('*')
@@ -934,15 +958,11 @@ const PayContent = ({ navigation }: any) => {
         .single();
 
       if (paymentRequest) {
-        // Update payment request
         await supabaseAny
           .from('payment_requests')
-          .update({
-            status: 'disputed',
-          })
+          .update({ status: 'disputed' })
           .eq('id', selectedTransaction.id);
 
-        // Update linked transaction
         if (paymentRequest.transaction_id) {
           await supabaseAny
             .from('transactions')
@@ -954,7 +974,6 @@ const PayContent = ({ navigation }: any) => {
             .eq('id', paymentRequest.transaction_id);
         }
       } else {
-        // Regular transaction
         await supabaseAny
           .from('transactions')
           .update({
@@ -965,7 +984,10 @@ const PayContent = ({ navigation }: any) => {
           .eq('id', selectedTransaction.id);
       }
 
-      Alert.alert('⚠️ Dispute Raised', 'Your dispute has been submitted. An admin will review it shortly.');
+      Alert.alert(
+        '⚠️ Dispute Raised',
+        'Your dispute has been submitted. An admin will review it shortly.'
+      );
       setShowDisputeModal(false);
       setSelectedTransaction(null);
       setDisputeReason('');
@@ -976,7 +998,6 @@ const PayContent = ({ navigation }: any) => {
     }
   }, [selectedTransaction, disputeReason, loadAllData]);
 
-  // --- Add Money ---
   const handleAddMoney = useCallback(async () => {
     if (!user?.id) {
       Alert.alert('🔒 Login Required', 'Please login to add money');
@@ -997,36 +1018,30 @@ const PayContent = ({ navigation }: any) => {
     Alert.alert(
       '💰 Confirm Add Money',
       `Add UGX ${amountNum.toLocaleString()} to your wallet?\n\n` +
-      `💳 From: ${paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown'}\n` +
-      `💰 New Balance: UGX ${(walletBalance + amountNum).toLocaleString()}`,
+        `💳 From: ${paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown'}\n` +
+        `💰 New Balance: UGX ${(walletBalance + amountNum).toLocaleString()}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
           onPress: async () => {
             try {
-              // Update wallet balance
               const { error } = await supabaseAny
                 .from('users')
-                .update({
-                  wallet_balance: walletBalance + amountNum,
-                })
+                .update({ wallet_balance: walletBalance + amountNum })
                 .eq('id', user.id);
-
               if (error) throw error;
 
-              // Create transaction record
-              await supabaseAny
-                .from('transactions')
-                .insert({
-                  user_id: user.id,
-                  type: 'topup',
-                  amount: amountNum,
-                  status: 'completed',
-                  merchant: 'Munolink Wallet',
-                  method: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown',
-                  reference: `TOP-${Date.now()}`,
-                });
+              await supabaseAny.from('transactions').insert({
+                user_id: user.id,
+                type: 'topup',
+                amount: amountNum,
+                status: 'completed',
+                merchant: 'Munolink Wallet',
+                method:
+                  paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown',
+                reference: `TOP-${Date.now()}`,
+              });
 
               setWalletBalance(walletBalance + amountNum);
               setAmount('');
@@ -1037,13 +1052,12 @@ const PayContent = ({ navigation }: any) => {
               console.error('Error adding money:', error);
               Alert.alert('❌ Error', 'Failed to add money. Please try again.');
             }
-          }
-        }
+          },
+        },
       ]
     );
   }, [amount, selectedMethod, user?.id, walletBalance, paymentMethods, loadAllData]);
 
-  // --- Withdraw ---
   const handleWithdraw = useCallback(async () => {
     if (!user?.id) {
       Alert.alert('🔒 Login Required', 'Please login to withdraw');
@@ -1055,12 +1069,13 @@ const PayContent = ({ navigation }: any) => {
       Alert.alert('❌ Invalid Amount', 'Please enter a valid amount');
       return;
     }
-
     if (amountNum > walletBalance) {
-      Alert.alert('❌ Insufficient Balance', `Your balance is UGX ${walletBalance.toLocaleString()}`);
+      Alert.alert(
+        '❌ Insufficient Balance',
+        `Your balance is UGX ${walletBalance.toLocaleString()}`
+      );
       return;
     }
-
     if (!selectedMethod) {
       Alert.alert('💳 Withdrawal Method', 'Please select a withdrawal method');
       return;
@@ -1068,36 +1083,32 @@ const PayContent = ({ navigation }: any) => {
 
     Alert.alert(
       '💰 Confirm Withdrawal',
-      `Withdraw UGX ${amountNum.toLocaleString()} to ${paymentMethods.find(m => m.id === selectedMethod)?.name}?\n\n` +
-      `💰 New Balance: UGX ${(walletBalance - amountNum).toLocaleString()}`,
+      `Withdraw UGX ${amountNum.toLocaleString()} to ${
+        paymentMethods.find((m) => m.id === selectedMethod)?.name
+      }?\n\n` + `💰 New Balance: UGX ${(walletBalance - amountNum).toLocaleString()}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm',
           onPress: async () => {
             try {
-              // Update wallet balance
               const { error } = await supabaseAny
                 .from('users')
-                .update({
-                  wallet_balance: walletBalance - amountNum,
-                })
+                .update({ wallet_balance: walletBalance - amountNum })
                 .eq('id', user.id);
-
               if (error) throw error;
 
-              // Create transaction record
-              await supabaseAny
-                .from('transactions')
-                .insert({
-                  user_id: user.id,
-                  type: 'withdrawal',
-                  amount: -amountNum,
-                  status: 'pending',
-                  merchant: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Withdrawal',
-                  method: paymentMethods.find(m => m.id === selectedMethod)?.name || 'Unknown',
-                  reference: `WTH-${Date.now()}`,
-                });
+              await supabaseAny.from('transactions').insert({
+                user_id: user.id,
+                type: 'withdrawal',
+                amount: -amountNum,
+                status: 'pending',
+                merchant:
+                  paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Withdrawal',
+                method:
+                  paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown',
+                reference: `WTH-${Date.now()}`,
+              });
 
               setWalletBalance(walletBalance - amountNum);
               setAmount('');
@@ -1108,27 +1119,30 @@ const PayContent = ({ navigation }: any) => {
               console.error('Error withdrawing:', error);
               Alert.alert('❌ Error', 'Failed to withdraw. Please try again.');
             }
-          }
-        }
+          },
+        },
       ]
     );
   }, [amount, selectedMethod, walletBalance, paymentMethods, user?.id, loadAllData]);
 
-  // --- Filtered Transactions ---
   const filteredTransactions = useMemo(() => {
     if (selectedFilter === 'All') return transactions;
-    return transactions.filter(t => {
+    return transactions.filter((t) => {
       switch (selectedFilter) {
-        case 'Payments': return t.type === 'payment';
-        case 'Top Ups': return t.type === 'topup';
-        case 'Refunds': return t.type === 'refund';
-        case 'Withdrawals': return t.type === 'withdrawal';
-        default: return true;
+        case 'Payments':
+          return t.type === 'payment';
+        case 'Top Ups':
+          return t.type === 'topup';
+        case 'Refunds':
+          return t.type === 'refund';
+        case 'Withdrawals':
+          return t.type === 'withdrawal';
+        default:
+          return true;
       }
     });
   }, [transactions, selectedFilter]);
 
-  // --- Get Current Tab Data ---
   const getTabData = useCallback(() => {
     switch (activeTab) {
       case 'pending':
@@ -1153,7 +1167,7 @@ const PayContent = ({ navigation }: any) => {
   const renderAddMoneyModal = () => (
     <Modal
       visible={showAddMoney}
-      transparent={true}
+      transparent
       animationType="slide"
       onRequestClose={() => setShowAddMoney(false)}
     >
@@ -1173,10 +1187,18 @@ const PayContent = ({ navigation }: any) => {
                 {[50000, 100000, 250000, 500000, 1000000].map((amt) => (
                   <TouchableOpacity
                     key={amt}
-                    style={[styles.amountOption, parseInt(amount) === amt && styles.amountOptionSelected]}
+                    style={[
+                      styles.amountOption,
+                      parseInt(amount) === amt && styles.amountOptionSelected,
+                    ]}
                     onPress={() => setAmount(amt.toString())}
                   >
-                    <Text style={[styles.amountOptionText, parseInt(amount) === amt && styles.amountOptionTextSelected]}>
+                    <Text
+                      style={[
+                        styles.amountOptionText,
+                        parseInt(amount) === amt && styles.amountOptionTextSelected,
+                      ]}
+                    >
                       UGX {amt.toLocaleString()}
                     </Text>
                   </TouchableOpacity>
@@ -1195,9 +1217,9 @@ const PayContent = ({ navigation }: any) => {
 
               <Text style={styles.addMoneyLabel}>Payment Method</Text>
               {paymentMethods.slice(0, 2).map((method) => (
-                <PaymentMethodItem 
-                  key={method.id} 
-                  method={method} 
+                <PaymentMethodItem
+                  key={method.id}
+                  method={method}
                   isSelected={selectedMethod === method.id}
                   onSelect={setSelectedMethod}
                 />
@@ -1223,7 +1245,7 @@ const PayContent = ({ navigation }: any) => {
   const renderWithdrawModal = () => (
     <Modal
       visible={showWithdraw}
-      transparent={true}
+      transparent
       animationType="slide"
       onRequestClose={() => setShowWithdraw(false)}
     >
@@ -1240,7 +1262,9 @@ const PayContent = ({ navigation }: any) => {
             <View style={styles.addMoneyContent}>
               <View style={styles.withdrawBalanceInfo}>
                 <Text style={styles.withdrawBalanceLabel}>Available Balance</Text>
-                <Text style={styles.withdrawBalanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
+                <Text style={styles.withdrawBalanceAmount}>
+                  UGX {walletBalance.toLocaleString()}
+                </Text>
               </View>
 
               <Text style={styles.addMoneyLabel}>Amount to Withdraw</Text>
@@ -1255,9 +1279,9 @@ const PayContent = ({ navigation }: any) => {
 
               <Text style={styles.addMoneyLabel}>Withdraw To</Text>
               {paymentMethods.map((method) => (
-                <PaymentMethodItem 
-                  key={method.id} 
-                  method={method} 
+                <PaymentMethodItem
+                  key={method.id}
+                  method={method}
                   isSelected={selectedMethod === method.id}
                   onSelect={setSelectedMethod}
                 />
@@ -1283,7 +1307,7 @@ const PayContent = ({ navigation }: any) => {
   const renderTransactionsModal = () => (
     <Modal
       visible={showTransactions}
-      transparent={true}
+      transparent
       animationType="slide"
       onRequestClose={() => setShowTransactions(false)}
     >
@@ -1299,8 +1323,8 @@ const PayContent = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
 
-          <ScrollView 
-            horizontal 
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.filterContainer}
             contentContainerStyle={styles.filterContent}
@@ -1348,7 +1372,7 @@ const PayContent = ({ navigation }: any) => {
   const renderDisputeModal = () => (
     <Modal
       visible={showDisputeModal}
-      transparent={true}
+      transparent
       animationType="slide"
       onRequestClose={() => {
         setShowDisputeModal(false);
@@ -1360,18 +1384,21 @@ const PayContent = ({ navigation }: any) => {
         <View style={[styles.modalContent, styles.addMoneyModal]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Raise Dispute</Text>
-            <TouchableOpacity onPress={() => {
-              setShowDisputeModal(false);
-              setSelectedTransaction(null);
-              setDisputeReason('');
-            }}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowDisputeModal(false);
+                setSelectedTransaction(null);
+                setDisputeReason('');
+              }}
+            >
               <Ionicons name="close" size={24} color="#8A8AAE" />
             </TouchableOpacity>
           </View>
 
           <View style={styles.addMoneyContent}>
             <Text style={styles.disputeInfo}>
-              You are raising a dispute for payment of UGX {selectedTransaction?.amount?.toLocaleString() || 0}
+              You are raising a dispute for payment of UGX{' '}
+              {selectedTransaction?.amount?.toLocaleString() || 0}
             </Text>
             <Text style={styles.disputeInfo}>
               To: {selectedTransaction?.merchant || 'Seller'}
@@ -1413,14 +1440,11 @@ const PayContent = ({ navigation }: any) => {
         <Text style={styles.guestIcon}>💳</Text>
         <Text style={styles.guestTitle}>Pay securely with your Munolink Wallet</Text>
         <Text style={styles.guestSubtext}>
-          Create an account to:{'\n'}
-          • Checkout{'\n'}
-          • Add money{'\n'}
-          • View receipts{'\n'}
-          • Track payments
+          Create an account to:{'\n'}• Checkout{'\n'}• Add money{'\n'}• View receipts{'\n'}• Track
+          payments
         </Text>
-        <TouchableOpacity 
-          style={styles.guestButton} 
+        <TouchableOpacity
+          style={styles.guestButton}
           onPress={() => navigation?.navigate('Join')}
         >
           <Text style={styles.guestButtonText}>Create Account</Text>
@@ -1433,7 +1457,7 @@ const PayContent = ({ navigation }: any) => {
   }
 
   // ============================================================
-  // LOADING STATE
+  // LOADING
   // ============================================================
   if (loading) {
     return (
@@ -1448,13 +1472,16 @@ const PayContent = ({ navigation }: any) => {
   // MAIN RENDER
   // ============================================================
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>   
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor="#1F2F5F" />
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Pay</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon} onPress={() => setShowTransactions(true)}>
+          <TouchableOpacity
+            style={styles.headerIcon}
+            onPress={() => setShowTransactions(true)}
+          >
             <Ionicons name="list-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerIcon}>
@@ -1463,14 +1490,13 @@ const PayContent = ({ navigation }: any) => {
         </View>
       </View>
 
-      <ScrollView 
+      <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />
         }
       >
-        {/* Balance Card */}
         <View style={styles.balanceCard}>
           <LinearGradient
             colors={['#4A7DFF', '#6B94FF']}
@@ -1481,15 +1507,24 @@ const PayContent = ({ navigation }: any) => {
             <Text style={styles.balanceLabel}>Available Balance</Text>
             <Text style={styles.balanceAmount}>UGX {walletBalance.toLocaleString()}</Text>
             <View style={styles.balanceActions}>
-              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowAddMoney(true)}>
+              <TouchableOpacity
+                style={styles.balanceAction}
+                onPress={() => setShowAddMoney(true)}
+              >
                 <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
                 <Text style={styles.balanceActionText}>Add Money</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowWithdraw(true)}>
+              <TouchableOpacity
+                style={styles.balanceAction}
+                onPress={() => setShowWithdraw(true)}
+              >
                 <Ionicons name="arrow-up-circle-outline" size={18} color="#FFFFFF" />
                 <Text style={styles.balanceActionText}>Withdraw</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.balanceAction} onPress={() => setShowTransactions(true)}>
+              <TouchableOpacity
+                style={styles.balanceAction}
+                onPress={() => setShowTransactions(true)}
+              >
                 <Ionicons name="list-outline" size={18} color="#FFFFFF" />
                 <Text style={styles.balanceActionText}>History</Text>
               </TouchableOpacity>
@@ -1497,13 +1532,11 @@ const PayContent = ({ navigation }: any) => {
           </LinearGradient>
         </View>
 
-        {/* Pending Transactions Tab */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Transactions</Text>
           </View>
 
-          {/* Tab Navigation */}
           <View style={styles.tabContainer}>
             {[
               { key: 'pending', label: `Pending (${pendingTransactions.length})` },
@@ -1523,7 +1556,6 @@ const PayContent = ({ navigation }: any) => {
             ))}
           </View>
 
-          {/* Tab Content */}
           {currentTabData.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📭</Text>
@@ -1538,8 +1570,9 @@ const PayContent = ({ navigation }: any) => {
           ) : (
             currentTabData.map((item) => {
               const timeRemaining = timeRemainingMap[item.id] || 0;
-              const isSeller = item.seller_id === user?.id;
-              
+              const isSeller = item.is_me_seller ?? item.seller_id === user?.id;
+              const isBuyer = item.is_me_buyer ?? item.buyer_id === user?.id;
+
               return (
                 <PendingTransactionCard
                   key={item.id}
@@ -1548,6 +1581,7 @@ const PayContent = ({ navigation }: any) => {
                   onDispute={handleRaiseDispute}
                   onActivate={handleActivatePayment}
                   isSeller={isSeller}
+                  isBuyer={isBuyer}
                   timeRemaining={timeRemaining}
                 />
               );
@@ -1574,8 +1608,8 @@ export const PayScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
   return (
-    <ResponsiveLayout 
-      currentRoute="Pay" 
+    <ResponsiveLayout
+      currentRoute="Pay"
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
@@ -1689,10 +1723,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-  },
-  sectionAction: {
-    color: '#4A7DFF',
-    fontSize: 13,
   },
   tabContainer: {
     flexDirection: 'row',
@@ -1831,15 +1861,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  pendingCardConfirm: {
-    flex: 2,
-  },
-  pendingCardActivate: {
-    flex: 2,
-  },
-  pendingCardDispute: {
-    flex: 1,
-  },
+  pendingCardConfirm: { flex: 2 },
+  pendingCardActivate: { flex: 2 },
+  pendingCardDispute: { flex: 1 },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 30,
@@ -1857,6 +1881,8 @@ const styles = StyleSheet.create({
     color: '#8A8AAE',
     fontSize: 13,
     marginTop: 4,
+    textAlign: 'center',
+    paddingHorizontal: 16,
   },
   modalOverlay: {
     flex: 1,
@@ -1870,12 +1896,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 20,
   },
-  transactionsModal: {
-    height: height * 0.9,
-  },
-  addMoneyModal: {
-    height: height * 0.75,
-  },
+  transactionsModal: { height: height * 0.9 },
+  addMoneyModal: { height: height * 0.75 },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

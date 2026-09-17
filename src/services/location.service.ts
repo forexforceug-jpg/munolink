@@ -3,10 +3,33 @@
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
 
-// ✅ Get Supabase project URL from environment
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://ffbjvrwkvnwocuyapajo.supabase.co';
+// ✅ Supabase project URL
+const SUPABASE_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ||
+  'https://ffbjvrwkvnwocuyapajo.supabase.co';
+
 const SUPABASE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/places-reverse-geocode`;
 
+// ============================================================
+// Cache + in-flight dedupe
+// ============================================================
+// Rounded to 4 decimals (~11 m) so minor GPS jitter doesn't miss the cache.
+const GEOCODE_CACHE = new Map<string, PlaceInfo>();
+const IN_FLIGHT = new Map<string, Promise<PlaceInfo>>();
+
+function cacheKey(lat: number, lng: number): string {
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`;
+}
+
+function formatCoordinateFallback(lat: number, lng: number): string {
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lngDir = lng >= 0 ? 'E' : 'W';
+  return `${Math.abs(lat).toFixed(6)}° ${latDir}, ${Math.abs(lng).toFixed(6)}° ${lngDir}`;
+}
+
+// ============================================================
+// Types
+// ============================================================
 export interface UserLocation {
   latitude: number;
   longitude: number;
@@ -33,6 +56,24 @@ export interface UserLocation {
   houseName?: string | null;
 }
 
+interface PlaceInfo {
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  formattedAddress: string | null;
+  placeId: string | null;
+  street: string | null;
+  streetNumber: string | null;
+  district: string | null;
+  subregion: string | null;
+  postalCode: string | null;
+  name: string | null;
+  houseName: string | null;
+}
+
+// ============================================================
+// Class
+// ============================================================
 class LocationService {
   private currentLocation: UserLocation | null = null;
   private watchSubscription: Location.LocationSubscription | null = null;
@@ -44,9 +85,9 @@ class LocationService {
   async getHighAccuracyLocation(): Promise<UserLocation | null> {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      
+
       if (status !== 'granted') {
-        console.warn('Location permission denied');
+        console.warn('📍 Location permission denied');
         return this.getDefaultLocation();
       }
 
@@ -60,7 +101,6 @@ class LocationService {
         accuracy: location.coords.accuracy,
       });
 
-      // ✅ Get exact address from OpenStreetMap via Supabase Edge Function
       const placeInfo = await this.getExactAddressFromCoords(
         location.coords.latitude,
         location.coords.longitude
@@ -83,172 +123,157 @@ class LocationService {
 
       this.currentLocation = locationData;
       this.locationUpdates.push(locationData);
-      
+
       if (this.locationUpdates.length > 100) {
         this.locationUpdates.shift();
       }
 
       return locationData;
     } catch (error) {
-      console.error('Error getting high accuracy location:', error);
+      console.warn('📍 Error getting high accuracy location:', error);
       return this.currentLocation || this.getDefaultLocation();
     }
   }
 
   // ============================================================
-  // GET EXACT ADDRESS FROM COORDINATES - OpenStreetMap
+  // GET EXACT ADDRESS FROM COORDINATES
+  //
+  // Order of fallbacks (each short-circuits on success):
+  //   1. In-memory cache   (instant, no network)
+  //   2. In-flight dedupe  (shares the pending promise with any
+  //                         concurrent caller for the same point)
+  //   3. Supabase Edge fn  (proxies OpenStreetMap, 5s timeout)
+  //   4. Coordinate string (always resolves)
+  //
+  // 🚫 We deliberately do NOT call Location.reverseGeocodeAsync —
+  //    that API was removed in Expo SDK 49 and throws every time.
   // ============================================================
   private async getExactAddressFromCoords(
     lat: number,
     lng: number
-  ): Promise<{ 
-    city: string | null; 
-    region: string | null; 
-    country: string | null; 
-    formattedAddress: string | null; 
-    placeId: string | null;
-    street: string | null;
-    streetNumber: string | null;
-    district: string | null;
-    subregion: string | null;
-    postalCode: string | null;
-    name: string | null;
-    houseName: string | null;
-  }> {
-    
-    // ============================================================
-    // TRY 1: OpenStreetMap via Supabase Edge Function (FREE)
-    // ============================================================
-    try {
-      const url = `${SUPABASE_FUNCTION_URL}?lat=${lat}&lng=${lng}`;
-      console.log('📍 Fetching address from OpenStreetMap via Supabase...');
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+  ): Promise<PlaceInfo> {
+    const key = cacheKey(lat, lng);
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      
-      console.log('📍 OpenStreetMap Result:', result);
-
-      if (result.success && result.data) {
-        const data = result.data;
-        return {
-          city: data.city || null,
-          region: data.region || null,
-          country: data.country || null,
-          formattedAddress: data.formatted_address || null,
-          placeId: data.place_id || null,
-          street: data.street || null,
-          streetNumber: data.street_number || null,
-          district: data.district || null,
-          subregion: data.region || null,
-          postalCode: data.postal_code || null,
-          name: data.display_name || data.formatted_address || null,
-          houseName: data.house_name || null,
-        };
-      }
-
-      if (result.fallback) {
-        console.warn('⚠️ OpenStreetMap returned fallback:', result.fallback);
-        return {
-          city: null,
-          region: null,
-          country: null,
-          formattedAddress: result.fallback.formatted_address || null,
-          placeId: null,
-          street: null,
-          streetNumber: null,
-          district: null,
-          subregion: null,
-          postalCode: null,
-          name: result.fallback.formatted_address || null,
-          houseName: null,
-        };
-      }
-
-      throw new Error(result.error || 'No location found');
-      
-    } catch (osmError) {
-      console.warn('⚠️ OpenStreetMap failed, trying device geocoding:', osmError);
+    // ---- 1. Cache hit ----
+    const cached = GEOCODE_CACHE.get(key);
+    if (cached) {
+      return cached;
     }
 
-    // ============================================================
-    // TRY 2: Device's built-in reverse geocoding (fallback)
-    // ============================================================
-    try {
-      const [geocode] = await Location.reverseGeocodeAsync({
-        latitude: lat,
-        longitude: lng,
-      });
-      
-      if (geocode) {
-        console.log('📍 Device geocoding result:', geocode);
-        
-        const city = geocode.city || geocode.district || null;
-        const region = geocode.region || null;
-        const country = geocode.country || null;
-        
-        return {
-          city: city,
-          region: region,
-          country: country,
-          formattedAddress: geocode.formattedAddress || null,
-          placeId: null,
-          street: geocode.street || null,
-          streetNumber: geocode.streetNumber || null,
-          district: geocode.district || null,
-          subregion: geocode.subregion || null,
-          postalCode: geocode.postalCode || null,
-          name: geocode.name || null,
-          houseName: null,
-        };
-      }
-    } catch (nativeError) {
-      console.warn('⚠️ Device geocoding failed:', nativeError);
+    // ---- 2. In-flight dedupe ----
+    const pending = IN_FLIGHT.get(key);
+    if (pending) {
+      return pending;
     }
 
-    // ============================================================
-    // TRY 3: Fallback to coordinates
-    // ============================================================
-    const latDir = lat >= 0 ? 'N' : 'S';
-    const lngDir = lng >= 0 ? 'E' : 'W';
-    const latStr = Math.abs(lat).toFixed(6);
-    const lngStr = Math.abs(lng).toFixed(6);
-    const coordsString = `${latStr}° ${latDir}, ${lngStr}° ${lngDir}`;
-    
-    console.log(`📍 Using exact GPS coordinates: ${coordsString}`);
-    
-    return {
-      city: null,
-      region: null,
-      country: null,
-      formattedAddress: coordsString,
-      placeId: null,
-      street: null,
-      streetNumber: null,
-      district: null,
-      subregion: null,
-      postalCode: null,
-      name: coordsString,
-      houseName: null,
-    };
+    // ---- 3. Real lookup ----
+    const lookup = (async (): Promise<PlaceInfo> => {
+      // ---- Try the Supabase Edge Function (proxies Nominatim) ----
+      try {
+        const url = `${SUPABASE_FUNCTION_URL}?lat=${lat}&lng=${lng}`;
+        console.log('📍 Fetching address from OpenStreetMap via Supabase...');
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        console.log('📍 OpenStreetMap Result:', result);
+
+        if (result?.success && result?.data) {
+          const data = result.data;
+          const info: PlaceInfo = {
+            city: data.city || null,
+            region: data.region || null,
+            country: data.country || null,
+            formattedAddress: data.formatted_address || null,
+            placeId: data.place_id || null,
+            street: data.street || null,
+            streetNumber: data.street_number || null,
+            district: data.district || null,
+            subregion: data.region || null,
+            postalCode: data.postal_code || null,
+            name: data.display_name || data.formatted_address || null,
+            houseName: data.house_name || null,
+          };
+          GEOCODE_CACHE.set(key, info);
+          return info;
+        }
+
+        if (result?.fallback) {
+          const info: PlaceInfo = {
+            city: null,
+            region: null,
+            country: null,
+            formattedAddress: result.fallback.formatted_address || null,
+            placeId: null,
+            street: null,
+            streetNumber: null,
+            district: null,
+            subregion: null,
+            postalCode: null,
+            name: result.fallback.formatted_address || null,
+            houseName: null,
+          };
+          GEOCODE_CACHE.set(key, info);
+          return info;
+        }
+
+        throw new Error(result?.error || 'No location found');
+      } catch (err: any) {
+        // Non-fatal — we always fall back to coordinates below.
+        console.log(
+          'ℹ️ Reverse geocoding unavailable, using coordinates:',
+          err?.message || err
+        );
+      }
+
+      // ---- Final fallback: coordinate string ----
+      const coordsString = formatCoordinateFallback(lat, lng);
+      const info: PlaceInfo = {
+        city: null,
+        region: null,
+        country: null,
+        formattedAddress: coordsString,
+        placeId: null,
+        street: null,
+        streetNumber: null,
+        district: null,
+        subregion: null,
+        postalCode: null,
+        name: coordsString,
+        houseName: null,
+      };
+      GEOCODE_CACHE.set(key, info);
+      return info;
+    })();
+
+    IN_FLIGHT.set(key, lookup);
+
+    try {
+      const result = await lookup;
+      return result;
+    } finally {
+      IN_FLIGHT.delete(key);
+    }
   }
 
   // ============================================================
   // GET EXACT GPS COORDINATES AS STRING
   // ============================================================
   getExactCoordinatesString(lat: number, lng: number): string {
-    const latDir = lat >= 0 ? 'N' : 'S';
-    const lngDir = lng >= 0 ? 'E' : 'W';
-    return `${Math.abs(lat).toFixed(6)}° ${latDir}, ${Math.abs(lng).toFixed(6)}° ${lngDir}`;
+    return formatCoordinateFallback(lat, lng);
   }
 
   // ============================================================
@@ -256,18 +281,14 @@ class LocationService {
   // ============================================================
   getExactLocationDisplay(location: UserLocation | null): string {
     if (!location) return 'Unknown location';
-    
-    // If we have a formatted address, use it
+
     if (location.formattedAddress && location.formattedAddress !== '') {
       return location.formattedAddress;
     }
-    
-    // If we have street info, show exact address
+
     if (location.street) {
       let address = location.street;
-      if (location.streetNumber) {
-        address += ` ${location.streetNumber}`;
-      }
+      if (location.streetNumber) address += ` ${location.streetNumber}`;
       if (location.district && location.district !== location.street) {
         address += `, ${location.district}`;
       }
@@ -276,20 +297,21 @@ class LocationService {
       }
       return address;
     }
-    
-    // If we have city, show it with region
+
     if (location.city) {
       if (location.region && !location.city.includes(location.region)) {
         return `${location.city}, ${location.region}`;
       }
       return location.city;
     }
-    
-    // Fallback to exact coordinates
+
     if (location.latitude && location.longitude) {
-      return this.getExactCoordinatesString(location.latitude, location.longitude);
+      return this.getExactCoordinatesString(
+        location.latitude,
+        location.longitude
+      );
     }
-    
+
     return 'Unknown location';
   }
 
@@ -313,19 +335,20 @@ class LocationService {
       };
     }
 
-    // Use formatted address if available
     if (location.formattedAddress) {
       const parts = location.formattedAddress.split(',');
       return {
         primary: parts[0]?.trim() || location.formattedAddress,
         secondary: parts.slice(1).join(',').trim() || '',
-        coordinates: this.getExactCoordinatesString(location.latitude, location.longitude),
+        coordinates: this.getExactCoordinatesString(
+          location.latitude,
+          location.longitude
+        ),
         accuracy: this.getAccuracyDescription(location.accuracy),
         fullAddress: location.formattedAddress,
       };
     }
 
-    // Build from components
     let primary = location.street || location.name || location.city || '';
     if (location.street && location.streetNumber) {
       primary = `${location.street} ${location.streetNumber}`;
@@ -335,7 +358,11 @@ class LocationService {
     if (location.district && location.district !== primary) {
       secondary = location.district;
     }
-    if (location.city && location.city !== primary && location.city !== secondary) {
+    if (
+      location.city &&
+      location.city !== primary &&
+      location.city !== secondary
+    ) {
       secondary = secondary ? `${secondary}, ${location.city}` : location.city;
     }
     if (location.region && !secondary.includes(location.region)) {
@@ -348,7 +375,10 @@ class LocationService {
     return {
       primary: primary || 'Unknown',
       secondary,
-      coordinates: this.getExactCoordinatesString(location.latitude, location.longitude),
+      coordinates: this.getExactCoordinatesString(
+        location.latitude,
+        location.longitude
+      ),
       accuracy: this.getAccuracyDescription(location.accuracy),
       fullAddress: [primary, secondary].filter(Boolean).join(', '),
     };
@@ -367,7 +397,7 @@ class LocationService {
   ): Promise<Location.LocationSubscription | null> {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      
+
       if (status !== 'granted') {
         console.warn('Location permission denied');
         return null;
@@ -405,7 +435,7 @@ class LocationService {
 
           this.currentLocation = locationData;
           this.locationUpdates.push(locationData);
-          
+
           if (this.locationUpdates.length > 100) {
             this.locationUpdates.shift();
           }
@@ -472,7 +502,7 @@ class LocationService {
       const { status } = await Location.getForegroundPermissionsAsync();
       const isAuthorized = status === 'granted';
       const isEnabled = await Location.hasServicesEnabledAsync();
-      
+
       return {
         isEnabled,
         isAuthorized,
@@ -493,8 +523,8 @@ class LocationService {
   // ============================================================
   getDefaultLocation(): UserLocation {
     return {
-      latitude: 0.4200,
-      longitude: 33.2040,
+      latitude: 0.42,
+      longitude: 33.204,
       city: 'Jinja',
       region: 'Eastern',
       country: 'Uganda',
@@ -554,7 +584,12 @@ class LocationService {
   // ============================================================
   // CALCULATE DISTANCE
   // ============================================================
-  calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  calculateDistance(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number
+  ): number {
     const R = 6371;
     const dLat = this.toRad(lat2 - lat1);
     const dLon = this.toRad(lon2 - lon1);
@@ -569,7 +604,7 @@ class LocationService {
   }
 
   // ============================================================
-  // UTILITY: CONVERT DEGREES TO RADIANS
+  // UTILITY
   // ============================================================
   private toRad(degrees: number): number {
     return degrees * (Math.PI / 180);

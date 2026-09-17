@@ -77,16 +77,24 @@ export interface Opportunity {
 
 // ============================================================
 // HELPER: CALCULATE DISTANCE
+// ✅ Exported so it can be reused in FeedScreen and elsewhere
 // ============================================================
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+export function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
   const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
@@ -104,7 +112,10 @@ export const feedService = {
   /**
    * Get opportunities with distance from user
    */
-  getOpportunities: async (userLocation?: { latitude: number; longitude: number }): Promise<Opportunity[]> => {
+  getOpportunities: async (userLocation?: {
+    latitude: number;
+    longitude: number;
+  }): Promise<Opportunity[]> => {
     try {
       console.log('🔄 Fetching opportunities from catalog...');
 
@@ -128,16 +139,21 @@ export const feedService = {
 
       // Get user info including location
       const userIds = catalogPosts
-        .map(post => post.user_id)
-        .filter((id): id is string => id !== null && id !== undefined && id !== '');
+        .map((post) => post.user_id)
+        .filter(
+          (id): id is string => id !== null && id !== undefined && id !== ''
+        );
 
-      let userMap: Record<string, { 
-        full_name: string | null; 
-        avatar_url: string | null;
-        latitude: number | null;
-        longitude: number | null;
-        phone_number: string | null;
-      }> = {};
+      let userMap: Record<
+        string,
+        {
+          full_name: string | null;
+          avatar_url: string | null;
+          latitude: number | null;
+          longitude: number | null;
+          phone_number: string | null;
+        }
+      > = {};
 
       if (userIds.length > 0) {
         const { data: users, error: usersError } = await supabase
@@ -163,20 +179,24 @@ export const feedService = {
 
       // Get save counts and user's saved status
       let saveCounts: Record<string, { count: number; isSaved: boolean }> = {};
-      
+
       try {
         const { data: saveData, error: saveError } = await supabase
           .from('saves')
           .select('post_id, user_id')
-          .in('post_id', catalogPosts.map((p: any) => p.id));
+          .in(
+            'post_id',
+            catalogPosts.map((p: any) => p.id)
+          );
 
         if (saveError) {
           console.error('❌ Error fetching saves:', saveError);
         } else if (saveData) {
-          const saveMap: Record<string, { count: number; userSaved: boolean }> = {};
+          const saveMap: Record<string, { count: number; userSaved: boolean }> =
+            {};
           const { data: authData } = await supabase.auth.getUser();
           const currentUserId = authData?.user?.id;
-          
+
           saveData.forEach((s: any) => {
             if (!saveMap[s.post_id]) {
               saveMap[s.post_id] = { count: 0, userSaved: false };
@@ -186,11 +206,11 @@ export const feedService = {
               saveMap[s.post_id].userSaved = true;
             }
           });
-          
+
           saveCounts = Object.keys(saveMap).reduce((acc, key) => {
-            acc[key] = { 
-              count: saveMap[key].count, 
-              isSaved: saveMap[key].userSaved 
+            acc[key] = {
+              count: saveMap[key].count,
+              isSaved: saveMap[key].userSaved,
             };
             return acc;
           }, {} as Record<string, { count: number; isSaved: boolean }>);
@@ -199,28 +219,63 @@ export const feedService = {
         console.log('⚠️ Saves table may not exist yet:', e);
       }
 
+      // ✅ NEW: Get comment counts per post from the `comments` table
+      let commentCounts: Record<string, number> = {};
+
+      try {
+        const { data: commentData, error: commentError } = await supabase
+          .from('comments')
+          .select('post_id')
+          .in(
+            'post_id',
+            catalogPosts.map((p: any) => p.id)
+          );
+
+        if (commentError) {
+          console.log('⚠️ Comments table may not exist yet:', commentError);
+        } else if (commentData) {
+          commentData.forEach((c: any) => {
+            commentCounts[c.post_id] = (commentCounts[c.post_id] || 0) + 1;
+          });
+          console.log(
+            `💬 Comment counts computed for ${Object.keys(commentCounts).length} posts`
+          );
+        }
+      } catch (e) {
+        console.log('⚠️ Comment fetch failed:', e);
+      }
+
       // Build opportunities
       const opportunities: Opportunity[] = catalogPosts.map((post: any) => {
         const userInfo = post.user_id ? userMap[post.user_id] : null;
         const images = post.images || [];
         const saveInfo = saveCounts[post.id] || { count: 0, isSaved: false };
-        
+
         // ✅ EXTRACT PRICE FROM SPECIFICATIONS with type safety
         let price = post.price || 0;
         let specifications = post.specifications || {};
-        
-        // ✅ Type-safe extraction from specifications
+
         if (price === 0 && isSpecificationsObject(specifications)) {
-          const specPrice = specifications.price || specifications.regular_price || null;
+          const specPrice =
+            specifications.price || specifications.regular_price || null;
           if (specPrice !== null && specPrice !== undefined) {
-            price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+            price =
+              typeof specPrice === 'number'
+                ? specPrice
+                : parseFloat(String(specPrice));
             if (isNaN(price)) price = 0;
           }
         }
-        
-        // Calculate distance if user location and seller location available
+
+        // ✅ Calculate distance if user location and seller location available
         let distance = undefined;
-        if (userLocation && userInfo?.latitude !== null && userInfo?.latitude !== undefined && userInfo?.longitude !== null && userInfo?.longitude !== undefined) {
+        if (
+          userLocation &&
+          userInfo?.latitude !== null &&
+          userInfo?.latitude !== undefined &&
+          userInfo?.longitude !== null &&
+          userInfo?.longitude !== undefined
+        ) {
           distance = calculateDistance(
             userLocation.latitude,
             userLocation.longitude,
@@ -238,6 +293,7 @@ export const feedService = {
             like_count: post.like_count,
             view_count: post.view_count,
             save_count: post.save_count,
+            real_comment_count: commentCounts[post.id] || 0,
           });
         }
 
@@ -270,7 +326,8 @@ export const feedService = {
           likeCount: post.like_count || 0,
           viewCount: post.view_count || 0,
           shareCount: post.share_count || 0,
-          commentCount: post.comment_count || 0,
+          // ✅ Prefer the real comment count from the comments table
+          commentCount: commentCounts[post.id] || post.comment_count || 0,
           saveCount: saveInfo.count || post.save_count || 0,
           isSaved: saveInfo.isSaved || false,
           distance: distance,
@@ -303,7 +360,6 @@ export const feedService = {
 
       console.log(`✅ Returning ${opportunities.length} opportunities`);
       return opportunities;
-
     } catch (error) {
       console.error('❌ Error in getOpportunities:', error);
       return [];
@@ -311,11 +367,10 @@ export const feedService = {
   },
 
   /**
-   * Increment share count - Simple update without RPC
+   * Increment share count
    */
   incrementShareCount: async (postId: string): Promise<boolean> => {
     try {
-      // First, get the current share count
       const { data: post, error: fetchError } = await supabase
         .from('catalog')
         .select('share_count')
@@ -330,7 +385,6 @@ export const feedService = {
       const currentCount = post?.share_count || 0;
       const newCount = currentCount + 1;
 
-      // Update with the new count
       const { error: updateError } = await supabase
         .from('catalog')
         .update({ share_count: newCount })
@@ -350,11 +404,13 @@ export const feedService = {
   },
 
   /**
-   * Toggle save status - Simple update without RPC/sql
+   * Toggle save status
    */
-  toggleSave: async (postId: string, userId: string): Promise<{ saved: boolean; count: number }> => {
+  toggleSave: async (
+    postId: string,
+    userId: string
+  ): Promise<{ saved: boolean; count: number }> => {
     try {
-      // Check if already saved
       const { data: existing, error: checkError } = await supabase
         .from('saves')
         .select('id')
@@ -367,17 +423,15 @@ export const feedService = {
         return { saved: false, count: 0 };
       }
 
-      // Get current count
       const { data: post } = await supabase
         .from('catalog')
         .select('save_count')
         .eq('id', postId)
         .single();
-      
+
       let currentCount = post?.save_count || 0;
 
       if (existing) {
-        // Unsave
         const { error: deleteError } = await supabase
           .from('saves')
           .delete()
@@ -388,7 +442,6 @@ export const feedService = {
           return { saved: false, count: currentCount };
         }
 
-        // Decrement count
         const newCount = Math.max(0, currentCount - 1);
         await supabase
           .from('catalog')
@@ -397,7 +450,6 @@ export const feedService = {
 
         return { saved: false, count: newCount };
       } else {
-        // Save
         const { error: insertError } = await supabase
           .from('saves')
           .insert({ user_id: userId, post_id: postId });
@@ -407,7 +459,6 @@ export const feedService = {
           return { saved: false, count: currentCount };
         }
 
-        // Increment count
         const newCount = currentCount + 1;
         await supabase
           .from('catalog')
@@ -448,7 +499,10 @@ export const feedService = {
   /**
    * Get a single opportunity by ID
    */
-  getOpportunityById: async (id: string): Promise<Opportunity | null> => {
+  getOpportunityById: async (
+    id: string,
+    userLocation?: { latitude: number; longitude: number }
+  ): Promise<Opportunity | null> => {
     try {
       const { data, error } = await supabase
         .from('catalog')
@@ -464,7 +518,6 @@ export const feedService = {
       if (!data) return null;
       if (!data.user_id) return null;
 
-      // Get user info
       const { data: userData } = await supabase
         .from('users')
         .select('full_name, avatar_url, latitude, longitude, phone_number')
@@ -472,17 +525,49 @@ export const feedService = {
         .single();
 
       const images = data.images || [];
-      
-      // ✅ Extract price from specifications with type safety
+
       let price = data.price || 0;
       let specifications = data.specifications || {};
-      
+
       if (price === 0 && isSpecificationsObject(specifications)) {
-        const specPrice = specifications.price || specifications.regular_price || null;
+        const specPrice =
+          specifications.price || specifications.regular_price || null;
         if (specPrice !== null && specPrice !== undefined) {
-          price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
+          price =
+            typeof specPrice === 'number'
+              ? specPrice
+              : parseFloat(String(specPrice));
           if (isNaN(price)) price = 0;
         }
+      }
+
+      // ✅ Get comment count for this single post
+      let commentCount = data.comment_count || 0;
+      try {
+        const { count } = await supabase
+          .from('comments')
+          .select('*', { count: 'exact', head: true })
+          .eq('post_id', id);
+        if (typeof count === 'number') {
+          commentCount = count;
+        }
+      } catch (e) {
+        // non-fatal
+      }
+
+      // ✅ Compute distance if possible
+      let distance: number | undefined = undefined;
+      if (
+        userLocation &&
+        userData?.latitude != null &&
+        userData?.longitude != null
+      ) {
+        distance = calculateDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          userData.latitude,
+          userData.longitude
+        );
       }
 
       return {
@@ -514,10 +599,10 @@ export const feedService = {
         likeCount: data.like_count || 0,
         viewCount: data.view_count || 0,
         shareCount: data.share_count || 0,
-        commentCount: data.comment_count || 0,
+        commentCount: commentCount,
         saveCount: data.save_count || 0,
         isSaved: false,
-        distance: undefined,
+        distance: distance,
         specifications: specifications,
       };
     } catch (error) {

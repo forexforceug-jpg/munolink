@@ -4,7 +4,7 @@
     "slug": "munolink",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/favicon.png",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": ["**/*"],
     "ios": {
@@ -13,9 +13,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/favicon.png",
         "backgroundColor": "#ffffff",
-        "monochromeImage": "./assets/adaptive-icon.png"
+        "monochromeImage": "./assets/favicon.png"
       },
       "package": "com.munolink.app",
       "permissions": [
@@ -49,12 +49,13 @@
        [
         "expo-splash-screen",
         {
-          "image": "./assets/adaptive-icon.png",
-          "imageWidth": 200,
+          "image": "./assets/favicon.png",
+          "imageWidth": 76,
+          "imageHeight": 76,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
-            "image": "./assets/adaptive-icon.png",
+            "image": "./assets/favicon.png",
             "backgroundColor": "#ffffff"
           }
         }

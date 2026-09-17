@@ -8,13 +8,11 @@ import { SearchScreen } from '../features/search/SearchScreen';
 import { SearchResultsScreen } from '../features/search/SearchResultsScreen';
 import { JoinScreen } from '../features/auth/JoinScreen';
 import { SignInScreen } from '../features/auth/SignInScreen';
-import { BusinessRegistrationWizard } from '../features/business/BusinessRegistrationWizard';
-import { BusinessDashboardScreen } from '../features/business/BusinessDashboardScreen';
 import { ExploreScreen } from '../features/explore/ExploreScreen';
 import { ProfileScreen } from '../features/profile/ProfileScreen';
 import { HelpSupportScreen } from '../features/help/HelpSupportScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
-
+import {PayScreen} from '../features/pay/PayScreen';
 export type RootStackParamList = {
   MainTabs: undefined;
   Join: undefined;
@@ -46,7 +44,7 @@ export type RootStackParamList = {
     userName?: string;
   };
   Notifications: undefined;
-  Wallet: undefined;
+  PayScreen: undefined;
   Hub: undefined;
 };
 
@@ -66,7 +64,8 @@ export const RootNavigator = () => {
       {/* Auth Screens */}
       <Stack.Screen name="Join" component={JoinScreen} />
       <Stack.Screen name="SignIn" component={SignInScreen} />
-      
+      {/* Pay Screen */}
+      <Stack.Screen name="PayScreen" component={PayScreen} />
       {/* Account Screens */}
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="HelpSupport" component={HelpSupportScreen} />
@@ -80,19 +79,9 @@ export const RootNavigator = () => {
       
       {/* Explore */}
       <Stack.Screen name="Explore" component={ExploreScreen} />
-      
-      {/* Business Registration */}
-      <Stack.Screen name="BusinessRegistration" component={BusinessRegistrationWizard} />
-      <Stack.Screen name="BusinessDashboard" component={BusinessDashboardScreen} />
-      
       {/* Placeholder screens */}
       <Stack.Screen 
         name="Notifications" 
-        component={() => null} 
-        options={{ headerShown: false }}
-      />
-      <Stack.Screen 
-        name="Wallet" 
         component={() => null} 
         options={{ headerShown: false }}
       />

@@ -1,23 +1,40 @@
 // src/context/AuthContext.tsx
 
-import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
+import React, {
+  createContext,
+  useState,
+  useContext,
+  useEffect,
+  useMemo,
+  useCallback,
+} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
-import { Session, User } from '@supabase/supabase-js';
+import { Session } from '@supabase/supabase-js';
 import { Alert } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 
 WebBrowser.maybeCompleteAuthSession();
 
+// ============================================================
+// TYPES
+// ============================================================
 interface AuthContextType {
   isAuthenticated: boolean;
   isGuest: boolean;
   isLoading: boolean;
   user: any | null;
   session: Session | null;
+
   signIn: (userData: any) => Promise<void>;
   signInWithPhone: (phone: string, fullName?: string) => Promise<void>;
+  signUpWithEmail: (
+    fullName: string,
+    email: string,
+    password: string
+  ) => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   logout: () => Promise<void>;
@@ -30,23 +47,34 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Helper function to generate a valid UUID v4
+// ============================================================
+// HELPERS
+// ============================================================
 function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+// ============================================================
+// PROVIDER
+// ============================================================
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [user, setUser] = useState<any | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // ✅ Google Auth Request - MUST be at top level, not conditional
+  // Google OAuth request (must be at top level)
   const [request, response, promptAsync] = Google.useAuthRequest({
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
@@ -54,64 +82,94 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   // ============================================================
-  // CHECK AUTH ON APP START
+  // CHECK AUTH ON START
   // ============================================================
   useEffect(() => {
     const checkAuth = async () => {
       try {
         console.log('🔍 Checking auth state...');
-        
+
         const token = await AsyncStorage.getItem('authToken');
         const userDataStr = await AsyncStorage.getItem('userData');
-        
-        if (token && userDataStr) {
-          try {
-            const parsedUser = JSON.parse(userDataStr);
-            console.log('✅ Found stored user:', parsedUser);
-            
-            if (parsedUser.id) {
-              const { data: dbUser, error: dbError } = await supabase
-                .from('users')
-                .select('*')
-                .eq('id', parsedUser.id)
-                .maybeSingle();
 
-              if (dbError) {
-                console.error('Error checking user in DB:', dbError);
-              }
+        if (!token || !userDataStr) {
+          console.log('ℹ️ No stored auth data found');
+          setIsAuthenticated(false);
+          setIsGuest(true);
+          return;
+        }
 
-              if (dbUser) {
-                console.log('✅ User found in database:', dbUser.id);
-                setUser(parsedUser);
-                setIsAuthenticated(true);
-                setIsGuest(false);
-                console.log('✅ Session restored successfully');
-              } else {
-                console.log('⚠️ User not found in database, clearing session');
-                await AsyncStorage.removeItem('authToken');
-                await AsyncStorage.removeItem('userData');
-                setIsAuthenticated(false);
-                setIsGuest(true);
-                setUser(null);
-              }
-            } else {
-              console.log('⚠️ Invalid user data, clearing session');
-              await AsyncStorage.removeItem('authToken');
-              await AsyncStorage.removeItem('userData');
-              setIsAuthenticated(false);
-              setIsGuest(true);
-            }
-          } catch (parseError) {
-            console.error('Error parsing user data:', parseError);
+        let parsedUser: any;
+        try {
+          parsedUser = JSON.parse(userDataStr);
+        } catch (parseError) {
+          console.error('Error parsing user data:', parseError);
+          await AsyncStorage.removeItem('authToken');
+          await AsyncStorage.removeItem('userData');
+          setIsAuthenticated(false);
+          setIsGuest(true);
+          return;
+        }
+
+        if (!parsedUser?.id) {
+          console.log('⚠️ Invalid user data, clearing session');
+          await AsyncStorage.removeItem('authToken');
+          await AsyncStorage.removeItem('userData');
+          setIsAuthenticated(false);
+          setIsGuest(true);
+          return;
+        }
+
+        console.log('✅ Found stored user:', parsedUser.id);
+
+        // Fail-safe DB check
+        try {
+          const { data: dbUser, error: dbError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', parsedUser.id)
+            .maybeSingle();
+
+          if (dbUser) {
+            console.log('✅ User verified in database');
+            setUser({
+              ...parsedUser,
+              full_name: dbUser.full_name || parsedUser.full_name,
+              avatar_url: dbUser.avatar_url || parsedUser.avatar_url,
+              email: (dbUser as any).email || parsedUser.email,
+              role: dbUser.role || 'customer',
+              wallet_balance: dbUser.wallet_balance || 0,
+              lifetime_savings: dbUser.lifetime_savings || 0,
+              location_city: dbUser.location_city || null,
+              location_region: dbUser.location_region || null,
+              location_country: dbUser.location_country || null,
+              latitude: dbUser.latitude ?? null,
+              longitude: dbUser.longitude ?? null,
+            });
+            setIsAuthenticated(true);
+            setIsGuest(false);
+            console.log('✅ Session restored successfully');
+          } else if (dbError) {
+            console.warn(
+              '⚠️ Could not verify user with DB. Using cached session:',
+              dbError.message
+            );
+            setUser(parsedUser);
+            setIsAuthenticated(true);
+            setIsGuest(false);
+          } else {
+            console.log('⚠️ User not found in database, clearing session');
             await AsyncStorage.removeItem('authToken');
             await AsyncStorage.removeItem('userData');
             setIsAuthenticated(false);
             setIsGuest(true);
+            setUser(null);
           }
-        } else {
-          console.log('ℹ️ No stored auth data found');
-          setIsAuthenticated(false);
-          setIsGuest(true);
+        } catch (networkErr) {
+          console.warn('⚠️ DB check threw, using cached session:', networkErr);
+          setUser(parsedUser);
+          setIsAuthenticated(true);
+          setIsGuest(false);
         }
       } catch (error) {
         console.error('Error checking auth:', error);
@@ -121,19 +179,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     };
-    
+
     checkAuth();
   }, []);
 
-  // ✅ Handle Google OAuth Response - MUST be at top level
+  // ============================================================
+  // GOOGLE OAUTH RESPONSE
+  // ============================================================
   useEffect(() => {
     if (response?.type === 'success') {
-      const { id_token, access_token } = response.params;
-      console.log('✅ Google OAuth response received:', { 
-        hasIdToken: !!id_token, 
-        hasAccessToken: !!access_token 
-      });
-      
+      const { id_token } = response.params;
       if (id_token) {
         handleGoogleSignIn(id_token);
       } else {
@@ -145,83 +200,86 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [response]);
 
-  // ✅ Google Sign In Handler - Defined inside component
   const handleGoogleSignIn = async (idToken: string) => {
     try {
       setIsLoading(true);
-      
-      console.log('🔑 Attempting to sign in with Google ID token');
-      
+      console.log('🔑 Signing in with Google ID token');
+
       const { data, error } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
       });
 
-      if (error) {
-        console.error('Supabase sign in error:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       if (data.user) {
-        console.log('✅ Google user authenticated:', data.user.id);
-        
         const googleUser = data.user;
-        const userName = googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || 'Google User';
-        const userData = {
-          id: googleUser.id,
-          phone: googleUser.phone || '',
-          full_name: userName,
-          avatar_url: googleUser.user_metadata?.avatar_url || googleUser.user_metadata?.picture || null,
-          created_at: new Date().toISOString(),
-          isVerified: true,
-        };
+        const userName =
+          googleUser.user_metadata?.full_name ||
+          googleUser.user_metadata?.name ||
+          'Google User';
+        const userEmail = googleUser.email || null;
+        const avatar =
+          googleUser.user_metadata?.avatar_url ||
+          googleUser.user_metadata?.picture ||
+          null;
 
-        await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-        await AsyncStorage.setItem('userData', JSON.stringify(userData));
-
-        // Check if user exists in our users table
-        const { data: existingUser, error: userError } = await supabase
+        // Check if we already have this user
+        const { data: existing } = await supabase
           .from('users')
           .select('*')
           .eq('id', googleUser.id)
           .maybeSingle();
 
-        if (userError && userError.code !== 'PGRST116') {
-          console.error('Error checking user:', userError);
-        }
-
-        if (!existingUser) {
-          console.log('📝 Creating new user in database');
+        if (!existing) {
           const { error: insertError } = await supabase
             .from('users')
             .insert({
               id: googleUser.id,
               phone_number: googleUser.phone || '',
               full_name: userName,
-              avatar_url: googleUser.user_metadata?.avatar_url || googleUser.user_metadata?.picture || null,
+              email: userEmail,
+              avatar_url: avatar,
               role: 'customer',
               wallet_balance: 0,
               lifetime_savings: 0,
               kyc_verified: false,
-            });
+            } as any);
 
           if (insertError) {
-            console.error('Error creating user:', insertError);
-          } else {
-            console.log('✅ User created successfully');
+            console.error('Error creating Google user row:', insertError);
           }
         }
+
+        const userData = {
+          id: googleUser.id,
+          phone: googleUser.phone || (existing as any)?.phone_number || '',
+          email: userEmail,
+          full_name: (existing as any)?.full_name || userName,
+          avatar_url: (existing as any)?.avatar_url || avatar,
+          created_at: new Date().toISOString(),
+          isVerified: true,
+          role: 'customer',
+          wallet_balance: 0,
+          lifetime_savings: 0,
+        };
+
+        await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+        await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
         setUser(userData);
         setIsAuthenticated(true);
         setIsGuest(false);
         setSession(data.session);
-        
+
         Alert.alert('Success', 'Signed in with Google successfully!');
       }
     } catch (error: any) {
       console.error('Google sign-in error:', error);
-      Alert.alert('Error', error.message || 'Failed to sign in with Google. Please try again.');
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to sign in with Google. Please try again.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -229,7 +287,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
-      console.log('🚀 Starting Google sign-in...');
       await promptAsync();
     } catch (error: any) {
       console.error('Google sign-in error:', error);
@@ -237,14 +294,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithPhone = async (phone: string, fullName?: string): Promise<void> => {
-    console.log('📝 Signing in with phone (custom auth):', phone);
-    
+  // ============================================================
+  // PHONE
+  // ============================================================
+  const signInWithPhone = async (
+    phone: string,
+    fullName?: string
+  ): Promise<void> => {
+    console.log('📝 Signing in with phone:', phone);
+
     try {
       const cleanPhone = phone.replace(/\s/g, '');
-      const fullPhone = cleanPhone.startsWith('+') ? cleanPhone : `+256${cleanPhone}`;
-      
-      const { data: existingUser, error: checkError } = await supabase
+      const fullPhone = cleanPhone.startsWith('+')
+        ? cleanPhone
+        : `+256${cleanPhone}`;
+
+      const { data: existingUser } = await supabase
         .from('users')
         .select('id, full_name, phone_number')
         .eq('phone_number', fullPhone)
@@ -254,29 +319,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let userName: string;
 
       if (existingUser) {
-        console.log('✅ User already exists with ID:', existingUser.id);
         userId = existingUser.id;
-        userName = existingUser.full_name || fullName?.trim() || 'Munolink Member';
-        
+        userName =
+          existingUser.full_name || fullName?.trim() || 'Munolink Member';
+
         if (fullName?.trim() && !existingUser.full_name) {
-          console.log('📝 Updating user name in database to:', fullName);
-          const { error: updateError } = await supabase
+          await supabase
             .from('users')
             .update({ full_name: fullName.trim() })
             .eq('id', userId);
-            
-          if (updateError) {
-            console.error('Error updating user name:', updateError);
-          } else {
-            console.log('✅ User name updated successfully');
-            userName = fullName.trim();
-          }
+          userName = fullName.trim();
         }
       } else {
         userId = generateUUID();
         userName = fullName?.trim() || 'Munolink Member';
-        
-        console.log('📝 Creating new user in database...');
+
         const { error: insertError } = await supabase
           .from('users')
           .insert({
@@ -288,13 +345,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             lifetime_savings: 0,
             kyc_verified: false,
             created_at: new Date().toISOString(),
-          });
+          } as any);
 
-        if (insertError) {
-          console.error('❌ Error creating user in database:', insertError);
-          throw insertError;
-        }
-        console.log('✅ User created in database successfully with name:', userName);
+        if (insertError) throw insertError;
       }
 
       const userData = {
@@ -315,90 +368,189 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(userData);
       setIsAuthenticated(true);
       setIsGuest(false);
-      
-      console.log('✅ User signed in successfully with ID:', userId, 'Name:', userName);
-      
-      return;
     } catch (error) {
-      console.error('❌ Sign in error:', error);
+      console.error('❌ Phone sign in error:', error);
       throw error;
     }
   };
 
-  const signIn = async (userData: any): Promise<void> => {
-    console.log('📝 Signing in user:', userData);
+  // ============================================================
+  // EMAIL SIGN UP (NO HASHING — plain text for now)
+  // ============================================================
+  const signUpWithEmail = async (
+    fullName: string,
+    email: string,
+    password: string
+  ): Promise<void> => {
+    console.log('📝 Email sign up:', email);
+
     try {
-      if (!userData.id) {
-        userData.id = generateUUID();
+      const normalizedEmail = normalizeEmail(email);
+      const trimmedName = fullName.trim();
+
+      if (!trimmedName || trimmedName.length < 2) {
+        throw new Error('Please enter your full name');
       }
-      
-      const phoneNumber = userData.phone || userData.phone_number || '';
-      const userName = userData.full_name || userData.name || 'Munolink Member';
-      
-      const { data: existingUser, error: checkError } = await supabase
-        .from('users')
-        .select('id, full_name')
-        .eq('phone_number', phoneNumber)
+      if (!normalizedEmail || !normalizedEmail.includes('@')) {
+        throw new Error('Please enter a valid email address');
+      }
+      if (!password || password.length < 6) {
+        throw new Error('Password must be at least 6 characters');
+      }
+
+      // Check email uniqueness
+      const { data: existing } = await (supabase.from('users' as any) as any)
+        .select('id')
+        .eq('email', normalizedEmail)
         .maybeSingle();
 
-      if (!existingUser && phoneNumber) {
-        console.log('📝 Creating new user in database');
-        const { error: insertError } = await supabase
-          .from('users')
-          .insert({
-            id: userData.id,
-            phone_number: phoneNumber,
-            full_name: userName,
-            role: 'customer',
-            wallet_balance: 0,
-            lifetime_savings: 0,
-            kyc_verified: false,
-            created_at: new Date().toISOString(),
-          });
-
-        if (insertError) {
-          console.error('Error creating user in database:', insertError);
-        }
-      } else if (existingUser) {
-        userData.id = existingUser.id;
-        userData.full_name = existingUser.full_name || userName;
+      if (existing) {
+        throw new Error('An account with this email already exists');
       }
-      
+
+      const userId = generateUUID();
+
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          full_name: trimmedName,
+          email: normalizedEmail,
+          password_hash: password, // ⚠️ plain-text for now — do NOT ship this
+          role: 'customer',
+          wallet_balance: 0,
+          lifetime_savings: 0,
+          kyc_verified: false,
+          created_at: new Date().toISOString(),
+        } as any);
+
+      if (insertError) throw insertError;
+
+      const userData = {
+        id: userId,
+        email: normalizedEmail,
+        full_name: trimmedName,
+        name: trimmedName,
+        created_at: new Date().toISOString(),
+        isVerified: true,
+        role: 'customer',
+        wallet_balance: 0,
+        lifetime_savings: 0,
+      };
+
       await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
-      
+
       setUser(userData);
       setIsAuthenticated(true);
       setIsGuest(false);
-      
-      console.log('✅ User signed in successfully with ID:', userData.id, 'Name:', userData.full_name);
+
+      console.log('✅ Email sign up successful');
     } catch (error) {
-      console.error('❌ Sign in error:', error);
+      console.error('❌ Email sign up error:', error);
       throw error;
     }
   };
 
+  // ============================================================
+  // EMAIL SIGN IN (NO HASHING — plain-text comparison)
+  // ============================================================
+  const signInWithEmail = async (
+    email: string,
+    password: string
+  ): Promise<void> => {
+    console.log('📝 Email sign in:', email);
+
+    try {
+      const normalizedEmail = normalizeEmail(email);
+      if (!normalizedEmail || !password) {
+        throw new Error('Please enter your email and password');
+      }
+
+      const { data: existing, error: fetchError } = await (supabase
+        .from('users' as any) as any)
+        .select('*')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+
+      if (fetchError) throw fetchError;
+      if (!existing) {
+        throw new Error('No account found with this email');
+      }
+      if (!(existing as any).password_hash) {
+        throw new Error(
+          'This account uses a different sign-in method. Try phone or Google.'
+        );
+      }
+
+      if ((existing as any).password_hash !== password) {
+        throw new Error('Incorrect password');
+      }
+
+      const userData = {
+        id: existing.id,
+        email: (existing as any).email,
+        full_name: existing.full_name || 'Munolink Member',
+        name: existing.full_name || 'Munolink Member',
+        avatar_url: existing.avatar_url || null,
+        created_at: existing.created_at || new Date().toISOString(),
+        isVerified: true,
+        role: existing.role || 'customer',
+        wallet_balance: existing.wallet_balance || 0,
+        lifetime_savings: existing.lifetime_savings || 0,
+      };
+
+      await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+
+      setUser(userData);
+      setIsAuthenticated(true);
+      setIsGuest(false);
+
+      console.log('✅ Email sign in successful');
+    } catch (error) {
+      console.error('❌ Email sign in error:', error);
+      throw error;
+    }
+  };
+
+  // ============================================================
+  // LEGACY signIn
+  // ============================================================
+  const signIn = async (userData: any): Promise<void> => {
+    console.warn('⚠️ signIn() is legacy — prefer dedicated methods');
+    if (!userData?.id) userData.id = generateUUID();
+
+    await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+    await AsyncStorage.setItem('userData', JSON.stringify(userData));
+
+    setUser(userData);
+    setIsAuthenticated(true);
+    setIsGuest(false);
+  };
+
+  // ============================================================
+  // SIGN OUT
+  // ============================================================
   const signOut = async (): Promise<void> => {
     setIsLoading(true);
     try {
       await supabase.auth.signOut();
-      
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
       setUser(null);
       setSession(null);
       setIsAuthenticated(false);
       setIsGuest(true);
-      console.log('🚪 User signed out');
     } catch (error) {
       console.error('Sign out error:', error);
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   const logout = signOut;
-  
+
   const joinAsGuest = (): void => {
     setIsGuest(true);
     setIsAuthenticated(false);
@@ -410,63 +562,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const userDataStr = await AsyncStorage.getItem('userData');
       if (userDataStr) {
-        const parsedUser = JSON.parse(userDataStr);
-        setUser(parsedUser);
+        setUser(JSON.parse(userDataStr));
         setIsAuthenticated(true);
         setIsGuest(false);
-        console.log('✅ Session refreshed from AsyncStorage');
       }
     } catch (error) {
       console.error('Session refresh failed:', error);
     }
   };
 
-  const createSessionForUser = async (userId: string): Promise<void> => {
-    console.log('🔄 Creating session for user:', userId);
-    try {
-      const userDataStr = await AsyncStorage.getItem('userData');
-      if (userDataStr) {
-        const parsedUser = JSON.parse(userDataStr);
-        setUser(parsedUser);
-        setIsAuthenticated(true);
-        setIsGuest(false);
-        console.log('✅ Session created from AsyncStorage');
-      }
-    } catch (error) {
-      console.error('❌ Failed to create session:', error);
-    }
-  };
+  const createSessionForUser = useCallback(
+    async (userId: string): Promise<void> => {
+      await refreshSession();
+    },
+    []
+  );
 
-  // ✅ Memoize the context value to prevent unnecessary re-renders
-  const contextValue = useMemo(() => ({
-    isAuthenticated,
-    isGuest,
-    isLoading,
-    user,
-    session,
-    signIn,
-    signInWithPhone,
-    signInWithGoogle,
-    signOut,
-    logout,
-    joinAsGuest,
-    refreshSession,
-    createSessionForUser,
-    setIsAuthenticated,
-    setIsGuest,
-  }), [isAuthenticated, isGuest, isLoading, user, session]);
+  // ============================================================
+  // CONTEXT VALUE
+  // ============================================================
+  const contextValue = useMemo(
+    () => ({
+      isAuthenticated,
+      isGuest,
+      isLoading,
+      user,
+      session,
+      signIn,
+      signInWithPhone,
+      signUpWithEmail,
+      signInWithEmail,
+      signInWithGoogle,
+      signOut,
+      logout,
+      joinAsGuest,
+      refreshSession,
+      createSessionForUser,
+      setIsAuthenticated,
+      setIsGuest,
+    }),
+    [
+      isAuthenticated,
+      isGuest,
+      isLoading,
+      user,
+      session,
+      signIn,
+      signInWithPhone,
+      signUpWithEmail,
+      signInWithEmail,
+      signInWithGoogle,
+      signOut,
+      logout,
+      joinAsGuest,
+      refreshSession,
+      createSessionForUser,
+    ]
+  );
 
   return (
-    <AuthContext.Provider value={contextValue}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>
   );
 };
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };

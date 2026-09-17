@@ -224,16 +224,14 @@ const HelpSupportContent = ({ navigation }: any) => {
     : FAQS.filter(faq => faq.category === selectedCategory);
 
   return (
-    <View style={[styles.container, isDesktop && styles.desktopContainer]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Help & Support</Text>
-        <View style={{ width: 24 }} />
-      </View>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={24} color="#1F2F5F" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Help & Support</Text>
+          <View style={{ width: 24 }} />
+        </View>
 
       <ScrollView 
         contentContainerStyle={[styles.content, isDesktop && styles.desktopContent]}
@@ -347,7 +345,7 @@ const HelpSupportContent = ({ navigation }: any) => {
         {/* Version Info */}
         <Text style={styles.versionText}>Munolink v1.0.0</Text>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 };
 

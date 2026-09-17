@@ -16,6 +16,11 @@ import {
   Modal,
   TextInput,
   FlatList,
+  Platform,
+  KeyboardAvoidingView,
+  ActionSheetIOS,
+  ViewToken,
+  ViewabilityConfig,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,11 +31,153 @@ import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { supabase } from '../../lib/supabase';
 import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
+import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
+import { AIBottomSheet } from '../feed/components/AIBottomSheet';
+import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import * as VideoThumbnails from 'expo-video-thumbnails';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Opportunity, calculateDistance } from '../../services/feed.service';
+import { locationService } from '../../services/location.service';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
+import { useIsFocused } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
+
+const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
+  itemVisiblePercentOverride: 60,
+  itemVisiblePercentThreshold: 60,
+  minimumViewTime: 100,
+} as ViewabilityConfig;
+
+// ============================================================
+// ✅ Price type
+// ============================================================
+type PriceType = 'fixed' | 'negotiable' | 'free';
+
+const PRICE_TYPE_OPTIONS: {
+  key: PriceType;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { key: 'fixed', label: 'Fixed', icon: 'pricetag-outline' },
+  { key: 'negotiable', label: 'Negotiable', icon: 'swap-horizontal-outline' },
+  { key: 'free', label: 'Free', icon: 'gift-outline' },
+];
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+async function uriToBlob(uri: string): Promise<Blob> {
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri);
+    return await response.blob();
+  }
+
+  return new Promise<Blob>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.onerror = () => reject(new Error(`Failed to read URI: ${uri}`));
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send(null);
+  });
+}
+
+async function uploadLocalFile(
+  uri: string,
+  destinationPath: string,
+  contentType: string
+): Promise<{ publicUrl: string | null; error: string | null }> {
+  try {
+    if (Platform.OS === 'web') {
+      const blob = await uriToBlob(uri);
+      if (!blob || blob.size === 0) {
+        return { publicUrl: null, error: 'File is empty' };
+      }
+      const { error } = await supabase.storage
+        .from('catalog-images')
+        .upload(destinationPath, blob, {
+          cacheControl: '3600',
+          upsert: false,
+          contentType: blob.type || contentType,
+        });
+      if (error) return { publicUrl: null, error: error.message };
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from('catalog-images').getPublicUrl(destinationPath);
+      return { publicUrl, error: null };
+    }
+
+    const supabaseUrl =
+      process.env.EXPO_PUBLIC_SUPABASE_URL ||
+      'https://ffbjvrwkvnwocuyapajo.supabase.co';
+    const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+
+    if (!anonKey) {
+      return { publicUrl: null, error: 'Missing Supabase anon key' };
+    }
+
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/catalog-images/${destinationPath}`;
+
+    const result = await FileSystem.uploadAsync(uploadUrl, uri, {
+      httpMethod: 'POST',
+      uploadType: (FileSystem as any).FileSystemUploadType?.BINARY_CONTENT
+        ? (FileSystem as any).FileSystemUploadType.BINARY_CONTENT
+        : 0,
+      headers: {
+        Authorization: `Bearer ${anonKey}`,
+        apikey: anonKey,
+        'Content-Type': contentType,
+        'x-upsert': 'false',
+      },
+    });
+
+    if (result.status < 200 || result.status >= 300) {
+      console.error('❌ Upload failed with status:', result.status, result.body);
+      return {
+        publicUrl: null,
+        error: `Upload failed (HTTP ${result.status}): ${result.body}`,
+      };
+    }
+
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from('catalog-images').getPublicUrl(destinationPath);
+
+    return { publicUrl, error: null };
+  } catch (err: any) {
+    console.error('❌ uploadLocalFile error:', err);
+    return { publicUrl: null, error: err?.message || 'Upload failed' };
+  }
+}
+
+async function deleteStorageFileFromPublicUrl(
+  publicUrl: string | null | undefined
+) {
+  if (!publicUrl) return;
+
+  try {
+    const marker = '/storage/v1/object/public/catalog-images/';
+    const idx = publicUrl.indexOf(marker);
+    if (idx === -1) return;
+
+    const path = publicUrl.substring(idx + marker.length);
+    const { error } = await supabase.storage
+      .from('catalog-images')
+      .remove([path]);
+    if (error) {
+      console.warn('⚠️ Storage delete failed:', path, error.message);
+    } else if (__DEV__) {
+      console.log('🗑️ Storage file removed:', path);
+    }
+  } catch (err) {
+    console.warn('⚠️ Storage delete threw:', err);
+  }
+}
 
 // --- Types ---
 interface UserProfile {
@@ -48,6 +195,8 @@ interface UserProfile {
   location_city: string | null;
   location_region: string | null;
   location_country: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 interface CatalogItem {
@@ -67,31 +216,23 @@ interface CatalogItem {
   user_id?: string | null;
   like_count?: number | null;
   view_count?: number | null;
+  share_count?: number | null;
+  comment_count?: number | null;
   price?: number | null;
+  price_type?: PriceType | null;
   video?: string | null;
   video_thumbnail?: string | null;
   video_duration?: number | null;
   video_size?: number | null;
+  distance?: number;
+  saveCount?: number;
+  isSaved?: boolean;
 }
-
-// ============================================================
-// SKELETON LOADING COMPONENTS
-// ============================================================
-
-const ProfileSkeleton = () => (
-  <View style={styles.skeletonProfile}>
-    <View style={styles.skeletonAvatar} />
-    <View style={styles.skeletonName} />
-    <View style={styles.skeletonStats} />
-    <View style={styles.skeletonBio} />
-  </View>
-);
 
 // ============================================================
 // SUB-COMPONENTS
 // ============================================================
 
-// --- Stats Row ---
 const StatsRow = ({ following, followers, likes }: any) => (
   <View style={styles.statsRow}>
     <View style={styles.statItem}>
@@ -109,45 +250,34 @@ const StatsRow = ({ following, followers, likes }: any) => (
   </View>
 );
 
-// ============================================================
-// GRID POST ITEM - WITH PROPER THUMBNAIL FALLBACK
-// ============================================================
-
-const GridPostItem = ({ item, onPress }: any) => {
-  // ✅ Get image with proper fallback
+const GridPostItem = ({ item, onPress, onLongPress }: any) => {
   let imageUrl = null;
-  
-  // 1. Try images array first
   if (item.images && item.images.length > 0) {
     imageUrl = item.images[0];
-  }
-  // 2. Try video_thumbnail
-  else if (item.video_thumbnail && isValidImageUrl(item.video_thumbnail)) {
+  } else if (item.video_thumbnail) {
     imageUrl = item.video_thumbnail;
-  }
-  // 3. Try specifications.video_thumbnail
-  else if (item.specifications && typeof item.specifications === 'object') {
+  } else if (item.specifications && typeof item.specifications === 'object') {
     const specThumbnail = item.specifications.video_thumbnail;
-    if (specThumbnail && isValidImageUrl(specThumbnail)) {
-      imageUrl = specThumbnail;
-    }
+    if (specThumbnail) imageUrl = specThumbnail;
   }
-  
+
   const hasVideo = !!item.video || !!item.specifications?.video;
-  
-  // ✅ Get price from specifications
+
   let price = null;
   if (item.specifications && typeof item.specifications === 'object') {
-    price = item.specifications.price || item.specifications.regular_price || null;
+    price =
+      item.specifications.price || item.specifications.regular_price || null;
   }
   if (!price && item.price) {
     price = item.price;
   }
 
   return (
-    <TouchableOpacity 
-      style={styles.gridPostItem} 
+    <TouchableOpacity
+      style={styles.gridPostItem}
       onPress={() => onPress(item)}
+      onLongPress={() => onLongPress?.(item)}
+      delayLongPress={350}
       activeOpacity={0.8}
     >
       {imageUrl ? (
@@ -157,22 +287,34 @@ const GridPostItem = ({ item, onPress }: any) => {
           <Ionicons name="image-outline" size={32} color="#8A8AAE" />
         </View>
       )}
-      
+
       {hasVideo && (
         <View style={styles.gridVideoBadge}>
           <Ionicons name="play-circle" size={20} color="#FFFFFF" />
         </View>
       )}
-      
-      <View style={styles.gridPostOverlay}>
+
+      <TouchableOpacity
+        style={styles.gridMenuButton}
+        onPress={() => onLongPress?.(item)}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        <Ionicons name="ellipsis-horizontal" size={16} color="#FFFFFF" />
+      </TouchableOpacity>
+
+      <View style={styles.gridPostOverlay} pointerEvents="none">
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.7)']}
           style={styles.gridPostGradient}
         />
         <View style={styles.gridPostInfo}>
-          <Text style={styles.gridPostTitle} numberOfLines={1}>{item.name || 'Untitled'}</Text>
+          <Text style={styles.gridPostTitle} numberOfLines={1}>
+            {item.name || 'Untitled'}
+          </Text>
           {price && (
-            <Text style={styles.gridPostPrice}>UGX {Number(price).toLocaleString()}</Text>
+            <Text style={styles.gridPostPrice}>
+              UGX {Number(price).toLocaleString()}
+            </Text>
           )}
         </View>
       </View>
@@ -180,15 +322,11 @@ const GridPostItem = ({ item, onPress }: any) => {
   );
 };
 
-// ============================================================
-// GUEST ACCOUNT SCREEN
-// ============================================================
-
 const GuestAccountScreen = ({ navigation }: any) => {
   return (
     <View style={styles.guestContainer}>
       <View style={styles.guestHeader}>
-        <Text style={styles.guestHeaderTitle}>Munolink</Text>
+        <Text style={styles.guestHeaderTitle}>Account</Text>
       </View>
 
       <View style={styles.guestContent}>
@@ -198,10 +336,11 @@ const GuestAccountScreen = ({ navigation }: any) => {
 
         <Text style={styles.guestTitle}>Welcome to Munolink</Text>
         <Text style={styles.guestSubtitle}>
-          Create an account to follow people, save posts, and share your own opportunities with the community.
+          Create an account to follow people, save posts, and share your own
+          opportunities with the community.
         </Text>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.guestSignUpButton}
           onPress={() => navigation.navigate('Join')}
           activeOpacity={0.8}
@@ -216,15 +355,15 @@ const GuestAccountScreen = ({ navigation }: any) => {
           </LinearGradient>
         </TouchableOpacity>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.guestLogInButton}
-          onPress={() => navigation.navigate('Login')}
+          onPress={() => navigation.navigate('SignIn')}
           activeOpacity={0.7}
         >
           <Text style={styles.guestLogInText}>Log In</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.guestContinueButton}
           onPress={() => navigation.navigate('Feed')}
           activeOpacity={0.6}
@@ -232,54 +371,17 @@ const GuestAccountScreen = ({ navigation }: any) => {
           <Text style={styles.guestContinueText}>Continue as guest</Text>
         </TouchableOpacity>
       </View>
-
-      <View style={styles.guestFeatures}>
-        <View style={styles.guestFeature}>
-          <View style={styles.guestFeatureIcon}>
-            <Ionicons name="compass-outline" size={24} color="#4A7DFF" />
-          </View>
-          <Text style={styles.guestFeatureLabel}>Discover</Text>
-        </View>
-        <View style={styles.guestFeature}>
-          <View style={styles.guestFeatureIcon}>
-            <Ionicons name="heart-outline" size={24} color="#4A7DFF" />
-          </View>
-          <Text style={styles.guestFeatureLabel}>Save</Text>
-        </View>
-        <View style={styles.guestFeature}>
-          <View style={styles.guestFeatureIcon}>
-            <Ionicons name="chatbubble-outline" size={24} color="#4A7DFF" />
-          </View>
-          <Text style={styles.guestFeatureLabel}>Connect</Text>
-        </View>
-        <View style={styles.guestFeature}>
-          <View style={styles.guestFeatureIcon}>
-            <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
-          </View>
-          <Text style={styles.guestFeatureLabel}>Share</Text>
-        </View>
-      </View>
     </View>
   );
 };
 
 // ============================================================
-// HELPER FUNCTIONS
+// HELPERS
 // ============================================================
 
-/**
- * Validates if a URL points to a valid image based on extension
- */
-const isValidImageUrl = (url: string | null | undefined): boolean => {
-  if (!url) return false;
-  const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.heic'];
-  const lowerUrl = url.toLowerCase();
-  return validExtensions.some(ext => lowerUrl.endsWith(ext)) || lowerUrl.includes('image');
-};
+const isRemoteUrl = (u: string | null | undefined): boolean =>
+  !!u && (u.startsWith('http://') || u.startsWith('https://'));
 
-/**
- * Safely gets a value from specifications (Json type)
- */
 const getFromSpecs = (specs: any, key: string): string | null => {
   if (!specs || typeof specs !== 'object') return null;
   const value = specs[key];
@@ -288,47 +390,284 @@ const getFromSpecs = (specs: any, key: string): string | null => {
   return null;
 };
 
-/**
- * Gets a valid thumbnail URL with fallback
- */
-const getValidThumbnail = (item: CatalogItem): string | undefined => {
-  // Check direct video_thumbnail first
-  if (item.video_thumbnail && isValidImageUrl(item.video_thumbnail)) {
-    return item.video_thumbnail;
-  }
-  // Check specifications (Json type)
-  const specThumbnail = getFromSpecs(item.specifications, 'video_thumbnail');
-  if (specThumbnail && isValidImageUrl(specThumbnail)) {
-    return specThumbnail;
-  }
-  // Fallback to first image
-  if (item.images && item.images.length > 0 && isValidImageUrl(item.images[0])) {
-    return item.images[0];
-  }
-  return undefined;
-};
-
-/**
- * Gets video URL from direct property or specifications
- */
 const getVideoUrl = (item: CatalogItem): string | null => {
-  // Check direct video first
   if (item.video) return item.video;
-  // Check specifications (Json type)
   const specVideo = getFromSpecs(item.specifications, 'video');
   if (specVideo) return specVideo;
   return null;
 };
 
+const getPriceFromItem = (item: CatalogItem): number | null => {
+  let price = item.price || null;
+  if (!price && item.specifications && typeof item.specifications === 'object') {
+    const specPrice =
+      item.specifications.price || item.specifications.regular_price || null;
+    if (specPrice !== null && specPrice !== undefined) {
+      price =
+        typeof specPrice === 'number'
+          ? specPrice
+          : parseFloat(String(specPrice));
+    }
+  }
+  return price;
+};
+
+// ✅ Extract price_type from item, defaulting sensibly
+const getPriceTypeFromItem = (item: CatalogItem): PriceType => {
+  const t = item.price_type;
+  if (t === 'fixed' || t === 'negotiable' || t === 'free') return t;
+  // Fallback: if price is 0, treat as free
+  const p = getPriceFromItem(item);
+  return p === 0 || p === null ? 'free' : 'fixed';
+};
+
+function buildOpportunityFromCatalogItem(
+  item: CatalogItem,
+  profile: UserProfile | null,
+  isSaved: boolean
+): Opportunity {
+  return {
+    id: item.id,
+    title: item.name || 'Post',
+    price: getPriceFromItem(item) || 0,
+    currency: 'UGX',
+    imageUrl: item.images?.[0] || item.video_thumbnail || '',
+    catalogImages: item.images || [],
+    description: item.description || '',
+    rating: null,
+    reviewCount: item.comment_count || 0,
+    area: profile?.location_city || null,
+    userLatitude: profile?.latitude ?? null,
+    userLongitude: profile?.longitude ?? null,
+    userPhone: profile?.phone_number || null,
+    inStock: true,
+    category: item.category || null,
+    type: 'product',
+    createdAt: item.created_at || undefined,
+    userId: profile?.id || '',
+    userFullName: profile?.full_name || 'User',
+    userAvatar: profile?.avatar_url || null,
+    video: item.video || null,
+    video_thumbnail: item.video_thumbnail || null,
+    video_duration: item.video_duration ?? null,
+    video_size: item.video_size ?? null,
+    likeCount: item.like_count || 0,
+    viewCount: item.view_count || 0,
+    shareCount: item.share_count || 0,
+    commentCount: item.comment_count || 0,
+    saveCount: item.saveCount || 0,
+    isSaved,
+    distance: item.distance,
+    specifications: item.specifications || {},
+  };
+}
+
+const ItemMediaLoadingSpinner: React.FC = () => {
+  return (
+    <View style={styles.itemMediaSpinnerOverlay} pointerEvents="none">
+      <ActivityIndicator size="large" color="#FFFFFF" />
+    </View>
+  );
+};
+
 // ============================================================
-// MAIN ACCOUNT CONTENT
+// FULLSCREEN ITEM
+// ============================================================
+interface FullscreenItemProps {
+  item: CatalogItem;
+  index: number;
+  fullscreenIndex: number;
+  isFocused: boolean;
+  isDesktop: boolean;
+  winWidth: number;
+  winHeight: number;
+  userProfile: UserProfile | null;
+  userId: string | undefined;
+  isSaved: boolean;
+  isLiked: boolean;
+  likeCount: number;
+  isItemLoading: boolean;
+  isMine: boolean;
+  onShowMore: (item: CatalogItem) => void;
+  onShare: () => void;
+  onSave: (item: CatalogItem) => void;
+  onLike: (item: CatalogItem) => void;
+  onInbox: (item: CatalogItem) => void;
+  onMediaLoadStateChange: (isLoading: boolean) => void;
+  onUserPress: (item: CatalogItem) => void;
+  onReviewsPress: (item: CatalogItem) => void;
+  onDirectionsPress: (item: CatalogItem) => void;
+  onAIPress: (item: CatalogItem) => void;
+  onOverflowPress: (item: CatalogItem) => void;
+}
+
+const FullscreenItem: React.FC<FullscreenItemProps> = ({
+  item,
+  index,
+  fullscreenIndex,
+  isFocused,
+  isDesktop,
+  winWidth,
+  winHeight,
+  userProfile,
+  userId,
+  isSaved,
+  isLiked,
+  likeCount,
+  isItemLoading,
+  isMine,
+  onShowMore,
+  onShare,
+  onSave,
+  onLike,
+  onInbox,
+  onMediaLoadStateChange,
+  onUserPress,
+  onReviewsPress,
+  onDirectionsPress,
+  onAIPress,
+  onOverflowPress,
+}) => {
+  const opportunity = buildOpportunityFromCatalogItem(
+    item,
+    userProfile,
+    isSaved
+  );
+
+  const mediaItems: {
+    type: 'image' | 'video';
+    url: string;
+    thumbnail?: string;
+  }[] = [];
+
+  const videoUrl = getVideoUrl(item);
+  const thumbnail = item.video_thumbnail || item.images?.[0];
+
+  if (videoUrl) {
+    mediaItems.push({
+      type: 'video',
+      url: videoUrl,
+      thumbnail: thumbnail || undefined,
+    });
+  }
+
+  if (item.images && item.images.length > 0) {
+    for (const img of item.images) {
+      if (mediaItems.some((m) => m.url === img)) continue;
+      mediaItems.push({ type: 'image', url: img });
+    }
+  }
+
+  if (mediaItems.length === 0) {
+    const placeholderText = encodeURIComponent(item.name || 'Post');
+    mediaItems.push({
+      type: 'image',
+      url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(
+        0,
+        20
+      )}`,
+    });
+  }
+
+  const price = getPriceFromItem(item) || 0;
+  const cardWidth = isDesktop ? 420 : winWidth;
+  const cardHeight = isDesktop ? winHeight : winHeight;
+
+  const isVisible = isFocused && index === fullscreenIndex;
+
+  return (
+    <View
+      style={{
+        height: cardHeight,
+        width: cardWidth,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+      }}
+    >
+      <SceneRenderer
+        key={item.id}
+        media={mediaItems}
+        title={item.name || 'Post'}
+        price={price}
+        currency="UGX"
+        userName={userProfile?.full_name || 'User'}
+        userAvatar={userProfile?.avatar_url || null}
+        description={item.description || null}
+        rating={null}
+        area={userProfile?.location_city || null}
+        inStock={true}
+        type="product"
+        createdAt={item.created_at || undefined}
+        isDesktop={isDesktop}
+        width={cardWidth}
+        height={cardHeight}
+        onShowMore={() => onShowMore(item)}
+        onShare={onShare}
+        onSave={() => onSave(item)}
+        onPrimaryAction={() => onInbox(item)}
+        onInboxPress={() => onInbox(item)}
+        showInboxButton={true}
+        onMediaLoadStateChange={onMediaLoadStateChange}
+        onSceneChange={(idx, source) => {
+          if (__DEV__) console.log('Scene changed:', idx, source);
+        }}
+        onBehavioralEvent={(event) => {
+          if (__DEV__) console.log('Behavioral event:', event);
+        }}
+        autoPlay={true}
+        autoPlayInterval={5000}
+        resetKey={item.id}
+        bottomOffset={0}
+        isVisible={isVisible}
+      />
+
+      {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
+
+      <View style={styles.actionRailWrapper}>
+        <FloatingActionRail
+          key={`rail-${item.id}`}
+          opportunity={opportunity}
+          isLiked={isLiked}
+          likeCount={likeCount}
+          onLikePress={() => onLike(item)}
+          onUserPress={() => onUserPress(item)}
+          onReviewsPress={() => onReviewsPress(item)}
+          onDirectionsPress={() => onDirectionsPress(item)}
+          onSharePress={onShare}
+          onAIPress={() => onAIPress(item)}
+          onSavePress={() => onSave(item)}
+          isSaved={isSaved}
+          savedCount={item.saveCount || 0}
+          shareCount={item.share_count || 0}
+          reviewCount={item.comment_count || 0}
+          distance={item.distance || 0}
+          userAvatar={userProfile?.avatar_url || null}
+        />
+      </View>
+
+      {isMine && (
+        <TouchableOpacity
+          style={styles.fullscreenOverflowButton}
+          onPress={() => onOverflowPress(item)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="ellipsis-horizontal" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+// ============================================================
+// MAIN CONTENT
 // ============================================================
 
 const AccountContent = ({ navigation }: any) => {
   const { user, isAuthenticated, logout } = useAuth();
   const { isDesktop } = useBreakpoint();
-  
-  // --- State ---
+  const isFocused = useIsFocused();
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -338,13 +677,34 @@ const AccountContent = ({ navigation }: any) => {
   const [showSettings, setShowSettings] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showCreatePost, setShowCreatePost] = useState(false);
-  
-  // Fullscreen view state
+
+  const [showEditPost, setShowEditPost] = useState(false);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
-  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
-  
-  // --- Edit Profile Form ---
+  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>(
+    {}
+  );
+
+  // ✅ Likes
+  const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
+
+  const [loadingItemsMap, setLoadingItemsMap] = useState<
+    Record<string, boolean>
+  >({});
+
+  const [fullscreenIndex, setFullscreenIndex] = useState(0);
+
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState<Opportunity | null>(null);
+  const [showReviewsModal, setShowReviewsModal] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [showDirectionsModal, setShowDirectionsModal] = useState(false);
+
   const [editForm, setEditForm] = useState({
     full_name: '',
     phone_number: '',
@@ -356,23 +716,31 @@ const AccountContent = ({ navigation }: any) => {
   const [editAvatar, setEditAvatar] = useState<string | null>(null);
   const [editCover, setEditCover] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
-  
-  // --- Create Post Form ---
+
+  // ✅ Post form — now includes `priceType`
   const [postForm, setPostForm] = useState({
     name: '',
     description: '',
-    category: '',
     price: '',
+    priceType: 'fixed' as PriceType,
     images: [] as string[],
-    tags: [] as string[],
     video: null as string | null,
     videoThumbnail: null as string | null,
     videoDuration: null as number | null,
     videoSize: null as number | null,
   });
   const [savingPost, setSavingPost] = useState(false);
-  
-  // --- Stats ---
+
+  const [removedImagesDuringEdit, setRemovedImagesDuringEdit] = useState<
+    string[]
+  >([]);
+  const [removedVideoDuringEdit, setRemovedVideoDuringEdit] = useState<
+    string | null
+  >(null);
+  const [removedThumbnailDuringEdit, setRemovedThumbnailDuringEdit] = useState<
+    string | null
+  >(null);
+
   const [stats, setStats] = useState({
     following: 0,
     followers: 0,
@@ -383,7 +751,7 @@ const AccountContent = ({ navigation }: any) => {
   const flatListRef = useRef<FlatList>(null);
 
   // ============================================================
-  // FETCH FUNCTIONS
+  // FETCH
   // ============================================================
 
   const fetchUserProfile = useCallback(async () => {
@@ -397,7 +765,7 @@ const AccountContent = ({ navigation }: any) => {
         .maybeSingle();
 
       if (error) throw error;
-      
+
       if (data) {
         const userData = data as any;
         return {
@@ -415,9 +783,11 @@ const AccountContent = ({ navigation }: any) => {
           location_city: userData.location_city || null,
           location_region: userData.location_region || null,
           location_country: userData.location_country || null,
+          latitude: userData.latitude ?? null,
+          longitude: userData.longitude ?? null,
         } as UserProfile;
       }
-      
+
       return {
         id: user.id,
         full_name: user.full_name || 'User',
@@ -433,6 +803,8 @@ const AccountContent = ({ navigation }: any) => {
         location_city: null,
         location_region: null,
         location_country: null,
+        latitude: null,
+        longitude: null,
       } as UserProfile;
     } catch (error) {
       console.error('Error fetching user profile:', error);
@@ -440,78 +812,132 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user]);
 
-  const fetchUserCatalog = useCallback(async () => {
-    if (!user?.id) return [];
+  const fetchUserCatalog = useCallback(
+    async (profile: UserProfile | null) => {
+      if (!user?.id) return [];
 
-    try {
-      console.log('📊 Fetching catalog for user:', user.id);
-      
-      const { data, error } = await supabase
-        .from('catalog')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+      try {
+        const { data, error } = await supabase
+          .from('catalog')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('❌ Error fetching catalog:', error);
-        throw error;
+        if (error) throw error;
+
+        const rows = data || [];
+
+        let commentCounts: Record<string, number> = {};
+        try {
+          const { data: commentData, error: commentError } = await supabase
+            .from('comments')
+            .select('post_id')
+            .in(
+              'post_id',
+              rows.map((r: any) => r.id)
+            );
+          if (!commentError && commentData) {
+            commentData.forEach((c: any) => {
+              commentCounts[c.post_id] = (commentCounts[c.post_id] || 0) + 1;
+            });
+          }
+        } catch (e) {
+          console.log('Comment counts unavailable');
+        }
+
+        let saveCounts: Record<string, number> = {};
+        try {
+          const { data: saveData, error: saveError } = await supabase
+            .from('saves')
+            .select('post_id')
+            .in(
+              'post_id',
+              rows.map((r: any) => r.id)
+            );
+          if (!saveError && saveData) {
+            saveData.forEach((s: any) => {
+              saveCounts[s.post_id] = (saveCounts[s.post_id] || 0) + 1;
+            });
+          }
+        } catch (e) {
+          console.log('Save counts unavailable');
+        }
+
+        let userCoords: { latitude: number; longitude: number } | undefined;
+        try {
+          const loc = await locationService.getCurrentLocation();
+          if (loc?.latitude != null && loc?.longitude != null) {
+            userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+          }
+        } catch {}
+
+        return rows.map((item: any) => {
+          let distance: number | undefined;
+          if (
+            userCoords &&
+            profile?.latitude != null &&
+            profile?.longitude != null
+          ) {
+            distance = calculateDistance(
+              userCoords.latitude,
+              userCoords.longitude,
+              profile.latitude,
+              profile.longitude
+            );
+          }
+
+          return {
+            id: item.id,
+            name: item.name || 'Untitled',
+            category: item.category || 'Uncategorized',
+            subcategory: item.subcategory || null,
+            brand: item.brand || null,
+            description: item.description || null,
+            specifications: item.specifications || {},
+            images: item.images || null,
+            tags: item.tags || null,
+            is_active: item.is_active || null,
+            created_at: item.created_at || null,
+            updated_at: item.updated_at || null,
+            category_id: item.category_id || null,
+            user_id: item.user_id || null,
+            like_count: item.like_count || 0,
+            view_count: item.view_count || 0,
+            share_count: item.share_count || 0,
+            comment_count: commentCounts[item.id] || 0,
+            price: item.price || null,
+            // ✅ Price type from DB
+            price_type: (item.price_type as PriceType) || null,
+            video: item.video || null,
+            video_thumbnail: item.video_thumbnail || null,
+            video_duration: item.video_duration || null,
+            video_size: item.video_size || null,
+            distance,
+            saveCount: saveCounts[item.id] || 0,
+            isSaved: false,
+          } as CatalogItem;
+        });
+      } catch (error) {
+        console.error('Error fetching catalog:', error);
+        return [];
       }
+    },
+    [user]
+  );
 
-      console.log(`✅ Found ${data?.length || 0} items for user`);
-
-      return (data || []).map((item: any) => ({
-        id: item.id,
-        name: item.name || 'Untitled',
-        category: item.category || 'Uncategorized',
-        subcategory: item.subcategory || null,
-        brand: item.brand || null,
-        description: item.description || null,
-        specifications: item.specifications || {},
-        images: item.images || null,
-        tags: item.tags || null,
-        is_active: item.is_active || null,
-        created_at: item.created_at || null,
-        updated_at: item.updated_at || null,
-        category_id: item.category_id || null,
-        user_id: item.user_id || null,
-        like_count: item.like_count || 0,
-        view_count: item.view_count || 0,
-        price: item.price || null,
-        video: item.video || null,
-        video_thumbnail: item.video_thumbnail || null,
-        video_duration: item.video_duration || null,
-        video_size: item.video_size || null,
-      }));
-    } catch (error) {
-      console.error('Error fetching catalog:', error);
-      return [];
-    }
-  }, [user]);
-
-  // --- FETCH FOLLOWERS & FOLLOWING FROM CORRECT TABLE ---
   const fetchFollowStats = useCallback(async () => {
     if (!user?.id) return { followers: 0, following: 0 };
 
     try {
-      // Get followers count (people following this user)
-      const { count: followersCount, error: followersError } = await supabase
+      const { count: followersCount } = await supabase
         .from('follows')
         .select('*', { count: 'exact', head: true })
         .eq('following_id', user.id);
 
-      if (followersError) {
-        console.error('Error fetching followers:', followersError);
-      }
-
-      // Get following count (people this user is following)
-      const { count: followingCount, error: followingError } = await supabase
+      const { count: followingCount } = await supabase
         .from('follows')
         .select('*', { count: 'exact', head: true })
         .eq('follower_id', user.id);
-
-      if (followingError) {
-        console.error('Error fetching following:', followingError);
-      }
 
       return {
         followers: followersCount || 0,
@@ -523,68 +949,142 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
+  const fetchLikeStats = useCallback(
+    async (myCatalogIds: string[]) => {
+      if (!user?.id || myCatalogIds.length === 0) return 0;
+
+      try {
+        const { count, error } = await (supabase as any)
+          .from('likes')
+          .select('*', { count: 'exact', head: true })
+          .in('post_id', myCatalogIds);
+
+        if (error) throw error;
+        return count || 0;
+      } catch (error) {
+        console.error('Error fetching like stats:', error);
+        return 0;
+      }
+    },
+    [user?.id]
+  );
+
   const loadAllData = useCallback(async () => {
     if (!user?.id) {
-      console.log('⚠️ No user ID, skipping data load');
       setLoading(false);
       return;
     }
 
-    console.log('🔄 Loading data for user:', user.id);
     setLoading(true);
-    
-    try {
-      const [profile, catalogData, followStats] = await Promise.all([
-        fetchUserProfile(),
-        fetchUserCatalog(),
-        fetchFollowStats(),
-      ]);
 
-      console.log('📊 Profile loaded:', !!profile);
-      console.log('📊 Catalog items loaded:', catalogData.length);
-      console.log('📊 Followers:', followStats.followers);
-      console.log('📊 Following:', followStats.following);
+    try {
+      const profile = await fetchUserProfile();
 
       if (profile) {
         setUserProfile(profile);
         if (profile.created_at) {
           const joinedDate = new Date(profile.created_at);
-          setStats(prev => ({ ...prev, joinedYear: joinedDate.getFullYear() }));
+          setStats((prev) => ({
+            ...prev,
+            joinedYear: joinedDate.getFullYear(),
+          }));
         }
       }
-      
+
+      const catalogData = await fetchUserCatalog(profile);
       setCatalogItems(catalogData);
-      
-      const totalLikes = catalogData.reduce((sum, item) => {
-        return sum + (item.like_count || 0);
-      }, 0);
-      
-      setStats(prev => ({
+
+      const myCatalogIds = catalogData.map((c) => c.id);
+
+      const [followStats, totalLikes] = await Promise.all([
+        fetchFollowStats(),
+        fetchLikeStats(myCatalogIds),
+      ]);
+
+      setStats((prev) => ({
         ...prev,
         likes: totalLikes,
         followers: followStats.followers,
         following: followStats.following,
       }));
-      
-      console.log('✅ Data loaded successfully');
-      
     } catch (error) {
       console.error('❌ Error loading data:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user, fetchUserProfile, fetchUserCatalog, fetchFollowStats]);
+  }, [
+    user,
+    fetchUserProfile,
+    fetchUserCatalog,
+    fetchFollowStats,
+    fetchLikeStats,
+  ]);
 
   useEffect(() => {
     loadAllData();
   }, [user?.id]);
 
   useEffect(() => {
-    if (isAuthenticated && user?.id) {
-      loadAllData();
-    }
+    if (isAuthenticated && user?.id) loadAllData();
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (catalogItems.length === 0) return;
+
+    setLoadingItemsMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const item of catalogItems) {
+        if (next[item.id] === undefined) {
+          next[item.id] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [catalogItems]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const postIds = catalogItems.map((c) => c.id);
+    if (postIds.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await (supabase as any)
+          .from('likes')
+          .select('post_id')
+          .eq('user_id', user.id)
+          .in('post_id', postIds);
+
+        if (cancelled || error || !data) return;
+
+        const likedIds: Record<string, boolean> = {};
+        data.forEach((row: any) => {
+          likedIds[row.post_id] = true;
+        });
+        setLikedItemsMap((prev) => ({ ...prev, ...likedIds }));
+      } catch (e) {
+        console.warn('Failed to prefetch likes:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, catalogItems]);
+
+  const handleMediaLoadStateChange = useCallback(
+    (itemId: string, isLoading: boolean) => {
+      setLoadingItemsMap((prev) => {
+        if (prev[itemId] === isLoading) return prev;
+        return { ...prev, [itemId]: isLoading };
+      });
+    },
+    []
+  );
 
   const onRefresh = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -593,39 +1093,40 @@ const AccountContent = ({ navigation }: any) => {
   }, [loadAllData]);
 
   // ============================================================
-  // AVATAR & COVER UPLOAD - UNIFIED BLOB UPLOAD
+  // PROFILE IMAGE UPLOAD
   // ============================================================
 
-  const uploadProfileImage = async (uri: string, folder: string): Promise<string> => {
-    try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const fileExt = blob.type.split('/')[1] || 'jpg';
-      const fileName = `${folder}/${user?.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${fileExt}`;
-      
-      const { data, error } = await supabase.storage
-        .from('catalog-images')
-        .upload(fileName, blob, {
-          cacheControl: '3600',
-          upsert: false,
-        });
+  const uploadProfileImage = async (
+    uri: string,
+    folder: string
+  ): Promise<string> => {
+    const blob = await uriToBlob(uri);
 
-      if (error) throw error;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('catalog-images')
-        .getPublicUrl(fileName);
-
-      return publicUrl;
-    } catch (error) {
-      console.error('Upload error:', error);
-      throw error;
+    if (!blob || blob.size === 0) {
+      throw new Error('Image file is empty or unreadable');
     }
-  };
 
-  // ============================================================
-  // PICK AVATAR - UNIFIED FOR BOTH PROFILE AND EDIT MODAL
-  // ============================================================
+    const fileExt = (blob.type || 'image/jpeg').split('/')[1] || 'jpg';
+    const fileName = `${folder}/${user?.id}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${fileExt}`;
+
+    const { error } = await supabase.storage
+      .from('catalog-images')
+      .upload(fileName, blob, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: blob.type || 'image/jpeg',
+      });
+
+    if (error) throw error;
+
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from('catalog-images').getPublicUrl(fileName);
+
+    return publicUrl;
+  };
 
   const pickAvatar = useCallback(async () => {
     try {
@@ -644,18 +1145,16 @@ const AccountContent = ({ navigation }: any) => {
 
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
-        
-        // If we're in edit mode, set the edit avatar
+
         if (showEditProfile) {
           setEditAvatar(asset.uri);
           return;
         }
-        
-        // Otherwise, upload directly for profile avatar
+
         setUploading(true);
         try {
           const avatarUrl = await uploadProfileImage(asset.uri, 'avatars');
-          
+
           const { error: updateError } = await supabase
             .from('users')
             .update({ avatar_url: avatarUrl })
@@ -663,7 +1162,9 @@ const AccountContent = ({ navigation }: any) => {
 
           if (updateError) throw updateError;
 
-          setUserProfile(prev => prev ? { ...prev, avatar_url: avatarUrl } : null);
+          setUserProfile((prev) =>
+            prev ? { ...prev, avatar_url: avatarUrl } : null
+          );
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert('Success', 'Avatar updated successfully!');
         } catch (error) {
@@ -678,10 +1179,6 @@ const AccountContent = ({ navigation }: any) => {
       Alert.alert('Error', 'Failed to select image');
     }
   }, [user?.id, showEditProfile]);
-
-  // ============================================================
-  // PICK COVER - FOR EDIT PROFILE MODAL
-  // ============================================================
 
   const pickCover = useCallback(async () => {
     try {
@@ -705,10 +1202,6 @@ const AccountContent = ({ navigation }: any) => {
       Alert.alert('Error', 'Failed to select image');
     }
   }, []);
-
-  // ============================================================
-  // UPDATE PROFILE
-  // ============================================================
 
   const updateProfile = async () => {
     if (!user?.id) return;
@@ -742,7 +1235,7 @@ const AccountContent = ({ navigation }: any) => {
       }
 
       const updateData: any = {};
-      
+
       if (editForm.full_name.trim()) {
         updateData.full_name = editForm.full_name.trim();
       }
@@ -762,22 +1255,23 @@ const AccountContent = ({ navigation }: any) => {
         .update(updateData)
         .eq('id', user.id);
 
-      if (error) {
-        console.error('Update error:', error);
-        throw error;
-      }
+      if (error) throw error;
 
-      setUserProfile(prev => prev ? {
-        ...prev,
-        full_name: editForm.full_name.trim() || prev.full_name,
-        phone_number: editForm.phone_number.trim() || prev.phone_number,
-        bio: editForm.bio.trim() || null,
-        avatar_url: avatarUrl,
-        cover_url: coverUrl,
-        location_city: editForm.location_city.trim() || null,
-        location_region: editForm.location_region.trim() || null,
-        location_country: editForm.location_country.trim() || null,
-      } : null);
+      setUserProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              full_name: editForm.full_name.trim() || prev.full_name,
+              phone_number: editForm.phone_number.trim() || prev.phone_number,
+              bio: editForm.bio.trim() || null,
+              avatar_url: avatarUrl,
+              cover_url: coverUrl,
+              location_city: editForm.location_city.trim() || null,
+              location_region: editForm.location_region.trim() || null,
+              location_country: editForm.location_country.trim() || null,
+            }
+          : null
+      );
 
       setEditAvatar(null);
       setEditCover(null);
@@ -785,9 +1279,7 @@ const AccountContent = ({ navigation }: any) => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('✅ Success', 'Profile updated successfully!');
       setShowEditProfile(false);
-      
       loadAllData();
-
     } catch (error: any) {
       console.error('Error updating profile:', error);
       Alert.alert('Error', error.message || 'Failed to update profile');
@@ -796,9 +1288,130 @@ const AccountContent = ({ navigation }: any) => {
     }
   };
 
-  // ============================================================
-  // CREATE POST
-  // ============================================================
+  const openEditPost = useCallback((item: CatalogItem) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    setEditingPostId(item.id);
+    setRemovedImagesDuringEdit([]);
+    setRemovedVideoDuringEdit(null);
+    setRemovedThumbnailDuringEdit(null);
+
+    const price = getPriceFromItem(item);
+    const priceType = getPriceTypeFromItem(item);
+
+    setPostForm({
+      name: item.name || '',
+      description: item.description || '',
+      price: price != null && price > 0 ? String(price) : '',
+      priceType,
+      images: item.images || [],
+      video: item.video || null,
+      videoThumbnail: item.video_thumbnail || null,
+      videoDuration: item.video_duration ?? null,
+      videoSize: item.video_size ?? null,
+    });
+
+    setShowEditPost(true);
+  }, []);
+
+  const confirmDeletePost = useCallback(
+    (item: CatalogItem) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      Alert.alert(
+        'Delete Post',
+        `Are you sure you want to delete "${item.name}"? This cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const filesToRemove: string[] = [
+                  ...(item.images || []),
+                  item.video || null,
+                  item.video_thumbnail || null,
+                ].filter((u): u is string => !!u && isRemoteUrl(u));
+
+                await Promise.all(
+                  filesToRemove.map((u) => deleteStorageFileFromPublicUrl(u))
+                );
+
+                const { error } = await supabase
+                  .from('catalog')
+                  .delete()
+                  .eq('id', item.id)
+                  .eq('user_id', user?.id);
+
+                if (error) throw error;
+
+                setCatalogItems((prev) =>
+                  prev.filter((c) => c.id !== item.id)
+                );
+
+                if (selectedItem?.id === item.id) {
+                  setSelectedItem(null);
+                  setViewMode('grid');
+                }
+
+                Haptics.notificationAsync(
+                  Haptics.NotificationFeedbackType.Success
+                );
+                Alert.alert('✅ Deleted', 'Post removed successfully.');
+              } catch (error: any) {
+                console.error('Error deleting post:', error);
+                Alert.alert(
+                  'Error',
+                  error?.message || 'Failed to delete post.'
+                );
+              }
+            },
+          },
+        ]
+      );
+    },
+    [user?.id, selectedItem?.id]
+  );
+
+  const showPostActions = useCallback(
+    (item: CatalogItem) => {
+      if (!item || !user?.id || item.user_id !== user.id) return;
+
+      const options = ['Edit Post', 'Delete Post', 'Cancel'];
+      const destructiveIndex = 1;
+      const cancelIndex = 2;
+
+      if (Platform.OS === 'ios') {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options,
+            cancelButtonIndex: cancelIndex,
+            destructiveButtonIndex: destructiveIndex,
+            title: item.name || 'Post',
+          },
+          (buttonIndex) => {
+            if (buttonIndex === 0) openEditPost(item);
+            else if (buttonIndex === 1) confirmDeletePost(item);
+          }
+        );
+      } else {
+        Alert.alert(item.name || 'Post', 'Choose an action', [
+          {
+            text: 'Edit Post',
+            onPress: () => openEditPost(item),
+          },
+          {
+            text: 'Delete Post',
+            style: 'destructive',
+            onPress: () => confirmDeletePost(item),
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]);
+      }
+    },
+    [user?.id, openEditPost, confirmDeletePost]
+  );
 
   const pickMedia = async () => {
     try {
@@ -816,19 +1429,19 @@ const AccountContent = ({ navigation }: any) => {
 
       if (!result.canceled && result.assets) {
         const selectedAssets = result.assets;
-        
+
         const images: string[] = [];
         let video: string | null = null;
         let videoThumbnail: string | null = null;
         let videoDuration: number | null = null;
         let videoSize: number | null = null;
-        
+
         for (const asset of selectedAssets) {
           if (asset.type === 'video') {
             video = asset.uri;
             videoDuration = asset.duration || null;
             videoSize = asset.fileSize || null;
-            
+
             try {
               const thumbnailResult = await VideoThumbnails.getThumbnailAsync(
                 asset.uri,
@@ -836,7 +1449,6 @@ const AccountContent = ({ navigation }: any) => {
               );
               if (thumbnailResult && thumbnailResult.uri) {
                 videoThumbnail = thumbnailResult.uri;
-                console.log('📸 Auto-generated thumbnail:', videoThumbnail);
               }
             } catch (thumbError) {
               console.error('❌ Auto thumbnail generation failed:', thumbError);
@@ -845,16 +1457,16 @@ const AccountContent = ({ navigation }: any) => {
             images.push(asset.uri);
           }
         }
-        
-        setPostForm(prev => ({
+
+        setPostForm((prev) => ({
           ...prev,
           images: [...prev.images, ...images],
           video: video,
-          videoThumbnail: videoThumbnail,
+          videoThumbnail: videoThumbnail || prev.videoThumbnail,
           videoDuration: videoDuration,
           videoSize: videoSize,
         }));
-        
+
         if (video && !videoThumbnail) {
           Alert.alert(
             '📸 Thumbnail Needed',
@@ -885,11 +1497,10 @@ const AccountContent = ({ navigation }: any) => {
       });
 
       if (!result.canceled && result.assets[0]) {
-        setPostForm(prev => ({
+        setPostForm((prev) => ({
           ...prev,
           videoThumbnail: result.assets[0].uri,
         }));
-        console.log('📸 Manual thumbnail selected:', result.assets[0].uri);
       }
     } catch (error) {
       console.error('Thumbnail pick error:', error);
@@ -898,115 +1509,113 @@ const AccountContent = ({ navigation }: any) => {
   };
 
   const removePostImage = (index: number) => {
-    setPostForm(prev => ({
-      ...prev,
-      images: prev.images.filter((_, i) => i !== index),
-    }));
+    setPostForm((prev) => {
+      const uri = prev.images[index];
+      if (uri && isRemoteUrl(uri)) {
+        setRemovedImagesDuringEdit((r) => [...r, uri]);
+      }
+      return {
+        ...prev,
+        images: prev.images.filter((_, i) => i !== index),
+      };
+    });
   };
 
   const removeVideo = () => {
-    setPostForm(prev => ({
-      ...prev,
-      video: null,
-      videoThumbnail: null,
-      videoDuration: null,
-      videoSize: null,
-    }));
+    setPostForm((prev) => {
+      if (prev.video && isRemoteUrl(prev.video)) {
+        setRemovedVideoDuringEdit(prev.video);
+      }
+      return {
+        ...prev,
+        video: null,
+        videoDuration: null,
+        videoSize: null,
+      };
+    });
   };
 
   const removeThumbnail = () => {
-    setPostForm(prev => ({
-      ...prev,
-      videoThumbnail: null,
-    }));
+    setPostForm((prev) => {
+      if (prev.videoThumbnail && isRemoteUrl(prev.videoThumbnail)) {
+        setRemovedThumbnailDuringEdit(prev.videoThumbnail);
+      }
+      return { ...prev, videoThumbnail: null };
+    });
   };
 
-  const uploadVideoAndThumbnail = async (videoUri: string, thumbnailUri: string | null) => {
-    if (!user?.id) return { videoUrl: null, videoThumbnail: null, videoDuration: null, videoSize: null };
+  const uploadVideoAndThumbnail = async (
+    videoUri: string,
+    thumbnailUri: string | null
+  ) => {
+    if (!user?.id) throw new Error('Not signed in');
 
-    try {
-      const videoResponse = await fetch(videoUri);
-      const videoBlob = await videoResponse.blob();
-      
-      let videoExt = 'mp4';
-      const mimeType = videoBlob.type;
-      if (mimeType.includes('mp4')) videoExt = 'mp4';
-      else if (mimeType.includes('quicktime')) videoExt = 'mov';
-      else if (mimeType.includes('x-matroska')) videoExt = 'mkv';
-      else if (mimeType.includes('webm')) videoExt = 'webm';
-      else if (mimeType.includes('avi')) videoExt = 'avi';
-      
-      const videoFileName = `videos/${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${videoExt}`;
-      
-      console.log('📹 Uploading video:', videoFileName);
-      
-      const { data: videoData, error: videoError } = await supabase.storage
-        .from('catalog-images')
-        .upload(videoFileName, videoBlob, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: mimeType || 'video/mp4',
-        });
-
-      if (videoError) {
-        console.error('❌ Video upload error:', videoError);
-        throw videoError;
-      }
-
-      const { data: { publicUrl: videoUrl } } = supabase.storage
-        .from('catalog-images')
-        .getPublicUrl(videoFileName);
-
-      console.log('✅ Video uploaded:', videoUrl);
-
-      let videoThumbnail: string | null = null;
-
-      if (thumbnailUri) {
-        try {
-          console.log('📸 Uploading thumbnail from:', thumbnailUri);
-          
-          const thumbResponse = await fetch(thumbnailUri);
-          const thumbBlob = await thumbResponse.blob();
-          
-          const thumbFileName = `videos/${user.id}/${Date.now()}-thumb-${Math.random().toString(36).slice(2, 10)}.jpg`;
-          
-          console.log('📸 Uploading thumbnail as:', thumbFileName);
-          
-          const { data: thumbData, error: thumbError } = await supabase.storage
-            .from('catalog-images')
-            .upload(thumbFileName, thumbBlob, {
-              cacheControl: '3600',
-              upsert: false,
-              contentType: 'image/jpeg',
-            });
-
-          if (thumbError) {
-            console.error('❌ Thumbnail upload error:', thumbError);
-          } else if (thumbData) {
-            const { data: { publicUrl: thumbPublicUrl } } = supabase.storage
-              .from('catalog-images')
-              .getPublicUrl(thumbFileName);
-            videoThumbnail = thumbPublicUrl;
-            console.log('✅ Thumbnail uploaded:', videoThumbnail);
-          }
-        } catch (thumbError) {
-          console.error('❌ Thumbnail upload failed:', thumbError);
-        }
-      }
-
-      return { 
-        videoUrl, 
-        videoThumbnail,
-        videoDuration: postForm.videoDuration,
-        videoSize: postForm.videoSize,
-      };
-
-    } catch (error) {
-      console.error('❌ Video upload error:', error);
-      throw error;
+    let videoExt = 'mp4';
+    let mimeType = 'video/mp4';
+    const uriLower = videoUri.toLowerCase();
+    if (uriLower.endsWith('.mov')) {
+      videoExt = 'mov';
+      mimeType = 'video/quicktime';
+    } else if (uriLower.endsWith('.mkv')) {
+      videoExt = 'mkv';
+      mimeType = 'video/x-matroska';
+    } else if (uriLower.endsWith('.webm')) {
+      videoExt = 'webm';
+      mimeType = 'video/webm';
+    } else if (uriLower.endsWith('.avi')) {
+      videoExt = 'avi';
+      mimeType = 'video/x-msvideo';
     }
+
+    const videoFileName = `videos/${user.id}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}.${videoExt}`;
+
+    const videoResult = await uploadLocalFile(
+      videoUri,
+      videoFileName,
+      mimeType
+    );
+
+    if (!videoResult.publicUrl) {
+      throw new Error(videoResult.error || 'Video upload failed');
+    }
+
+    let videoThumbnail: string | null = null;
+
+    if (thumbnailUri) {
+      try {
+        const thumbFileName = `videos/${user.id}/${Date.now()}-thumb-${Math.random()
+          .toString(36)
+          .slice(2, 10)}.jpg`;
+
+        const thumbResult = await uploadLocalFile(
+          thumbnailUri,
+          thumbFileName,
+          'image/jpeg'
+        );
+
+        if (thumbResult.publicUrl) {
+          videoThumbnail = thumbResult.publicUrl;
+        } else {
+          console.warn('⚠️ Thumbnail upload failed:', thumbResult.error);
+        }
+      } catch (thumbError) {
+        console.error('❌ Thumbnail upload failed (non-fatal):', thumbError);
+      }
+    }
+
+    return {
+      videoUrl: videoResult.publicUrl,
+      videoThumbnail,
+      videoDuration: postForm.videoDuration,
+      videoSize: postForm.videoSize,
+    };
   };
 
+  // ============================================================
+  // ✅ CREATE POST — now uses priceType
+  // ============================================================
   const createPost = async () => {
     if (!user?.id) {
       Alert.alert('Error', 'Please sign in');
@@ -1018,10 +1627,24 @@ const AccountContent = ({ navigation }: any) => {
       return;
     }
 
+    // ✅ Validate price for non-free types
+    if (postForm.priceType !== 'free') {
+      const priceNum = parseFloat(postForm.price);
+      if (!priceNum || priceNum <= 0) {
+        Alert.alert(
+          'Error',
+          postForm.priceType === 'negotiable'
+            ? 'Please enter a starting price'
+            : 'Please enter a valid price'
+        );
+        return;
+      }
+    }
+
     setSavingPost(true);
 
     try {
-      let uploadedUrls: string[] = [];
+      const uploadedUrls: string[] = [];
       let videoUrl: string | null = null;
       let videoThumbnail: string | null = null;
       let videoDuration: number | null = null;
@@ -1029,26 +1652,28 @@ const AccountContent = ({ navigation }: any) => {
 
       for (const uri of postForm.images) {
         try {
-          const response = await fetch(uri);
-          const blob = await response.blob();
-          const fileExt = blob.type.split('/')[1] || 'jpg';
-          const fileName = `posts/${user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExt}`;
-          
-          const { data, error } = await supabase.storage
-            .from('catalog-images')
-            .upload(fileName, blob, {
-              cacheControl: '3600',
-              upsert: false,
-            });
+          const ext = uri.toLowerCase().endsWith('.png')
+            ? 'png'
+            : uri.toLowerCase().endsWith('.webp')
+            ? 'webp'
+            : 'jpg';
+          const fileName = `posts/${user.id}/${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 10)}.${ext}`;
+          const contentType =
+            ext === 'png'
+              ? 'image/png'
+              : ext === 'webp'
+              ? 'image/webp'
+              : 'image/jpeg';
 
-          if (error) throw error;
+          const result = await uploadLocalFile(uri, fileName, contentType);
 
-          const { data: { publicUrl } } = supabase.storage
-            .from('catalog-images')
-            .getPublicUrl(fileName);
-          
-          uploadedUrls.push(publicUrl);
-          console.log('✅ Image uploaded:', publicUrl);
+          if (result.publicUrl) {
+            uploadedUrls.push(result.publicUrl);
+          } else {
+            console.warn('⚠️ Image upload failed:', result.error);
+          }
         } catch (error) {
           console.error('Failed to upload image:', error);
         }
@@ -1056,65 +1681,63 @@ const AccountContent = ({ navigation }: any) => {
 
       if (postForm.video) {
         try {
-          const result = await uploadVideoAndThumbnail(postForm.video, postForm.videoThumbnail);
+          const result = await uploadVideoAndThumbnail(
+            postForm.video,
+            postForm.videoThumbnail
+          );
           videoUrl = result.videoUrl;
           videoThumbnail = result.videoThumbnail;
           videoDuration = result.videoDuration;
           videoSize = result.videoSize;
-          console.log('📹 Video URL:', videoUrl);
-          console.log('📸 Thumbnail URL:', videoThumbnail);
-          console.log('⏱️ Duration:', videoDuration);
-          console.log('📦 Size:', videoSize);
-        } catch (error) {
+        } catch (error: any) {
           console.error('Video upload failed:', error);
-          Alert.alert('Error', 'Failed to upload video. Please try again.');
+          Alert.alert(
+            'Error',
+            error?.message || 'Failed to upload video. Please try again.'
+          );
           setSavingPost(false);
           return;
         }
       }
 
-      const tagsArray = postForm.tags
-        .join(' ')
-        .split(' ')
-        .filter(tag => tag.startsWith('#'))
-        .map(tag => tag.replace('#', ''));
+      // ✅ Compute final price and price_type
+      const finalPrice =
+        postForm.priceType === 'free' ? 0 : parseFloat(postForm.price) || 0;
 
       const insertData: any = {
         name: postForm.name.trim(),
         description: postForm.description.trim() || null,
-        category: postForm.category.trim() || 'Uncategorized',
+        // The DB requires `category` — default to Uncategorized since
+        // the field is no longer collected from the user.
+        category: 'Uncategorized',
         images: uploadedUrls.length > 0 ? uploadedUrls : null,
-        tags: tagsArray.length > 0 ? tagsArray : null,
-        specifications: postForm.price ? { price: parseFloat(postForm.price) } : {},
+        // ✅ Price + type
+        price: finalPrice,
+        price_type: postForm.priceType,
+        specifications:
+          postForm.priceType !== 'free'
+            ? { price: finalPrice, price_type: postForm.priceType }
+            : { price_type: 'free' },
         is_active: true,
         user_id: user.id,
       };
 
-      if (videoUrl) {
-        insertData.video = videoUrl;
-      }
-      
-      if (videoThumbnail && isValidImageUrl(videoThumbnail)) {
+      if (videoUrl) insertData.video = videoUrl;
+
+      if (isRemoteUrl(videoThumbnail)) {
         insertData.video_thumbnail = videoThumbnail;
-        console.log('✅ Adding valid thumbnail:', videoThumbnail);
       } else if (uploadedUrls.length > 0) {
         insertData.video_thumbnail = uploadedUrls[0];
-        console.log('📸 Using first image as fallback thumbnail:', uploadedUrls[0]);
       } else {
         insertData.video_thumbnail = null;
-        console.log('⚠️ No thumbnail available');
       }
 
       if (videoDuration !== null) {
         insertData.video_duration = Math.round(videoDuration);
-        console.log('⏱️ Adding duration:', insertData.video_duration);
       }
       if (videoSize !== null) {
         insertData.video_size = videoSize;
-        console.log('📦 Adding size:', insertData.video_size);
       }
-
-      console.log('📝 Inserting post data...');
 
       const { data, error } = await supabase
         .from('catalog')
@@ -1122,10 +1745,7 @@ const AccountContent = ({ navigation }: any) => {
         .select()
         .single();
 
-      if (error) {
-        console.error('❌ Insert error:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       if (data) {
         const newItem: CatalogItem = {
@@ -1145,32 +1765,25 @@ const AccountContent = ({ navigation }: any) => {
           user_id: data.user_id || null,
           like_count: data.like_count || 0,
           view_count: data.view_count || 0,
+          share_count: data.share_count || 0,
+          comment_count: 0,
           price: data.price || null,
+          price_type: (data.price_type as PriceType) || postForm.priceType,
           video: data.video || null,
           video_thumbnail: data.video_thumbnail || null,
           video_duration: data.video_duration || null,
           video_size: data.video_size || null,
+          distance: undefined,
+          saveCount: 0,
+          isSaved: false,
         };
-        setCatalogItems(prev => [newItem, ...prev]);
+        setCatalogItems((prev) => [newItem, ...prev]);
       }
 
       Alert.alert('✅ Success', 'Your post has been published!');
       setShowCreatePost(false);
-      setPostForm({
-        name: '',
-        description: '',
-        category: '',
-        price: '',
-        images: [],
-        tags: [],
-        video: null,
-        videoThumbnail: null,
-        videoDuration: null,
-        videoSize: null,
-      });
-      
+      resetPostForm();
       loadAllData();
-
     } catch (error: any) {
       console.error('❌ Error creating post:', error);
       Alert.alert('Error', error.message || 'Failed to create post');
@@ -1180,168 +1793,311 @@ const AccountContent = ({ navigation }: any) => {
   };
 
   // ============================================================
-  // FULLSCREEN VIEW HANDLERS
+  // ✅ UPDATE POST — now uses priceType
   // ============================================================
-  
-  const handleItemPress = useCallback((item: CatalogItem) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedItem(item);
-    setViewMode('fullscreen');
-  }, []);
+  const updatePost = async () => {
+    if (!user?.id || !editingPostId) {
+      Alert.alert('Error', 'Missing post to update');
+      return;
+    }
+
+    if (!postForm.name.trim()) {
+      Alert.alert('Error', 'Please enter a name/title');
+      return;
+    }
+
+    if (postForm.priceType !== 'free') {
+      const priceNum = parseFloat(postForm.price);
+      if (!priceNum || priceNum <= 0) {
+        Alert.alert(
+          'Error',
+          postForm.priceType === 'negotiable'
+            ? 'Please enter a starting price'
+            : 'Please enter a valid price'
+        );
+        return;
+      }
+    }
+
+    setSavingPost(true);
+
+    try {
+      const finalImages: string[] = [];
+      for (const uri of postForm.images) {
+        if (isRemoteUrl(uri)) {
+          finalImages.push(uri);
+        } else {
+          try {
+            const ext = uri.toLowerCase().endsWith('.png')
+              ? 'png'
+              : uri.toLowerCase().endsWith('.webp')
+              ? 'webp'
+              : 'jpg';
+            const fileName = `posts/${user.id}/${Date.now()}-${Math.random()
+              .toString(36)
+              .slice(2, 10)}.${ext}`;
+            const contentType =
+              ext === 'png'
+                ? 'image/png'
+                : ext === 'webp'
+                ? 'image/webp'
+                : 'image/jpeg';
+
+            const result = await uploadLocalFile(uri, fileName, contentType);
+            if (result.publicUrl) {
+              finalImages.push(result.publicUrl);
+            }
+          } catch (err) {
+            console.error('Failed to upload image during edit:', err);
+          }
+        }
+      }
+
+      let videoUrl: string | null = null;
+      let videoThumbnail: string | null = null;
+      let videoDuration: number | null = null;
+      let videoSize: number | null = null;
+
+      if (postForm.video) {
+        if (isRemoteUrl(postForm.video)) {
+          videoUrl = postForm.video;
+          videoThumbnail = isRemoteUrl(postForm.videoThumbnail)
+            ? postForm.videoThumbnail
+            : postForm.videoThumbnail || null;
+          videoDuration = postForm.videoDuration;
+          videoSize = postForm.videoSize;
+        } else {
+          try {
+            const result = await uploadVideoAndThumbnail(
+              postForm.video,
+              postForm.videoThumbnail
+            );
+            videoUrl = result.videoUrl;
+            videoThumbnail = result.videoThumbnail;
+            videoDuration = result.videoDuration;
+            videoSize = result.videoSize;
+          } catch (err: any) {
+            Alert.alert(
+              'Error',
+              err?.message || 'Failed to upload new video.'
+            );
+            setSavingPost(false);
+            return;
+          }
+        }
+      }
+
+      const finalPrice =
+        postForm.priceType === 'free' ? 0 : parseFloat(postForm.price) || 0;
+
+      const updateData: any = {
+        name: postForm.name.trim(),
+        description: postForm.description.trim() || null,
+        images: finalImages.length > 0 ? finalImages : null,
+        // ✅ Price + type
+        price: finalPrice,
+        price_type: postForm.priceType,
+        specifications:
+          postForm.priceType !== 'free'
+            ? { price: finalPrice, price_type: postForm.priceType }
+            : { price_type: 'free' },
+        video: videoUrl,
+        video_thumbnail: isRemoteUrl(videoThumbnail) ? videoThumbnail : null,
+        video_duration:
+          videoDuration !== null ? Math.round(videoDuration) : null,
+        video_size: videoSize,
+      };
+
+      const { data, error } = await supabase
+        .from('catalog')
+        .update(updateData)
+        .eq('id', editingPostId)
+        .eq('user_id', user.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const deletions: string[] = [
+        ...removedImagesDuringEdit,
+        removedVideoDuringEdit,
+        removedThumbnailDuringEdit,
+      ].filter((u): u is string => !!u && isRemoteUrl(u));
+
+      if (deletions.length > 0) {
+        Promise.all(
+          deletions.map((u) => deleteStorageFileFromPublicUrl(u))
+        ).catch(() => {});
+      }
+
+      if (data) {
+        setCatalogItems((prev) =>
+          prev.map((c) =>
+            c.id === editingPostId
+              ? {
+                  ...c,
+                  name: data.name || c.name,
+                  description: data.description || null,
+                  images: data.images || null,
+                  specifications: data.specifications || {},
+                  price: data.price || null,
+                  price_type:
+                    (data.price_type as PriceType) || postForm.priceType,
+                  video: data.video || null,
+                  video_thumbnail: data.video_thumbnail || null,
+                  video_duration: data.video_duration || null,
+                  video_size: data.video_size || null,
+                  updated_at: data.updated_at || c.updated_at,
+                }
+              : c
+          )
+        );
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('✅ Success', 'Post updated successfully!');
+
+      setShowEditPost(false);
+      setEditingPostId(null);
+      resetPostForm();
+      loadAllData();
+    } catch (error: any) {
+      console.error('❌ Error updating post:', error);
+      Alert.alert('Error', error.message || 'Failed to update post');
+    } finally {
+      setSavingPost(false);
+    }
+  };
+
+  const resetPostForm = () => {
+    setPostForm({
+      name: '',
+      description: '',
+      price: '',
+      priceType: 'fixed',
+      images: [],
+      video: null,
+      videoThumbnail: null,
+      videoDuration: null,
+      videoSize: null,
+    });
+    setRemovedImagesDuringEdit([]);
+    setRemovedVideoDuringEdit(null);
+    setRemovedThumbnailDuringEdit(null);
+  };
+
+  const handleItemPress = useCallback(
+    (item: CatalogItem) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const idx = catalogItems.findIndex((c) => c.id === item.id);
+      setSelectedItem(item);
+      setFullscreenIndex(idx >= 0 ? idx : 0);
+      setViewMode('fullscreen');
+    },
+    [catalogItems]
+  );
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
+    setFullscreenIndex(0);
   }, []);
 
-  const renderFullScreenItem = useCallback((item: CatalogItem) => {
-    if (!item) return null;
+  const handleCloseAI = useCallback(() => {
+    setShowAIModal(false);
+    setSelectedOpportunity(null);
+  }, []);
+  const handleCloseDirections = useCallback(() => {
+    setShowDirectionsModal(false);
+    setSelectedOpportunity(null);
+  }, []);
+  const handleCloseReviews = useCallback(() => {
+    setShowReviewsModal(false);
+    setSelectedOpportunity(null);
+  }, []);
 
-    const isSaved = savedItemsMap[item.id] || false;
-    
-    const mediaItems = [];
-    const thumbnail = getValidThumbnail(item);
-    const videoUrl = getVideoUrl(item);
-    
-    if (videoUrl) {
-      mediaItems.push({ 
-        type: 'video' as const, 
-        url: videoUrl,
-        thumbnail: thumbnail
+  const handleLikePress = useCallback(
+    async (opportunity: Opportunity) => {
+      if (!user?.id) return;
+
+      const currentlyLiked = likedItemsMap[opportunity.id] || false;
+      const nextLiked = !currentlyLiked;
+
+      setLikedItemsMap((prev) => ({ ...prev, [opportunity.id]: nextLiked }));
+      setLikeCountMap((prev) => {
+        const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+        return {
+          ...prev,
+          [opportunity.id]: Math.max(0, current + (nextLiked ? 1 : -1)),
+        };
       });
-    }
-    
-    if (item.images && item.images.length > 0) {
-      for (const img of item.images) {
-        if (mediaItems.some(m => m.url === img)) continue;
-        mediaItems.push({ type: 'image' as const, url: img });
+
+      try {
+        if (nextLiked) {
+          const { error } = await (supabase as any)
+            .from('likes')
+            .insert({ user_id: user.id, post_id: opportunity.id });
+          if (error && (error as any).code !== '23505') throw error;
+        } else {
+          const { error } = await (supabase as any)
+            .from('likes')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('post_id', opportunity.id);
+          if (error) throw error;
+        }
+
+        loadAllData();
+      } catch (err) {
+        console.error('Like toggle failed:', err);
+        setLikedItemsMap((prev) => ({
+          ...prev,
+          [opportunity.id]: currentlyLiked,
+        }));
+        setLikeCountMap((prev) => {
+          const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+          return {
+            ...prev,
+            [opportunity.id]: Math.max(
+              0,
+              current + (currentlyLiked ? 1 : -1)
+            ),
+          };
+        });
       }
-    }
-    
-    if (mediaItems.length === 0) {
-      const placeholderText = encodeURIComponent(item.name || 'Post');
-      mediaItems.push({ 
-        type: 'image' as const, 
-        url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(0, 20)}` 
-      });
-    }
+    },
+    [user?.id, likedItemsMap, loadAllData]
+  );
 
-    let price = item.price || null;
-    if (!price && item.specifications && typeof item.specifications === 'object') {
-      price = item.specifications.price || item.specifications.regular_price || null;
-    }
+  const onViewableItemsChangedRef = useRef<
+    | ((info: {
+        viewableItems: ViewToken<CatalogItem>[];
+        changed: ViewToken<CatalogItem>[];
+      }) => void)
+    | null
+  >(null);
 
-    const cardWidth = isDesktop ? 420 : width;
-    const cardHeight = isDesktop ? height : height;
+  onViewableItemsChangedRef.current = (info) => {
+    const { viewableItems } = info;
+    if (!viewableItems || viewableItems.length === 0) return;
 
-    return (
-      <View
-        style={{
-          height: cardHeight,
-          width: cardWidth,
-          paddingVertical: 0,
-          alignItems: 'center',
-          justifyContent: 'center',
-          position: 'relative',
-        }}
-      >
-        <SceneRenderer
-          key={item.id}
-          media={mediaItems}
-          title={item.name || 'Post'}
-          price={price || 0}
-          currency="UGX"
-          userName={userProfile?.full_name || 'User'}
-          userAvatar={userProfile?.avatar_url || null}
-          description={item.description || null}
-          rating={null}
-          area={null}
-          inStock={true}
-          type="product"
-          createdAt={item.created_at || undefined}
-          isDesktop={isDesktop}
-          width={cardWidth}
-          height={cardHeight}
-          onShowMore={() => {
-            Alert.alert('📝 Post Details', item.description || 'No description available');
-          }}
-          onShare={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            Alert.alert('🔗 Share', `Share post: ${item.name}`);
-          }}
-          onSave={() => {
-            if (!user?.id) return;
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            const currentSaved = savedItemsMap[item.id] || false;
-            const newSaved = !currentSaved;
-            setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-          }}
-          onPrimaryAction={() => {
-            navigation.navigate('Inbox', {
-              userId: user?.id,
-              userName: userProfile?.full_name || 'User',
-            });
-          }}
-          onSceneChange={(index, source) => {
-            if (__DEV__) {
-              console.log('Scene changed to:', index, source);
-            }
-          }}
-          onBehavioralEvent={(event) => {
-            if (__DEV__) {
-              console.log('Behavioral event:', event);
-            }
-          }}
-          autoPlay={false}
-          autoPlayInterval={5000}
-          resetKey={item.id}
-          bottomOffset={0}
-        />
-
-        <View style={styles.actionRailWrapper}>
-          <FloatingActionRail
-            key={`rail-${item.id}`}
-            opportunity={item as any}
-            onUserPress={() => {
-              navigation.navigate('UserProfile', {
-                userId: user?.id,
-                userName: userProfile?.full_name || 'User',
-              });
-            }}
-            onReviewsPress={() => {}}
-            onDirectionsPress={() => {}}
-            onSharePress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              Alert.alert('🔗 Share', `Share post: ${item.name}`);
-            }}
-            onAIPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              Alert.alert('🤖 AI Assistant', `Analyzing post: ${item.name}`);
-            }}
-            onSavePress={() => {
-              if (!user?.id) return;
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              const currentSaved = savedItemsMap[item.id] || false;
-              const newSaved = !currentSaved;
-              setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-            }}
-            isSaved={isSaved}
-            savedCount={0}
-            shareCount={0}
-            reviewCount={0}
-          />
-        </View>
-      </View>
-    );
-  }, [isDesktop, width, height, navigation, user?.id, userProfile, savedItemsMap]);
-
-  // ============================================================
-  // SETTINGS HANDLERS
-  // ============================================================
-
-  const handleSettingsPress = () => {
-    setShowSettings(true);
+    const firstItem = viewableItems[0];
+    const idx = firstItem.index;
+    if (idx == null) return;
+    if (idx === fullscreenIndex) return;
+    setFullscreenIndex(idx);
   };
+
+  const handleFullscreenViewableItemsChanged = useRef(
+    (info: {
+      viewableItems: ViewToken<CatalogItem>[];
+      changed: ViewToken<CatalogItem>[];
+    }) => {
+      onViewableItemsChangedRef.current?.(info);
+    }
+  ).current;
+
+  const handleSettingsPress = () => setShowSettings(true);
 
   const handleSettingsAction = (action: string) => {
     setShowSettings(false);
@@ -1365,43 +2121,37 @@ const AccountContent = ({ navigation }: any) => {
         navigation.navigate('HelpSupport');
         break;
       case 'wallet':
-        navigation.navigate('Wallet');
+        navigation.navigate('Pay');
         break;
       case 'logout':
-        Alert.alert(
-          'Log Out',
-          'Are you sure you want to log out?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Log Out', 
-              style: 'destructive',
-              onPress: async () => {
-                try {
-                  await logout();
-                  navigation.replace('Join');
-                } catch (error) {
-                  console.error('Logout error:', error);
-                  Alert.alert('Error', 'Failed to log out. Please try again.');
-                }
+        Alert.alert('Log Out', 'Are you sure you want to log out?', [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Log Out',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await logout();
+                navigation.replace('Join');
+              } catch (error) {
+                console.error('Logout error:', error);
+                Alert.alert('Error', 'Failed to log out. Please try again.');
               }
             },
-          ]
-        );
-        break;
-      default:
+          },
+        ]);
         break;
     }
   };
 
-  // ============================================================
-  // MODAL RENDERERS
-  // ============================================================
-
   const renderEditProfileModal = () => {
-    const avatarUrl = editAvatar || userProfile?.avatar_url || 
-      `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.full_name || 'User')}&background=4A7DFF&color=fff&size=200&bold=true`;
-    
+    const avatarUrl =
+      editAvatar ||
+      userProfile?.avatar_url ||
+      `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        userProfile?.full_name || 'User'
+      )}&background=4A7DFF&color=fff&size=200&bold=true`;
+
     const coverUrl = editCover || userProfile?.cover_url || null;
 
     return (
@@ -1415,42 +2165,72 @@ const AccountContent = ({ navigation }: any) => {
           setEditCover(null);
         }}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        >
           <View style={[styles.modalContent, { height: height * 0.92 }]}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => {
-                setShowEditProfile(false);
-                setEditAvatar(null);
-                setEditCover(null);
-              }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowEditProfile(false);
+                  setEditAvatar(null);
+                  setEditCover(null);
+                }}
+              >
                 <Text style={styles.modalCancel}>Cancel</Text>
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Edit Profile</Text>
               <TouchableOpacity onPress={updateProfile} disabled={savingProfile}>
-                <Text style={[styles.modalPost, savingProfile && styles.modalPostDisabled]}>
+                <Text
+                  style={[
+                    styles.modalPost,
+                    savingProfile && styles.modalPostDisabled,
+                  ]}
+                >
                   {savingProfile ? 'Saving...' : 'Save'}
                 </Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+            <ScrollView
+              style={styles.modalBody}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalBodyContent}
+            >
               <View style={styles.editCoverContainer}>
                 {coverUrl ? (
-                  <Image source={{ uri: coverUrl }} style={styles.editCoverImage} />
+                  <Image
+                    source={{ uri: coverUrl }}
+                    style={styles.editCoverImage}
+                  />
                 ) : (
                   <View style={styles.editCoverPlaceholder}>
                     <Ionicons name="image-outline" size={40} color="#8A8AAE" />
-                    <Text style={styles.editCoverPlaceholderText}>Add Cover Image</Text>
+                    <Text style={styles.editCoverPlaceholderText}>
+                      Add Cover Image
+                    </Text>
                   </View>
                 )}
-                <TouchableOpacity style={styles.editCoverButton} onPress={pickCover}>
+                <TouchableOpacity
+                  style={styles.editCoverButton}
+                  onPress={pickCover}
+                >
                   <Ionicons name="camera" size={20} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.editAvatarContainer}>
-                <TouchableOpacity style={styles.editAvatarWrapper} onPress={pickAvatar}>
-                  <Image source={{ uri: avatarUrl }} style={styles.editAvatarImage} />
+                <TouchableOpacity
+                  style={styles.editAvatarWrapper}
+                  onPress={pickAvatar}
+                >
+                  <Image
+                    source={{ uri: avatarUrl }}
+                    style={styles.editAvatarImage}
+                  />
                   <View style={styles.editAvatarButton}>
                     <Ionicons name="camera" size={16} color="#FFFFFF" />
                   </View>
@@ -1465,7 +2245,10 @@ const AccountContent = ({ navigation }: any) => {
                     placeholder="Your full name"
                     placeholderTextColor="#6A7A9E"
                     value={editForm.full_name}
-                    onChangeText={(text) => setEditForm(prev => ({ ...prev, full_name: text }))}
+                    onChangeText={(text) =>
+                      setEditForm((prev) => ({ ...prev, full_name: text }))
+                    }
+                    returnKeyType="next"
                   />
                 </View>
 
@@ -1477,7 +2260,10 @@ const AccountContent = ({ navigation }: any) => {
                     placeholderTextColor="#6A7A9E"
                     keyboardType="phone-pad"
                     value={editForm.phone_number}
-                    onChangeText={(text) => setEditForm(prev => ({ ...prev, phone_number: text }))}
+                    onChangeText={(text) =>
+                      setEditForm((prev) => ({ ...prev, phone_number: text }))
+                    }
+                    returnKeyType="next"
                   />
                 </View>
 
@@ -1490,7 +2276,9 @@ const AccountContent = ({ navigation }: any) => {
                     multiline
                     numberOfLines={3}
                     value={editForm.bio}
-                    onChangeText={(text) => setEditForm(prev => ({ ...prev, bio: text }))}
+                    onChangeText={(text) =>
+                      setEditForm((prev) => ({ ...prev, bio: text }))
+                    }
                   />
                 </View>
 
@@ -1501,7 +2289,10 @@ const AccountContent = ({ navigation }: any) => {
                     placeholder="e.g., Jinja"
                     placeholderTextColor="#6A7A9E"
                     value={editForm.location_city}
-                    onChangeText={(text) => setEditForm(prev => ({ ...prev, location_city: text }))}
+                    onChangeText={(text) =>
+                      setEditForm((prev) => ({ ...prev, location_city: text }))
+                    }
+                    returnKeyType="next"
                   />
                 </View>
 
@@ -1512,7 +2303,13 @@ const AccountContent = ({ navigation }: any) => {
                     placeholder="e.g., Eastern Region"
                     placeholderTextColor="#6A7A9E"
                     value={editForm.location_region}
-                    onChangeText={(text) => setEditForm(prev => ({ ...prev, location_region: text }))}
+                    onChangeText={(text) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        location_region: text,
+                      }))
+                    }
+                    returnKeyType="next"
                   />
                 </View>
 
@@ -1523,187 +2320,310 @@ const AccountContent = ({ navigation }: any) => {
                     placeholder="e.g., Uganda"
                     placeholderTextColor="#6A7A9E"
                     value={editForm.location_country}
-                    onChangeText={(text) => setEditForm(prev => ({ ...prev, location_country: text }))}
+                    onChangeText={(text) =>
+                      setEditForm((prev) => ({
+                        ...prev,
+                        location_country: text,
+                      }))
+                    }
+                    returnKeyType="done"
                   />
                 </View>
+
+                <View style={{ height: 60 }} />
               </View>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     );
   };
 
-  const renderCreatePostModal = () => (
-    <Modal
-      visible={showCreatePost}
-      transparent
-      animationType="slide"
-      onRequestClose={() => {
-        setShowCreatePost(false);
-        setPostForm({
-          name: '',
-          description: '',
-          category: '',
-          price: '',
-          images: [],
-          tags: [],
-          video: null,
-          videoThumbnail: null,
-          videoDuration: null,
-          videoSize: null,
-        });
-      }}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => {
-              setShowCreatePost(false);
-              setPostForm({
-                name: '',
-                description: '',
-                category: '',
-                price: '',
-                images: [],
-                tags: [],
-                video: null,
-                videoThumbnail: null,
-                videoDuration: null,
-                videoSize: null,
-              });
-            }}>
-              <Text style={styles.modalCancel}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Create Post</Text>
-            <TouchableOpacity onPress={createPost} disabled={savingPost || !postForm.name.trim()}>
-              <Text style={[styles.modalPost, (savingPost || !postForm.name.trim()) && styles.modalPostDisabled]}>
-                {savingPost ? 'Posting...' : 'Post'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+  // ============================================================
+  // ✅ POST FORM MODAL — with Price Type selector
+  // ============================================================
+  const renderPostFormModal = (
+    visible: boolean,
+    isEdit: boolean,
+    onClose: () => void,
+    onSubmit: () => void
+  ) => {
+    const isFree = postForm.priceType === 'free';
 
-          <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-            <View style={styles.mediaSection}>
-              <Text style={styles.formLabel}>Media</Text>
-              <Text style={styles.formHelperText}>Select images or a video (max 5 images)</Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.mediaScrollContent}
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="slide"
+        onRequestClose={onClose}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={onClose}>
+                <Text style={styles.modalCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>
+                {isEdit ? 'Edit Post' : 'Create Post'}
+              </Text>
+              <TouchableOpacity
+                onPress={onSubmit}
+                disabled={savingPost || !postForm.name.trim()}
               >
-                {postForm.images.map((uri, index) => (
-                  <View key={index} style={styles.mediaPreviewContainer}>
-                    <Image source={{ uri }} style={styles.mediaPreview} />
-                    <TouchableOpacity style={styles.mediaRemove} onPress={() => removePostImage(index)}>
-                      <Ionicons name="close-circle" size={20} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                {postForm.video && (
-                  <View style={styles.mediaPreviewContainer}>
-                    <View style={[styles.mediaPreview, styles.videoPreviewWrapper]}>
-                      <Ionicons name="videocam" size={32} color="#4A7DFF" />
-                      <Text style={styles.videoPreviewText}>Video</Text>
-                      {postForm.videoDuration && (
-                        <Text style={styles.videoDurationText}>
-                          {Math.round(postForm.videoDuration)}s
-                        </Text>
-                      )}
-                    </View>
-                    <TouchableOpacity style={styles.mediaRemove} onPress={removeVideo}>
-                      <Ionicons name="close-circle" size={20} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  </View>
-                )}
-                {(postForm.images.length + (postForm.video ? 1 : 0)) < 6 && (
-                  <TouchableOpacity style={styles.mediaAdd} onPress={pickMedia}>
-                    <Ionicons name="camera" size={32} color="#4A7DFF" />
-                    <Text style={styles.mediaAddText}>Add Media</Text>
-                  </TouchableOpacity>
-                )}
-              </ScrollView>
+                <Text
+                  style={[
+                    styles.modalPost,
+                    (savingPost || !postForm.name.trim()) &&
+                      styles.modalPostDisabled,
+                  ]}
+                >
+                  {savingPost
+                    ? isEdit
+                      ? 'Saving...'
+                      : 'Posting...'
+                    : isEdit
+                    ? 'Save'
+                    : 'Post'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
-            {postForm.video && (
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Video Thumbnail</Text>
-                <Text style={styles.formHelperText}>Select a thumbnail image for your video</Text>
-                <View style={styles.thumbnailContainer}>
-                  {postForm.videoThumbnail ? (
-                    <View style={styles.thumbnailPreviewContainer}>
-                      <Image source={{ uri: postForm.videoThumbnail }} style={styles.thumbnailPreview} />
-                      <TouchableOpacity style={styles.thumbnailRemove} onPress={removeThumbnail}>
-                        <Ionicons name="close-circle" size={24} color="#FFFFFF" />
+            <ScrollView
+              style={styles.modalBody}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.modalBodyContent}
+            >
+              {/* ---------- MEDIA ---------- */}
+              <View style={styles.mediaSection}>
+                <Text style={styles.formLabel}>Media</Text>
+                <Text style={styles.formHelperText}>
+                  Select images or a video (max 5 images)
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.mediaScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {postForm.images.map((uri, index) => (
+                    <View
+                      key={`${uri}-${index}`}
+                      style={styles.mediaPreviewContainer}
+                    >
+                      <Image source={{ uri }} style={styles.mediaPreview} />
+                      <TouchableOpacity
+                        style={styles.mediaRemove}
+                        onPress={() => removePostImage(index)}
+                      >
+                        <Ionicons
+                          name="close-circle"
+                          size={20}
+                          color="#FFFFFF"
+                        />
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    <TouchableOpacity style={styles.thumbnailAddButton} onPress={pickThumbnail}>
-                      <Ionicons name="image-outline" size={40} color="#4A7DFF" />
-                      <Text style={styles.thumbnailAddText}>Select Thumbnail</Text>
+                  ))}
+                  {postForm.video && (
+                    <View style={styles.mediaPreviewContainer}>
+                      <View
+                        style={[styles.mediaPreview, styles.videoPreviewWrapper]}
+                      >
+                        <Ionicons name="videocam" size={32} color="#4A7DFF" />
+                        <Text style={styles.videoPreviewText}>Video</Text>
+                        {postForm.videoDuration && (
+                          <Text style={styles.videoDurationText}>
+                            {Math.round(postForm.videoDuration)}s
+                          </Text>
+                        )}
+                      </View>
+                      <TouchableOpacity
+                        style={styles.mediaRemove}
+                        onPress={removeVideo}
+                      >
+                        <Ionicons
+                          name="close-circle"
+                          size={20}
+                          color="#FFFFFF"
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {postForm.images.length + (postForm.video ? 1 : 0) < 6 && (
+                    <TouchableOpacity
+                      style={styles.mediaAdd}
+                      onPress={pickMedia}
+                    >
+                      <Ionicons name="camera" size={32} color="#4A7DFF" />
+                      <Text style={styles.mediaAddText}>Add Media</Text>
                     </TouchableOpacity>
                   )}
+                </ScrollView>
+              </View>
+
+              {/* ---------- VIDEO THUMBNAIL ---------- */}
+              {postForm.video && (
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>Video Thumbnail</Text>
+                  <Text style={styles.formHelperText}>
+                    Select a thumbnail image for your video
+                  </Text>
+                  <View style={styles.thumbnailContainer}>
+                    {postForm.videoThumbnail ? (
+                      <View style={styles.thumbnailPreviewContainer}>
+                        <Image
+                          source={{ uri: postForm.videoThumbnail }}
+                          style={styles.thumbnailPreview}
+                        />
+                        <TouchableOpacity
+                          style={styles.thumbnailRemove}
+                          onPress={removeThumbnail}
+                        >
+                          <Ionicons
+                            name="close-circle"
+                            size={24}
+                            color="#FFFFFF"
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.thumbnailAddButton}
+                        onPress={pickThumbnail}
+                      >
+                        <Ionicons
+                          name="image-outline"
+                          size={40}
+                          color="#4A7DFF"
+                        />
+                        <Text style={styles.thumbnailAddText}>
+                          Select Thumbnail
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              )}
+
+              {/* ---------- TITLE ---------- */}
+              <View style={styles.formGroup}>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="Title *"
+                  placeholderTextColor="#8A8AAE"
+                  value={postForm.name}
+                  onChangeText={(text) =>
+                    setPostForm((prev) => ({ ...prev, name: text }))
+                  }
+                  returnKeyType="next"
+                />
+              </View>
+
+              {/* ---------- PRICE TYPE ---------- */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Price Type</Text>
+                <Text style={styles.formHelperText}>
+                  Choose how you want to price this post
+                </Text>
+
+                <View style={styles.priceTypeRow}>
+                  {PRICE_TYPE_OPTIONS.map((opt) => {
+                    const selected = postForm.priceType === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        style={[
+                          styles.priceTypeChip,
+                          selected && styles.priceTypeChipActive,
+                        ]}
+                        onPress={() => {
+                          Haptics.impactAsync(
+                            Haptics.ImpactFeedbackStyle.Light
+                          );
+                          setPostForm((prev) => ({
+                            ...prev,
+                            priceType: opt.key,
+                            // Free → wipe the price
+                            price: opt.key === 'free' ? '' : prev.price,
+                          }));
+                        }}
+                        activeOpacity={0.75}
+                      >
+                        <Ionicons
+                          name={opt.icon}
+                          size={16}
+                          color={selected ? '#4A7DFF' : '#8A8AAE'}
+                        />
+                        <Text
+                          style={[
+                            styles.priceTypeChipText,
+                            selected && styles.priceTypeChipTextActive,
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
-            )}
 
-            <View style={styles.formGroup}>
-              <TextInput
-                style={styles.formInput}
-                placeholder="Title *"
-                placeholderTextColor="#8A8AAE"
-                value={postForm.name}
-                onChangeText={(text) => setPostForm(prev => ({ ...prev, name: text }))}
-              />
-            </View>
+              {/* ---------- PRICE ---------- */}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {postForm.priceType === 'negotiable'
+                    ? 'Starting Price (UGX) *'
+                    : 'Price (UGX) *'}
+                </Text>
+                <TextInput
+                  style={[
+                    styles.formInput,
+                    isFree && styles.formInputDisabled,
+                  ]}
+                  placeholder={
+                    isFree
+                      ? 'Free — no price needed'
+                      : postForm.priceType === 'negotiable'
+                      ? 'Enter a starting price'
+                      : 'Enter your price'
+                  }
+                  placeholderTextColor="#8A8AAE"
+                  keyboardType="numeric"
+                  editable={!isFree}
+                  value={isFree ? '' : postForm.price}
+                  onChangeText={(text) =>
+                    setPostForm((prev) => ({ ...prev, price: text }))
+                  }
+                  returnKeyType="next"
+                />
+              </View>
 
-            <View style={styles.formGroup}>
-              <TextInput
-                style={styles.formInput}
-                placeholder="Price (UGX) - Optional"
-                placeholderTextColor="#8A8AAE"
-                keyboardType="numeric"
-                value={postForm.price}
-                onChangeText={(text) => setPostForm(prev => ({ ...prev, price: text }))}
-              />
-            </View>
+              {/* ---------- DESCRIPTION ---------- */}
+              <View style={styles.formGroup}>
+                <TextInput
+                  style={[styles.formInput, styles.formTextArea]}
+                  placeholder="Description - Optional"
+                  placeholderTextColor="#8A8AAE"
+                  multiline
+                  numberOfLines={3}
+                  value={postForm.description}
+                  onChangeText={(text) =>
+                    setPostForm((prev) => ({ ...prev, description: text }))
+                  }
+                />
+              </View>
 
-            <View style={styles.formGroup}>
-              <TextInput
-                style={styles.formInput}
-                placeholder="Category - Optional"
-                placeholderTextColor="#8A8AAE"
-                value={postForm.category}
-                onChangeText={(text) => setPostForm(prev => ({ ...prev, category: text }))}
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <TextInput
-                style={[styles.formInput, styles.formTextArea]}
-                placeholder="Description - Optional"
-                placeholderTextColor="#8A8AAE"
-                multiline
-                numberOfLines={3}
-                value={postForm.description}
-                onChangeText={(text) => setPostForm(prev => ({ ...prev, description: text }))}
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <TextInput
-                style={styles.formInput}
-                placeholder="#hashtags #separated #by #spaces"
-                placeholderTextColor="#8A8AAE"
-                value={postForm.tags.join(' ')}
-                onChangeText={(text) => setPostForm(prev => ({ ...prev, tags: text.split(' ') }))}
-              />
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
+              <View style={{ height: 60 }} />
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  };
 
   const renderSettingsModal = () => {
     const settingsOptions = [
@@ -1721,19 +2641,35 @@ const AccountContent = ({ navigation }: any) => {
         onRequestClose={() => setShowSettings(false)}
       >
         <View style={styles.settingsOverlay}>
-          <TouchableOpacity style={styles.settingsBackdrop} activeOpacity={1} onPress={() => setShowSettings(false)} />
+          <TouchableOpacity
+            style={styles.settingsBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowSettings(false)}
+          />
           <View style={styles.settingsSheet}>
             <View style={styles.settingsHandle} />
             <Text style={styles.settingsTitle}>Settings</Text>
             {settingsOptions.map((option) => (
               <TouchableOpacity
                 key={option.key}
-                style={[styles.settingsOption, option.danger && styles.settingsOptionDanger]}
+                style={[
+                  styles.settingsOption,
+                  option.danger && styles.settingsOptionDanger,
+                ]}
                 onPress={() => handleSettingsAction(option.key)}
               >
                 <View style={styles.settingsOptionLeft}>
-                  <Ionicons name={option.icon as any} size={22} color={option.danger ? '#E74C3C' : '#FFFFFF'} />
-                  <Text style={[styles.settingsOptionText, option.danger && styles.settingsOptionDangerText]}>
+                  <Ionicons
+                    name={option.icon as any}
+                    size={22}
+                    color={option.danger ? '#E74C3C' : '#FFFFFF'}
+                  />
+                  <Text
+                    style={[
+                      styles.settingsOptionText,
+                      option.danger && styles.settingsOptionDangerText,
+                    ]}
+                  >
                     {option.label}
                   </Text>
                 </View>
@@ -1746,13 +2682,12 @@ const AccountContent = ({ navigation }: any) => {
     );
   };
 
-  // ============================================================
-  // RENDER
-  // ============================================================
-
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>
+      <SafeAreaView
+        style={[styles.container, isDesktop && styles.desktopContainer]}
+        edges={['top']}
+      >
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4A7DFF" />
@@ -1768,58 +2703,179 @@ const AccountContent = ({ navigation }: any) => {
 
   if (viewMode === 'fullscreen' && selectedItem) {
     const allItems = catalogItems;
-    const currentIndex = allItems.findIndex(item => item.id === selectedItem.id);
+    const currentIndex = allItems.findIndex((i) => i.id === selectedItem.id);
     const initialIndex = currentIndex !== -1 ? currentIndex : 0;
 
     return (
-      <View style={styles.fullscreenContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+      <GestureHandlerRootView style={styles.fullscreenContainer}>
+        <BottomSheetModalProvider>
+          <View style={styles.fullscreenContainer}>
+            <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-        <TouchableOpacity style={styles.fullscreenBackButton} onPress={handleBackToGrid}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          <Text style={styles.fullscreenBackText}>Back</Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.fullscreenBackButton}
+              onPress={handleBackToGrid}
+            >
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+              <Text style={styles.fullscreenBackText}>Back</Text>
+            </TouchableOpacity>
 
-        <FlatList
-          ref={flatListRef}
-          data={allItems}
-          renderItem={({ item }) => (
-            <View style={{ height: height, width: width }}>
-              {renderFullScreenItem(item)}
-            </View>
-          )}
-          keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
-          pagingEnabled={!isDesktop}
-          showsVerticalScrollIndicator={false}
-          snapToInterval={height}
-          snapToAlignment="start"
-          decelerationRate="fast"
-          initialScrollIndex={initialIndex}
-          getItemLayout={(data, index) => ({
-            length: height,
-            offset: height * index,
-            index,
-          })}
-          removeClippedSubviews={true}
-          maxToRenderPerBatch={isDesktop ? 3 : 1}
-          windowSize={isDesktop ? 5 : 2}
-          scrollEventThrottle={32}
-        />
-      </View>
+            <FlatList
+              ref={flatListRef}
+              data={allItems}
+              renderItem={({ item, index }) => (
+                <View style={{ height: height, width: width }}>
+                  <FullscreenItem
+                    item={item}
+                    index={index}
+                    fullscreenIndex={fullscreenIndex}
+                    isFocused={isFocused}
+                    isDesktop={isDesktop}
+                    winWidth={width}
+                    winHeight={height}
+                    userProfile={userProfile}
+                    userId={user?.id}
+                    isSaved={savedItemsMap[item.id] || false}
+                    isLiked={likedItemsMap[item.id] || false}
+                    likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
+                    isItemLoading={loadingItemsMap[item.id] === true}
+                    isMine={item.user_id === user?.id}
+                    onShowMore={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedOpportunity(
+                        buildOpportunityFromCatalogItem(p, userProfile, false)
+                      );
+                      setShowAIModal(true);
+                    }}
+                    onShare={() =>
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    }
+                    onSave={(p) => {
+                      if (!user?.id) return;
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSavedItemsMap((prev) => ({
+                        ...prev,
+                        [p.id]: !(prev[p.id] ?? p.isSaved ?? false),
+                      }));
+                    }}
+                    onLike={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      handleLikePress(
+                        buildOpportunityFromCatalogItem(p, userProfile, false)
+                      );
+                    }}
+                    onInbox={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      navigation.navigate('Inbox', {
+                        userId: user?.id,
+                        userName: userProfile?.full_name || 'User',
+                      });
+                    }}
+                    onMediaLoadStateChange={(isLoading) =>
+                      handleMediaLoadStateChange(item.id, isLoading)
+                    }
+                    onUserPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      navigation.navigate('UserProfile', {
+                        userId: user?.id,
+                        userName: userProfile?.full_name || 'User',
+                      });
+                    }}
+                    onReviewsPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedOpportunity(
+                        buildOpportunityFromCatalogItem(p, userProfile, false)
+                      );
+                      setShowReviewsModal(true);
+                    }}
+                    onDirectionsPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedOpportunity(
+                        buildOpportunityFromCatalogItem(p, userProfile, false)
+                      );
+                      setShowDirectionsModal(true);
+                    }}
+                    onAIPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                      setSelectedOpportunity(
+                        buildOpportunityFromCatalogItem(p, userProfile, false)
+                      );
+                      setShowAIModal(true);
+                    }}
+                    onOverflowPress={(p) => showPostActions(p)}
+                  />
+                </View>
+              )}
+              keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
+              pagingEnabled={!isDesktop}
+              showsVerticalScrollIndicator={false}
+              snapToInterval={height}
+              snapToAlignment="start"
+              decelerationRate="fast"
+              initialScrollIndex={initialIndex}
+              getItemLayout={(data, index) => ({
+                length: height,
+                offset: height * index,
+                index,
+              })}
+              viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
+              onViewableItemsChanged={handleFullscreenViewableItemsChanged}
+              extraData={`${fullscreenIndex}-${isFocused}-${Object.keys(
+                loadingItemsMap
+              )
+                .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
+                .join(',')}`}
+              removeClippedSubviews={false}
+              maxToRenderPerBatch={isDesktop ? 3 : 2}
+              windowSize={isDesktop ? 5 : 3}
+              scrollEventThrottle={16}
+            />
+
+            <ReviewsBottomSheet
+              visible={showReviewsModal}
+              productId={selectedOpportunity?.id || ''}
+              productTitle={selectedOpportunity?.title || ''}
+              onClose={handleCloseReviews}
+            />
+
+            <AIBottomSheet
+              visible={showAIModal}
+              opportunity={selectedOpportunity}
+              contextHint={
+                selectedOpportunity
+                  ? `My post: ${selectedOpportunity.title}`
+                  : ''
+              }
+              onClose={handleCloseAI}
+              isDesktopView={isDesktop}
+            />
+
+            <DirectionsBottomSheet
+              visible={showDirectionsModal}
+              opportunity={selectedOpportunity}
+              onClose={handleCloseDirections}
+              isDesktopView={isDesktop}
+            />
+          </View>
+        </BottomSheetModalProvider>
+      </GestureHandlerRootView>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>
+    <SafeAreaView
+      style={[styles.container, isDesktop && styles.desktopContainer]}
+      edges={['top']}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Munolink</Text>
+        <Text style={styles.headerTitle}>Account</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon} onPress={() => navigation.navigate('Notifications')}>
-            <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.headerIcon} onPress={handleSettingsPress}>
+          <TouchableOpacity
+            style={styles.headerIcon}
+            onPress={handleSettingsPress}
+          >
             <Ionicons name="settings-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
@@ -1828,21 +2884,31 @@ const AccountContent = ({ navigation }: any) => {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A7DFF" />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#4A7DFF"
+          />
+        }
+        keyboardShouldPersistTaps="handled"
       >
         <View style={styles.profileHeader}>
-          <TouchableOpacity 
-            style={styles.profileImageContainer} 
-            onPress={pickAvatar} 
-            disabled={uploading} 
+          <TouchableOpacity
+            style={styles.profileImageContainer}
+            onPress={pickAvatar}
+            disabled={uploading}
             activeOpacity={0.8}
           >
-            <Image 
-              source={{ 
-                uri: userProfile?.avatar_url || 
-                `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.full_name || 'User')}&background=4A7DFF&color=fff&size=200&bold=true` 
-              }} 
-              style={styles.profileImage} 
+            <Image
+              source={{
+                uri:
+                  userProfile?.avatar_url ||
+                  `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                    userProfile?.full_name || 'User'
+                  )}&background=4A7DFF&color=fff&size=200&bold=true`,
+              }}
+              style={styles.profileImage}
             />
             <View style={styles.cameraButton}>
               {uploading ? (
@@ -1854,25 +2920,28 @@ const AccountContent = ({ navigation }: any) => {
           </TouchableOpacity>
 
           <Text style={styles.username}>
-            @{userProfile?.full_name?.toLowerCase().replace(/\s/g, '') || 'user'}
+            @
+            {userProfile?.full_name?.toLowerCase().replace(/\s/g, '') || 'user'}
           </Text>
 
           {userProfile?.bio && (
             <Text style={styles.bioText}>{userProfile.bio}</Text>
           )}
 
-          <StatsRow 
-            following={stats.following} 
-            followers={stats.followers} 
-            likes={stats.likes} 
+          <StatsRow
+            following={stats.following}
+            followers={stats.followers}
+            likes={stats.likes}
           />
 
-          <TouchableOpacity style={styles.editProfileButton} onPress={() => setShowEditProfile(true)}>
+          <TouchableOpacity
+            style={styles.editProfileButton}
+            onPress={() => setShowEditProfile(true)}
+          >
             <Text style={styles.editProfileButtonText}>Edit Profile</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Tabs - Posts, Saved, Liked */}
         <View style={styles.tabsContainer}>
           {[
             { key: 'posts', icon: 'grid-outline', label: 'Posts' },
@@ -1884,28 +2953,50 @@ const AccountContent = ({ navigation }: any) => {
               style={[styles.tab, activeTab === tab.key && styles.tabActive]}
               onPress={() => setActiveTab(tab.key)}
             >
-              <Ionicons name={tab.icon as any} size={22} color={activeTab === tab.key ? '#FFFFFF' : '#8A8AAE'} />
-              <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
+              <Ionicons
+                name={tab.icon as any}
+                size={22}
+                color={activeTab === tab.key ? '#FFFFFF' : '#8A8AAE'}
+              />
+              <Text
+                style={[
+                  styles.tabLabel,
+                  activeTab === tab.key && styles.tabLabelActive,
+                ]}
+              >
                 {tab.label}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Posts Grid */}
         {catalogItems.length === 0 ? (
           <View style={styles.emptyPosts}>
             <Ionicons name="images-outline" size={48} color="#8A8AAE" />
             <Text style={styles.emptyPostsTitle}>No posts yet</Text>
-            <Text style={styles.emptyPostsSubtext}>Share your first post with the community</Text>
-            <TouchableOpacity style={styles.createPostButton} onPress={() => setShowCreatePost(true)}>
+            <Text style={styles.emptyPostsSubtext}>
+              Share your first post with the community
+            </Text>
+            <TouchableOpacity
+              style={styles.createPostButton}
+              onPress={() => {
+                resetPostForm();
+                setShowCreatePost(true);
+              }}
+            >
               <Text style={styles.createPostButtonText}>Create Post</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <FlatList
             data={catalogItems}
-            renderItem={({ item }) => <GridPostItem item={item} onPress={handleItemPress} />}
+            renderItem={({ item }) => (
+              <GridPostItem
+                item={item}
+                onPress={handleItemPress}
+                onLongPress={showPostActions}
+              />
+            )}
             keyExtractor={(item) => item.id}
             numColumns={3}
             scrollEnabled={false}
@@ -1916,10 +3007,12 @@ const AccountContent = ({ navigation }: any) => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* FAB */}
-      <TouchableOpacity 
-        style={[styles.fab, { bottom: 90 }]} 
-        onPress={() => setShowCreatePost(true)} 
+      <TouchableOpacity
+        style={[styles.fab, { bottom: 90 }]}
+        onPress={() => {
+          resetPostForm();
+          setShowCreatePost(true);
+        }}
         activeOpacity={0.8}
       >
         <LinearGradient
@@ -1932,23 +3025,39 @@ const AccountContent = ({ navigation }: any) => {
         </LinearGradient>
       </TouchableOpacity>
 
-      {renderCreatePostModal()}
+      {renderPostFormModal(
+        showCreatePost,
+        false,
+        () => {
+          setShowCreatePost(false);
+          resetPostForm();
+        },
+        createPost
+      )}
+
+      {renderPostFormModal(
+        showEditPost,
+        true,
+        () => {
+          setShowEditPost(false);
+          setEditingPostId(null);
+          resetPostForm();
+        },
+        updatePost
+      )}
+
       {renderEditProfileModal()}
       {renderSettingsModal()}
     </SafeAreaView>
   );
 };
 
-// ============================================================
-// MAIN EXPORT
-// ============================================================
-
 export const AccountScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
   return (
-    <ResponsiveLayout 
-      currentRoute="Account" 
+    <ResponsiveLayout
+      currentRoute="Account"
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
@@ -1959,28 +3068,20 @@ export const AccountScreen = ({ navigation }: any) => {
   );
 };
 
-// ============================================================
-// STYLES
-// ============================================================
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0D0D1A',
-  },
-  desktopContainer: {
-    padding: 24,
-  },
-  loadingContainer: {
-    flex: 1,
+  container: { flex: 1, backgroundColor: '#0D0D1A' },
+  desktopContainer: { padding: 24 },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { color: '#8A8AAE', fontSize: 14, marginTop: 12 },
+
+  itemMediaSpinnerOverlay: {
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 100,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  loadingText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 12,
-  },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1989,75 +3090,20 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  headerRight: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  headerIcon: {
-    padding: 4,
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 100,
-  },
-  bottomSpacer: {
-    height: 20,
-  },
-  skeletonProfile: {
-    alignItems: 'center',
-    paddingVertical: 24,
-  },
-  skeletonAvatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 12,
-  },
-  skeletonName: {
-    width: 120,
-    height: 16,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 12,
-  },
-  skeletonStats: {
-    width: 200,
-    height: 40,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 12,
-  },
-  skeletonBio: {
-    width: 150,
-    height: 12,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  guestContainer: {
-    flex: 1,
-    backgroundColor: '#0D0D1A',
-    paddingHorizontal: 24,
-  },
-  guestHeader: {
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  guestHeaderTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
+  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: 'bold' },
+  headerRight: { flexDirection: 'row', gap: 12 },
+  headerIcon: { padding: 4 },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 100 },
+  bottomSpacer: { height: 20 },
+
+  guestContainer: { flex: 1, backgroundColor: '#0D0D1A', paddingHorizontal: 24 },
+  guestHeader: { paddingTop: 12, paddingBottom: 8 },
+  guestHeaderTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: 'bold' },
   guestContent: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical:  20,
+    paddingVertical: 20,
   },
   guestAvatarContainer: {
     width: 120,
@@ -2091,15 +3137,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 12,
   },
-  guestSignUpGradient: {
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  guestSignUpText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  guestSignUpGradient: { paddingVertical: 14, alignItems: 'center' },
+  guestSignUpText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   guestLogInButton: {
     width: '100%',
     maxWidth: 320,
@@ -2110,52 +3149,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  guestLogInText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  guestContinueButton: {
-    paddingVertical: 8,
-  },
-  guestContinueText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    fontWeight: '400',
-  },
-  guestFeatures: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 20,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
-    marginBottom: 20,
-  },
-  guestFeature: {
-    alignItems: 'center',
-  },
-  guestFeatureIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  guestFeatureLabel: {
-    color: '#8A8AAE',
-    fontSize: 11,
-  },
-  profileHeader: {
-    alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 16,
-  },
-  profileImageContainer: {
-    position: 'relative',
-    marginBottom: 12,
-  },
+  guestLogInText: { color: '#FFFFFF', fontSize: 16, fontWeight: '500' },
+  guestContinueButton: { paddingVertical: 8 },
+  guestContinueText: { color: '#8A8AAE', fontSize: 14, fontWeight: '400' },
+
+  profileHeader: { alignItems: 'center', paddingTop: 8, paddingBottom: 16 },
+  profileImageContainer: { position: 'relative', marginBottom: 12 },
   profileImage: {
     width: 80,
     height: 80,
@@ -2192,18 +3191,9 @@ const styles = StyleSheet.create({
     gap: 32,
     marginBottom: 12,
   },
-  statItem: {
-    alignItems: 'center',
-  },
-  statNumber: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  statLabel: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
+  statItem: { alignItems: 'center' },
+  statNumber: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
+  statLabel: { color: '#8A8AAE', fontSize: 12 },
   editProfileButton: {
     backgroundColor: 'rgba(255,255,255,0.08)',
     paddingHorizontal: 24,
@@ -2211,11 +3201,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 8,
   },
-  editProfileButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
+  editProfileButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500' },
   tabsContainer: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -2232,31 +3218,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
-  tabActive: {
-    borderBottomColor: '#4A7DFF',
-  },
-  tabLabel: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  tabLabelActive: {
-    color: '#FFFFFF',
-  },
-  postsGrid: {
-    paddingVertical: 4,
-  },
-  gridPostItem: {
-    flex: 1 / 3,
-    aspectRatio: 1,
-    padding: 2,
-    position: 'relative',
-  },
-  gridPostImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 4,
-  },
+  tabActive: { borderBottomColor: '#4A7DFF' },
+  tabLabel: { color: '#8A8AAE', fontSize: 12, fontWeight: '500' },
+  tabLabelActive: { color: '#FFFFFF' },
+  postsGrid: { paddingVertical: 4 },
+  gridPostItem: { flex: 1 / 3, aspectRatio: 1, padding: 2, position: 'relative' },
+  gridPostImage: { width: '100%', height: '100%', borderRadius: 4 },
   gridPostPlaceholder: {
     width: '100%',
     height: '100%',
@@ -2268,13 +3235,25 @@ const styles = StyleSheet.create({
   gridVideoBadge: {
     position: 'absolute',
     top: 8,
-    right: 8,
+    right: 32,
     backgroundColor: 'rgba(0,0,0,0.6)',
     borderRadius: 12,
     padding: 4,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
+  },
+  gridMenuButton: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3,
   },
   gridPostOverlay: {
     position: 'absolute',
@@ -2283,10 +3262,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: '50%',
   },
-  gridPostGradient: {
-    width: '100%',
-    height: '100%',
-  },
+  gridPostGradient: { width: '100%', height: '100%' },
   gridPostInfo: {
     position: 'absolute',
     bottom: 0,
@@ -2311,10 +3287,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
     marginTop: 1,
   },
-  emptyPosts: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
+  emptyPosts: { alignItems: 'center', paddingVertical: 60 },
   emptyPostsTitle: {
     color: '#FFFFFF',
     fontSize: 16,
@@ -2333,15 +3306,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 20,
   },
-  createPostButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  fullscreenContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
+  createPostButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  fullscreenContainer: { flex: 1, backgroundColor: '#000000' },
   fullscreenBackButton: {
     position: 'absolute',
     top: 50,
@@ -2355,10 +3321,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 6,
   },
-  fullscreenBackText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
+  fullscreenBackText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500' },
+  fullscreenOverflowButton: {
+    position: 'absolute',
+    top: 50,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 60,
   },
   actionRailWrapper: {
     position: 'absolute',
@@ -2407,41 +3381,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  modalCancel: {
-    color: '#8A8AAE',
-    fontSize: 16,
-  },
-  modalTitle: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  modalPost: {
-    color: '#4A7DFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  modalPostDisabled: {
-    color: '#8A8AAE',
-    opacity: 0.5,
-  },
-  modalBody: {
-    padding: 16,
-  },
-  formGroup: {
-    marginBottom: 14,
-  },
-  formLabel: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  formHelperText: {
-    color: '#8A8AAE',
-    fontSize: 11,
-    marginBottom: 6,
-  },
+  modalCancel: { color: '#8A8AAE', fontSize: 16 },
+  modalTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '600' },
+  modalPost: { color: '#4A7DFF', fontSize: 16, fontWeight: '600' },
+  modalPostDisabled: { color: '#8A8AAE', opacity: 0.5 },
+  modalBody: { padding: 16 },
+  modalBodyContent: { paddingBottom: 60 },
+  formGroup: { marginBottom: 14 },
+  formLabel: { color: '#FFFFFF', fontSize: 13, fontWeight: '500', marginBottom: 4 },
+  formHelperText: { color: '#8A8AAE', fontSize: 11, marginBottom: 6 },
   formInput: {
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 10,
@@ -2452,29 +3400,49 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
-  formTextArea: {
-    height: 80,
-    textAlignVertical: 'top',
+  formInputDisabled: {
+    opacity: 0.5,
   },
-  mediaSection: {
-    marginBottom: 16,
-  },
-  mediaScrollContent: {
+  formTextArea: { height: 80, textAlignVertical: 'top' },
+
+  // ✅ Price type chips
+  priceTypeRow: {
+    flexDirection: 'row',
     gap: 8,
+    marginTop: 4,
   },
-  mediaPreviewContainer: {
-    position: 'relative',
+  priceTypeChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  mediaPreview: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
+  priceTypeChipActive: {
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    borderColor: '#4A7DFF',
   },
-  mediaRemove: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
+  priceTypeChipText: {
+    color: '#8A8AAE',
+    fontSize: 12,
+    fontWeight: '500',
   },
+  priceTypeChipTextActive: {
+    color: '#4A7DFF',
+    fontWeight: '600',
+  },
+
+  mediaSection: { marginBottom: 16 },
+  mediaScrollContent: { gap: 8 },
+  mediaPreviewContainer: { position: 'relative' },
+  mediaPreview: { width: 80, height: 80, borderRadius: 8 },
+  mediaRemove: { position: 'absolute', top: -4, right: -4 },
   mediaAdd: {
     width: 80,
     height: 80,
@@ -2487,28 +3455,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  mediaAddText: {
-    color: '#8A8AAE',
-    fontSize: 10,
-  },
+  mediaAddText: { color: '#8A8AAE', fontSize: 10 },
   videoPreviewWrapper: {
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(74, 125, 255, 0.1)',
   },
-  videoPreviewText: {
-    color: '#4A7DFF',
-    fontSize: 10,
-    marginTop: 2,
-  },
-  videoDurationText: {
-    color: '#8A8AAE',
-    fontSize: 9,
-    marginTop: 1,
-  },
-  thumbnailContainer: {
-    marginTop: 4,
-  },
+  videoPreviewText: { color: '#4A7DFF', fontSize: 10, marginTop: 2 },
+  videoDurationText: { color: '#8A8AAE', fontSize: 9, marginTop: 1 },
+  thumbnailContainer: { marginTop: 4 },
   thumbnailPreviewContainer: {
     position: 'relative',
     width: 160,
@@ -2516,10 +3471,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
   },
-  thumbnailPreview: {
-    width: '100%',
-    height: '100%',
-  },
+  thumbnailPreview: { width: '100%', height: '100%' },
   thumbnailRemove: {
     position: 'absolute',
     top: -8,
@@ -2540,10 +3492,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  thumbnailAddText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-  },
+  thumbnailAddText: { color: '#8A8AAE', fontSize: 12 },
   editCoverContainer: {
     position: 'relative',
     height: 120,
@@ -2552,21 +3501,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 40,
   },
-  editCoverImage: {
-    width: '100%',
-    height: '100%',
-  },
+  editCoverImage: { width: '100%', height: '100%' },
   editCoverPlaceholder: {
     width: '100%',
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  editCoverPlaceholderText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 8,
-  },
+  editCoverPlaceholderText: { color: '#8A8AAE', fontSize: 14, marginTop: 8 },
   editCoverButton: {
     position: 'absolute',
     bottom: 8,
@@ -2586,9 +3528,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     zIndex: 10,
   },
-  editAvatarWrapper: {
-    position: 'relative',
-  },
+  editAvatarWrapper: { position: 'relative' },
   editAvatarImage: {
     width: 80,
     height: 80,
@@ -2615,12 +3555,13 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.05)',
   },
-  settingsOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
+  settingsOverlay: { flex: 1, justifyContent: 'flex-end' },
   settingsBackdrop: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   settingsSheet: {
@@ -2655,19 +3596,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  settingsOptionDanger: {
-    borderBottomWidth: 0,
-  },
-  settingsOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  settingsOptionText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-  },
-  settingsOptionDangerText: {
-    color: '#E74C3C',
-  },
+  settingsOptionDanger: { borderBottomWidth: 0 },
+  settingsOptionLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  settingsOptionText: { color: '#FFFFFF', fontSize: 15 },
+  settingsOptionDangerText: { color: '#E74C3C' },
 });

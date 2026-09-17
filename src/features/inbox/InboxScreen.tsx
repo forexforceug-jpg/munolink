@@ -14,6 +14,9 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -73,7 +76,8 @@ interface Conversation {
   time: string;
   unread: number;
   online?: boolean;
-  avatar?: string;
+  avatar?: string;          // single letter fallback
+  avatarUrl?: string | null; // real avatar URL from users.avatar_url
   isVerified?: boolean;
   type?: 'chat' | 'ai';
 }
@@ -87,13 +91,27 @@ const formatTime = (timestamp: string | null | undefined) => {
   const date = new Date(timestamp);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
-  
+
   if (diff < 60000) return 'Just now';
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
   if (diff < 86400000) return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   if (diff < 172800000) return 'Yesterday';
   if (diff < 604800000) return date.toLocaleDateString('en-US', { weekday: 'short' });
   return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+};
+
+/**
+ * Build a proper avatar source object for <Image>.
+ * Falls back to ui-avatars.com if no real avatar_url exists.
+ */
+const getAvatarSource = (name: string, avatarUrl?: string | null) => {
+  if (avatarUrl && avatarUrl.trim().length > 0) {
+    return { uri: avatarUrl };
+  }
+  const safeName = encodeURIComponent(name || 'User');
+  return {
+    uri: `https://ui-avatars.com/api/?name=${safeName}&background=4A7DFF&color=fff&size=200&bold=true`,
+  };
 };
 
 // ============================================================
@@ -108,11 +126,10 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => (
     activeOpacity={0.7}
   >
     <View style={styles.conversationAvatar}>
-      <View style={[styles.avatarCircle, { backgroundColor: 'rgba(74, 125, 255, 0.15)' }]}>
-        <Text style={styles.avatarText}>
-          {item.avatar || item.name?.charAt(0).toUpperCase() || 'U'}
-        </Text>
-      </View>
+      <Image
+        source={getAvatarSource(item.name, item.avatarUrl)}
+        style={styles.avatarImage}
+      />
       {item.unread > 0 && (
         <View style={styles.unreadBadge}>
           <Text style={styles.unreadBadgeText}>{item.unread}</Text>
@@ -129,7 +146,10 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => (
       </View>
 
       <View style={styles.conversationFooter}>
-        <Text style={[styles.conversationMessage, item.unread > 0 && styles.conversationMessageUnread]} numberOfLines={1}>
+        <Text
+          style={[styles.conversationMessage, item.unread > 0 && styles.conversationMessageUnread]}
+          numberOfLines={1}
+        >
           {item.lastMessage}
         </Text>
       </View>
@@ -138,23 +158,34 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => (
 );
 
 // ============================================================
-// PAYMENT CARD - CORRECT BUTTON LOGIC
+// PAYMENT CARD
+// ============================================================
+//
+// SENDER   = payment.from_user_id (initiator)
+//            Sees: Edit + Cancel (pending), View Details (later)
+//
+// RECEIVER = payment.to_user_id (recipient)
+//            Sees: Accept / Pay Now + Reject (pending),
+//                  Confirm in Pay (locked), View Details (completed)
 // ============================================================
 
-const PaymentCard = ({ 
-  payment, 
+const PaymentCard = ({
+  payment,
   currentUserId,
   onAccept,
   onPay,
   onCancel,
   onEdit,
   onReject,
-  onView
+  onView,
 }: any) => {
   const isRequest = payment.is_request;
   const isFromMe = payment.from_user_id === currentUserId;
   const isToMe = payment.to_user_id === currentUserId;
-  
+
+  const iAmSender = isFromMe;
+  const iAmReceiver = isToMe;
+
   const getStatusDisplay = () => {
     switch (payment.status) {
       case 'pending':
@@ -193,63 +224,34 @@ const PaymentCard = ({
     }
   };
 
-  const displayName = isFromMe 
+  const displayName = iAmSender
     ? payment.to_user?.full_name || 'User'
     : payment.from_user?.full_name || 'User';
 
-  // ============================================================
-  // CORRECT PAYMENT FLOW LOGIC - SIMPLIFIED
-  // ============================================================
-  
-  // PAY NOW - Sender (from_user = me)
-  const isMyPayNow = isFromMe && !isRequest && payment.status === 'pending';
-  
-  // PAY NOW - Receiver (to_user = me)
-  const isReceivedPayNow = isToMe && !isRequest && payment.status === 'pending';
-  
-  // REQUEST - Sender (from_user = me)
-  const isMyRequest = isFromMe && isRequest && payment.status === 'pending';
-  
-  // REQUEST - Receiver (to_user = me)
-  const isReceivedRequest = isToMe && isRequest && payment.status === 'pending';
-
-  // LOCKED - Buyer (to_user) sees Confirm in Pay
+  const isPending = payment.status === 'pending';
   const isLocked = payment.status === 'locked';
-  
-  // COMPLETED or LOCKED (seller) - View Details
   const isCompleted = payment.status === 'completed';
 
-  // Determine what buttons to show
-  // PAY NOW - Sender: Cancel + Edit
-  const showPayNowCancel = isMyPayNow;
-  const showPayNowEdit = isMyPayNow;
-  
-  // PAY NOW - Receiver: Accept + Reject
-  const showPayNowAccept = isReceivedPayNow;
-  const showPayNowReject = isReceivedPayNow;
-  
-  // REQUEST - Sender: Edit + Cancel
-  const showRequestEdit = isMyRequest;
-  const showRequestCancel = isMyRequest;
-  
-  // REQUEST - Receiver: Pay Now + Reject
-  const showRequestPay = isReceivedRequest;
-  const showRequestReject = isReceivedRequest;
-  
-  // LOCKED / COMPLETED
-  const showConfirmInPay = isLocked && isToMe;
-  const showViewDetails = isCompleted || (isLocked && isFromMe);
+  const showSenderEdit = iAmSender && isPending;
+  const showSenderCancel = iAmSender && isPending;
+
+  const showReceiverPay = iAmReceiver && isPending && isRequest;
+  const showReceiverAccept = iAmReceiver && isPending && !isRequest;
+  const showReceiverReject = iAmReceiver && isPending;
+
+  const showConfirmInPay = isLocked && iAmReceiver;
+  const showViewDetails = isCompleted || (isLocked && iAmSender);
 
   return (
     <View style={[styles.paymentCard, { borderLeftColor: getStatusColor() }]}>
       <View style={styles.paymentCardHeader}>
-        <Text style={styles.paymentCardIcon}>
-          {isRequest ? '💰' : '💳'}
-        </Text>
+        <Text style={styles.paymentCardIcon}>{isRequest ? '💰' : '💳'}</Text>
         <Text style={styles.paymentCardTitle}>
           {isRequest ? 'Payment Request' : 'Payment Initiated'}
         </Text>
-        <View style={[styles.paymentCardStatus, { backgroundColor: getStatusColor() + '20' }]}>
+        <View
+          style={[styles.paymentCardStatus, { backgroundColor: getStatusColor() + '20' }]}
+        >
           <Text style={[styles.paymentCardStatusText, { color: getStatusColor() }]}>
             {getStatusDisplay()}
           </Text>
@@ -264,36 +266,14 @@ const PaymentCard = ({
           <Text style={styles.paymentCardReason}>{payment.reason}</Text>
         )}
         <Text style={styles.paymentCardUser}>
-          {isFromMe ? `To: ${displayName}` : `From: ${displayName}`}
+          {iAmSender ? `To: ${displayName}` : `From: ${displayName}`}
         </Text>
-        <Text style={styles.paymentCardDate}>
-          {formatTime(payment.created_at)}
-        </Text>
+        <Text style={styles.paymentCardDate}>{formatTime(payment.created_at)}</Text>
       </View>
 
       <View style={styles.paymentCardActions}>
-        {/* ============================================================ */}
-        {/* PAY NOW - Sender (from_user = me): Cancel + Edit              */}
-        {/* ============================================================ */}
-        {showPayNowCancel && (
-          <TouchableOpacity 
-            style={[styles.paymentCardButton, styles.paymentCardCancel]}
-            onPress={() => onCancel(payment)}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#E74C3C', '#C0392B']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.paymentCardButtonGradient}
-            >
-              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.paymentCardButtonText}>Cancel</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-        {showPayNowEdit && (
-          <TouchableOpacity 
+        {showSenderEdit && (
+          <TouchableOpacity
             style={[styles.paymentCardButton, styles.paymentCardEdit]}
             onPress={() => onEdit(payment)}
             activeOpacity={0.8}
@@ -310,11 +290,26 @@ const PaymentCard = ({
           </TouchableOpacity>
         )}
 
-        {/* ============================================================ */}
-        {/* PAY NOW - Receiver (to_user = me): Accept + Reject            */}
-        {/* ============================================================ */}
-        {showPayNowAccept && (
-          <TouchableOpacity 
+        {showSenderCancel && (
+          <TouchableOpacity
+            style={[styles.paymentCardButton, styles.paymentCardCancel]}
+            onPress={() => onCancel(payment)}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['#E74C3C', '#C0392B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.paymentCardButtonGradient}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.paymentCardButtonText}>Cancel</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {showReceiverAccept && (
+          <TouchableOpacity
             style={[styles.paymentCardButton, styles.paymentCardAccept]}
             onPress={() => onAccept(payment)}
             activeOpacity={0.8}
@@ -330,67 +325,9 @@ const PaymentCard = ({
             </LinearGradient>
           </TouchableOpacity>
         )}
-        {showPayNowReject && (
-          <TouchableOpacity 
-            style={[styles.paymentCardButton, styles.paymentCardReject]}
-            onPress={() => onReject(payment)}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#E74C3C', '#C0392B']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.paymentCardButtonGradient}
-            >
-              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.paymentCardButtonText}>Reject</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
 
-        {/* ============================================================ */}
-        {/* REQUEST - Sender (from_user = me): Edit + Cancel              */}
-        {/* ============================================================ */}
-        {showRequestEdit && (
-          <TouchableOpacity 
-            style={[styles.paymentCardButton, styles.paymentCardEdit]}
-            onPress={() => onEdit(payment)}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#F39C12', '#E67E22']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.paymentCardButtonGradient}
-            >
-              <Ionicons name="pencil-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.paymentCardButtonText}>Edit</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-        {showRequestCancel && (
-          <TouchableOpacity 
-            style={[styles.paymentCardButton, styles.paymentCardCancel]}
-            onPress={() => onCancel(payment)}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['#E74C3C', '#C0392B']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.paymentCardButtonGradient}
-            >
-              <Ionicons name="close-circle-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.paymentCardButtonText}>Cancel</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-
-        {/* ============================================================ */}
-        {/* REQUEST - Receiver (to_user = me): Pay Now + Reject           */}
-        {/* ============================================================ */}
-        {showRequestPay && (
-          <TouchableOpacity 
+        {showReceiverPay && (
+          <TouchableOpacity
             style={[styles.paymentCardButton, styles.paymentCardPay]}
             onPress={() => onPay(payment)}
             activeOpacity={0.8}
@@ -406,8 +343,9 @@ const PaymentCard = ({
             </LinearGradient>
           </TouchableOpacity>
         )}
-        {showRequestReject && (
-          <TouchableOpacity 
+
+        {showReceiverReject && (
+          <TouchableOpacity
             style={[styles.paymentCardButton, styles.paymentCardReject]}
             onPress={() => onReject(payment)}
             activeOpacity={0.8}
@@ -424,11 +362,8 @@ const PaymentCard = ({
           </TouchableOpacity>
         )}
 
-        {/* ============================================================ */}
-        {/* LOCKED - Buyer (to_user): Confirm in Pay                      */}
-        {/* ============================================================ */}
         {showConfirmInPay && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.paymentCardButton, styles.paymentCardConfirm]}
             onPress={() => onView(payment)}
             activeOpacity={0.8}
@@ -445,11 +380,8 @@ const PaymentCard = ({
           </TouchableOpacity>
         )}
 
-        {/* ============================================================ */}
-        {/* COMPLETED or LOCKED (seller) - View Details                   */}
-        {/* ============================================================ */}
         {showViewDetails && !showConfirmInPay && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.paymentCardButton, styles.paymentCardView]}
             onPress={() => onView(payment)}
             activeOpacity={0.7}
@@ -467,10 +399,14 @@ const PaymentCard = ({
 // MESSAGE BUBBLE
 // ============================================================
 
-const MessageBubble = ({ 
-  message, 
-  isMe, 
+const MessageBubble = ({
+  message,
+  isMe,
   currentUserId,
+  partnerName,
+  partnerAvatarUrl,
+  myName,
+  myAvatarUrl,
   onPaymentAccept,
   onPaymentPay,
   onPaymentCancel,
@@ -479,11 +415,16 @@ const MessageBubble = ({
   onPaymentView,
 }: any) => {
   const isPayment = message.payment_request_id;
-  
+
   if (isPayment && message.payment) {
     return (
-      <View style={[styles.messageWrapper, isMe ? styles.messageMeWrapper : styles.messageThemWrapper]}>
-        <PaymentCard 
+      <View
+        style={[
+          styles.messageWrapper,
+          isMe ? styles.messageMeWrapper : styles.messageThemWrapper,
+        ]}
+      >
+        <PaymentCard
           payment={message.payment}
           currentUserId={currentUserId}
           onAccept={onPaymentAccept}
@@ -497,19 +438,30 @@ const MessageBubble = ({
     );
   }
 
+  const avatarSource = isMe
+    ? getAvatarSource(myName, myAvatarUrl)
+    : getAvatarSource(partnerName, partnerAvatarUrl);
+
   return (
-    <View style={[styles.messageWrapper, isMe ? styles.messageMeWrapper : styles.messageThemWrapper]}>
+    <View
+      style={[
+        styles.messageWrapper,
+        isMe ? styles.messageMeWrapper : styles.messageThemWrapper,
+      ]}
+    >
       {!isMe && (
-        <View style={styles.messageAvatar}>
-          <Text style={styles.messageAvatarText}>U</Text>
-        </View>
+        <Image source={avatarSource} style={styles.messageAvatar} />
       )}
-      
+
       <View style={[styles.messageBubble, isMe ? styles.messageMe : styles.messageThem]}>
-        <Text style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextThem]}>
+        <Text
+          style={[styles.messageText, isMe ? styles.messageTextMe : styles.messageTextThem]}
+        >
           {message.text}
         </Text>
-        <Text style={[styles.messageTime, isMe ? styles.messageTimeMe : styles.messageTimeThem]}>
+        <Text
+          style={[styles.messageTime, isMe ? styles.messageTimeMe : styles.messageTimeThem]}
+        >
           {formatTime(message.created_at)}
         </Text>
       </View>
@@ -531,8 +483,8 @@ const GuestInboxView = ({ navigation }: any) => (
       • Payment updates{'\n'}
       • Notifications
     </Text>
-    <TouchableOpacity 
-      style={styles.guestButton} 
+    <TouchableOpacity
+      style={styles.guestButton}
       onPress={() => navigation?.navigate('Join')}
     >
       <Text style={styles.guestButtonText}>Sign In</Text>
@@ -549,11 +501,11 @@ const GuestInboxView = ({ navigation }: any) => (
 
 const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const { isAuthenticated, user } = useAuth();
-  
+
   const routeParams = route?.params || {};
   const directUserId = routeParams.userId || null;
   const directUserName = routeParams.userName || null;
-  
+
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [showChat, setShowChat] = useState(false);
@@ -564,22 +516,66 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
-  const [hasOpenedDirectChat, setHasOpenedDirectChat] = useState(false);
-  
+
   // Payment modal states
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentReason, setPaymentReason] = useState('');
   const [paymentIsRequest, setPaymentIsRequest] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PaymentRequest | null>(null);
-  
+
   const flatListRef = useRef<FlatList>(null);
   const subscriptionRef = useRef<any>(null);
   const isMounted = useRef(true);
+  const selectedConversationIdRef = useRef<string | null>(null);
+  selectedConversationIdRef.current = selectedConversation?.id ?? null;
+  // ============================================================
+  // ✅ Back-navigation / route-param guards
+  // ============================================================
+  // consumedDirectUserIdRef: remembers which route param we've already
+  //   opened a chat for. Persists across back presses so we don't
+  //   re-open the same chat after the user closes it.
+  //
+  // hasOpenedDirectChat: belt-and-braces flag used together with the ref.
+  //
+  // We deliberately do NOT reset either of these from closeChat().
+  // ============================================================
+  const consumedDirectUserIdRef = useRef<string | null>(null);
+  const [hasOpenedDirectChat, setHasOpenedDirectChat] = useState(false);
+
+  // Cache of user profile info for rendering chat header / bubbles
+  const [partnerProfile, setPartnerProfile] = useState<{
+    name: string;
+    avatarUrl: string | null;
+  } | null>(null);
+  const [myProfile, setMyProfile] = useState<{
+    name: string;
+    avatarUrl: string | null;
+  } | null>(null);
 
   // ============================================================
   // FETCH FUNCTIONS
   // ============================================================
+
+  const loadMyProfile = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const { data } = await supabase
+        .from('users')
+        .select('full_name, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (data) {
+        setMyProfile({
+          name: (data as any).full_name || user.full_name || 'Me',
+          avatarUrl: (data as any).avatar_url || null,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to load my profile:', err);
+    }
+  }, [user?.id, user?.full_name]);
 
   const loadConversations = useCallback(async () => {
     if (!user?.id || !isMounted.current) {
@@ -623,31 +619,41 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         });
 
         const partnerIds = [...convoMap.keys()];
-        let partnerMap: Record<string, string> = {};
+
+        let partnerMap: Record<string, { name: string; avatarUrl: string | null }> = {};
 
         if (partnerIds.length > 0) {
-          const { data: users } = await supabase
+          const { data: users, error: usersError } = await supabase
             .from('users')
-            .select('id, full_name')
+            .select('id, full_name, avatar_url')
             .in('id', partnerIds);
-          
-          if (users) {
-            users.forEach((u: any) => { 
-              partnerMap[u.id] = u.full_name || 'User'; 
+
+          if (usersError) {
+            console.error('Error fetching partner users:', usersError);
+          } else if (users) {
+            users.forEach((u: any) => {
+              partnerMap[u.id] = {
+                name: u.full_name || 'User',
+                avatarUrl: u.avatar_url || null,
+              };
             });
           }
         }
 
         convoMap.forEach((convo: any, partnerId: string) => {
-          const name = partnerMap[partnerId] || 'Unknown User';
+          const partnerInfo = partnerMap[partnerId];
+          const name = partnerInfo?.name || 'Unknown User';
+          const avatarUrl = partnerInfo?.avatarUrl || null;
+
           convos.push({
             id: partnerId,
-            name: name,
+            name,
             lastMessage: convo.lastMessage || 'No messages yet',
             time: formatTime(convo.lastMessageTime),
             unread: convo.unreadCount,
             online: false,
             avatar: name.charAt(0).toUpperCase(),
+            avatarUrl,
             type: 'chat',
             isVerified: false,
           });
@@ -664,7 +670,9 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         setConversations(convos);
         setFilteredConversations(convos);
         setLoading(false);
-        openDirectChatIfNeeded(convos);
+        // ✅ NOTE: We deliberately do NOT call openDirectChatIfNeeded here.
+        //    That was the source of the back-navigation loop. Opening the
+        //    direct chat is handled by a dedicated effect below.
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
@@ -674,357 +682,686 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     }
   }, [user?.id]);
 
-  const loadMessages = useCallback(async (partnerId: string) => {
-    if (!user?.id || !partnerId || !isMounted.current) return;
+  const loadMessages = useCallback(
+    async (partnerId: string) => {
+      if (!user?.id || !partnerId || !isMounted.current) return;
 
+      try {
+        const { data: partnerData } = await supabase
+          .from('users')
+          .select('full_name, avatar_url')
+          .eq('id', partnerId)
+          .maybeSingle();
+
+        if (partnerData && isMounted.current) {
+          setPartnerProfile({
+            name: (partnerData as any).full_name || 'User',
+            avatarUrl: (partnerData as any).avatar_url || null,
+          });
+        }
+
+        const { data: messagesData, error: messagesError } = await supabase
+          .from('messages')
+          .select('*')
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
+          .order('created_at', { ascending: true })
+          .limit(100);
+
+        if (messagesError) {
+          console.error('Error loading messages:', messagesError);
+          return;
+        }
+
+        let filtered =
+          messagesData?.filter(
+            (m: any) =>
+              (m.sender_id === user.id && m.receiver_id === partnerId) ||
+              (m.sender_id === partnerId && m.receiver_id === user.id)
+          ) || [];
+
+        const messageIds = filtered.map((m: any) => m.id).filter(Boolean);
+        let paymentRequests: PaymentRequest[] = [];
+
+        if (messageIds.length > 0) {
+          const { data: paymentsData, error: paymentsError } = await supabase
+            .from('payment_requests')
+            .select('*')
+            .in('message_id', messageIds);
+
+          if (!paymentsError && paymentsData) {
+            const userIds = paymentsData
+              .flatMap((p: any) => [p.from_user_id, p.to_user_id])
+              .filter(Boolean);
+            let userMap: Record<
+              string,
+              { id: string; full_name: string; avatar_url: string | null }
+            > = {};
+
+            if (userIds.length > 0) {
+              const { data: users, error: usersError } = await supabase
+                .from('users')
+                .select('id, full_name, avatar_url')
+                .in('id', userIds);
+
+              if (!usersError && users) {
+                users.forEach((u: any) => {
+                  userMap[u.id] = {
+                    id: u.id,
+                    full_name: u.full_name || 'User',
+                    avatar_url: u.avatar_url || null,
+                  };
+                });
+              }
+            }
+
+            paymentRequests = paymentsData.map((p: any) => {
+              const fromId = p.from_user_id;
+              const toId = p.to_user_id;
+
+              return {
+                ...p,
+                created_at: p.created_at || new Date().toISOString(),
+                from_user_id: fromId,
+                to_user_id: toId,
+                from_user: userMap[fromId] || {
+                  id: fromId,
+                  full_name: 'User',
+                  avatar_url: null,
+                },
+                to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
+              };
+            });
+          }
+        }
+
+        const mergedMessages = filtered.map((msg: any) => {
+          const payment = paymentRequests.find((p) => p.message_id === msg.id);
+          return {
+            ...msg,
+            payment: payment || null,
+            payment_request_id: payment?.id || null,
+          };
+        });
+
+        if (isMounted.current) {
+          setMessages(mergedMessages);
+        }
+
+        await supabase
+          .from('messages')
+          .update({ is_read: true })
+          .eq('sender_id', partnerId)
+          .eq('receiver_id', user.id)
+          .eq('is_read', false);
+      } catch (error) {
+        console.error('Error loading messages:', error);
+      }
+    },
+    [user?.id]
+  );
+
+  // ============================================================
+  // closeChat
+  // ============================================================
+  // ✅ We do NOT reset consumedDirectUserIdRef or hasOpenedDirectChat here.
+  //    Resetting them is what caused the chat to re-open on back press.
+  //
+  //    We DO clear the route params so nothing downstream can re-trigger
+  //    an automatic open for this particular navigation.
+  // ============================================================
+  const closeChat = useCallback(() => {
+    setShowChat(false);
+    setSelectedConversation(null);
+    setMessages([]);
+    setPartnerProfile(null);
+
+    // Clear the incoming route params for this screen.
+    // Wrapped in try/catch because setParams can throw if the screen
+    // has already been unmounted (e.g. very fast back-back).
     try {
-      const { data: messagesData, error: messagesError } = await supabase
-        .from('messages')
-        .select('*')
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .or(`sender_id.eq.${partnerId},receiver_id.eq.${partnerId}`)
-        .order('created_at', { ascending: true })
-        .limit(100);
+      navigation?.setParams?.({ userId: undefined, userName: undefined });
+    } catch {
+      // ignore
+    }
 
-      if (messagesError) {
-        console.error('Error loading messages:', messagesError);
+    if (isMounted.current) {
+      loadConversations();
+    }
+  }, [loadConversations, navigation]);
+
+  // ============================================================
+  // openDirectChatIfNeeded
+  // ============================================================
+  // ✅ Guarded by consumedDirectUserIdRef so a given route param is only
+  //    ever consumed once. If the user closes the chat and comes back
+  //    to the inbox, this function will bail out immediately.
+  // ============================================================
+  const openDirectChatIfNeeded = useCallback(
+    (currentConversations?: Conversation[]) => {
+      if (!directUserId || !user?.id || directUserId === user.id) return;
+
+      // Already consumed this exact route param → do nothing
+      if (consumedDirectUserIdRef.current === directUserId) return;
+
+      // Belt-and-braces: if the flag is already set, bail out
+      if (hasOpenedDirectChat) return;
+
+      const convos = currentConversations || conversations;
+      const existingConvo = convos.find((c) => c.id === directUserId);
+
+      // Mark as consumed BEFORE any async work so re-entrant calls bail out
+      consumedDirectUserIdRef.current = directUserId;
+      setHasOpenedDirectChat(true);
+
+      if (existingConvo) {
+        setSelectedConversation(existingConvo);
+        setShowChat(true);
+        loadMessages(directUserId);
         return;
       }
 
-      let filtered = messagesData?.filter((m: any) => 
-        (m.sender_id === user.id && m.receiver_id === partnerId) || 
-        (m.sender_id === partnerId && m.receiver_id === user.id)
-      ) || [];
+      const newConvo: Conversation = {
+        id: directUserId,
+        name: directUserName || 'User',
+        lastMessage: 'Start chatting...',
+        time: 'Just now',
+        unread: 0,
+        online: false,
+        avatar: directUserName?.charAt(0).toUpperCase() || 'U',
+        avatarUrl: null, // populated once loadMessages runs
+        type: 'chat',
+        isVerified: false,
+      };
 
-      const messageIds = filtered.map((m: any) => m.id).filter(Boolean);
-      let paymentRequests: PaymentRequest[] = [];
+      setConversations((prev) =>
+        prev.find((c) => c.id === directUserId) ? prev : [newConvo, ...prev]
+      );
+      setFilteredConversations((prev) =>
+        prev.find((c) => c.id === directUserId) ? prev : [newConvo, ...prev]
+      );
 
-      if (messageIds.length > 0) {
-        const { data: paymentsData, error: paymentsError } = await supabase
-          .from('payment_requests')
-          .select('*')
-          .in('message_id', messageIds);
-
-        if (!paymentsError && paymentsData) {
-          const userIds = paymentsData.flatMap((p: any) => [p.from_user_id, p.to_user_id]).filter(Boolean);
-          let userMap: Record<string, { id: string; full_name: string; avatar_url: string | null }> = {};
-
-          if (userIds.length > 0) {
-            const { data: users, error: usersError } = await supabase
-              .from('users')
-              .select('id, full_name, avatar_url')
-              .in('id', userIds);
-
-            if (!usersError && users) {
-              users.forEach((u: any) => {
-                userMap[u.id] = { 
-                  id: u.id,
-                  full_name: u.full_name || 'User', 
-                  avatar_url: u.avatar_url || null 
-                };
-              });
-            }
-          }
-
-          paymentRequests = paymentsData.map((p: any) => {
-            const fromId = p.from_user_id;
-            const toId = p.to_user_id;
-            
-            return {
-              ...p,
-              created_at: p.created_at || new Date().toISOString(),
-              from_user_id: fromId,
-              to_user_id: toId,
-              from_user: userMap[fromId] || { id: fromId, full_name: 'User', avatar_url: null },
-              to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
-            };
-          });
-        }
-      }
-
-      const mergedMessages = filtered.map((msg: any) => {
-        const payment = paymentRequests.find(p => p.message_id === msg.id);
-        return {
-          ...msg,
-          payment: payment || null,
-          payment_request_id: payment?.id || null,
-        };
-      });
-
-      if (isMounted.current) {
-        setMessages(mergedMessages);
-      }
-
-      await supabase
-        .from('messages')
-        .update({ is_read: true })
-        .eq('sender_id', partnerId)
-        .eq('receiver_id', user.id)
-        .eq('is_read', false);
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
-  }, [user?.id]);
+      setSelectedConversation(newConvo);
+      setShowChat(true);
+      loadMessages(directUserId);
+    },
+    [
+      directUserId,
+      directUserName,
+      user?.id,
+      hasOpenedDirectChat,
+      conversations,
+      loadMessages,
+    ]
+  );
 
   // ============================================================
   // PAYMENT FUNCTIONS
   // ============================================================
 
-  const createPayment = useCallback(async (
-    amount: number, 
-    reason: string, 
-    isRequest: boolean,
-    receiverId: string
-  ) => {
-    if (!user?.id || !receiverId) {
-      Alert.alert('Error', 'Invalid user');
-      return null;
-    }
-
-    try {
-      const buyerId = isRequest ? receiverId : user.id;
-      const sellerId = isRequest ? user.id : receiverId;
-
-      const { data: paymentData, error: paymentError } = await supabase
-        .from('payment_requests')
-        .insert({
-          buyer_id: buyerId,
-          seller_id: sellerId,
-          from_user_id: isRequest ? receiverId : user.id,
-          to_user_id: isRequest ? user.id : receiverId,
-          amount: amount,
-          reason: reason || 'Payment',
-          status: 'pending',
-          is_request: isRequest,
-          currency: 'UGX',
-        } as any)
-        .select('*')
-        .single();
-
-      if (paymentError) {
-        console.error('Error creating payment:', paymentError);
-        Alert.alert('Error', 'Failed to create payment: ' + paymentError.message);
+  const createPayment = useCallback(
+    async (amount: number, reason: string, isRequest: boolean, receiverId: string) => {
+      if (!user?.id || !receiverId) {
+        Alert.alert('Error', 'Invalid user');
         return null;
       }
 
-      if (!paymentData) {
-        Alert.alert('Error', 'Failed to create payment - no data returned');
-        return null;
-      }
+      try {
+        const buyerId = isRequest ? receiverId : user.id;
+        const sellerId = isRequest ? user.id : receiverId;
 
-      const paymentText = isRequest
-        ? `💰 Payment Request: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`
-        : `💰 Payment Initiated: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`;
-
-      const { data: messageData, error: messageError } = await supabase
-        .from('messages')
-        .insert({
-          sender_id: user.id,
-          receiver_id: receiverId,
-          text: paymentText,
-          is_read: false,
-        })
-        .select()
-        .single();
-
-      if (messageError) {
-        console.error('Error sending payment message:', messageError);
-        Alert.alert('Error', 'Failed to send payment message');
-        return null;
-      }
-
-      if (paymentData && messageData) {
-        await supabase
+        const { data: paymentData, error: paymentError } = await supabase
           .from('payment_requests')
-          .update({ message_id: messageData.id })
-          .eq('id', paymentData.id);
-      }
-
-      // For "Pay Now", immediately lock funds
-      if (!isRequest) {
-        const { error: txError } = await supabase
-          .from('transactions')
           .insert({
-            buyer_id: user.id,
-            seller_id: receiverId,
+            buyer_id: buyerId,
+            seller_id: sellerId,
+            from_user_id: user.id,
+            to_user_id: receiverId,
             amount: amount,
-            locked_amount: amount,
-            type: 'payment',
-            status: 'locked',
-            reference: `PAY-${Date.now()}`,
+            reason: reason || 'Payment',
+            status: 'pending',
+            is_request: isRequest,
+            currency: 'UGX',
           } as any)
-          .select()
+          .select('*')
           .single();
 
-        if (txError) {
-          console.error('Error creating transaction:', txError);
-          Alert.alert('Error', 'Failed to lock funds');
+        if (paymentError) {
+          console.error('Error creating payment:', paymentError);
+          Alert.alert('Error', 'Failed to create payment: ' + paymentError.message);
           return null;
         }
 
-        await supabase
-          .from('payment_requests')
-          .update({
-            status: 'locked',
-            locked_at: new Date().toISOString(),
-          })
-          .eq('id', paymentData.id);
+        if (!paymentData) {
+          Alert.alert('Error', 'Failed to create payment - no data returned');
+          return null;
+        }
 
-        const { data: userData } = await supabase
+        const paymentText = isRequest
+          ? `💰 Payment Request: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`
+          : `💰 Payment Initiated: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`;
+
+        const { data: messageData, error: messageError } = await supabase
+          .from('messages')
+          .insert({
+            sender_id: user.id,
+            receiver_id: receiverId,
+            text: paymentText,
+            is_read: false,
+          })
+          .select()
+          .single();
+
+        if (messageError) {
+          console.error('Error sending payment message:', messageError);
+          Alert.alert('Error', 'Failed to send payment message');
+          return null;
+        }
+
+        if (paymentData && messageData) {
+          await supabase
+            .from('payment_requests')
+            .update({ message_id: messageData.id })
+            .eq('id', paymentData.id);
+        }
+
+        if (!isRequest) {
+          const { error: txError } = await supabase
+            .from('transactions')
+            .insert({
+              buyer_id: user.id,
+              seller_id: receiverId,
+              amount: amount,
+              locked_amount: amount,
+              type: 'payment',
+              status: 'locked',
+              reference: `PAY-${Date.now()}`,
+            } as any)
+            .select()
+            .single();
+
+          if (txError) {
+            console.error('Error creating transaction:', txError);
+            Alert.alert('Error', 'Failed to lock funds');
+            return null;
+          }
+
+          await supabase
+            .from('payment_requests')
+            .update({
+              status: 'locked',
+              locked_at: new Date().toISOString(),
+            })
+            .eq('id', paymentData.id);
+
+          const { data: userData } = await supabase
+            .from('users')
+            .select('wallet_balance')
+            .eq('id', user.id)
+            .single();
+
+          if (userData) {
+            await supabase
+              .from('users')
+              .update({
+                wallet_balance: (userData.wallet_balance || 0) - amount,
+              })
+              .eq('id', user.id);
+          }
+        }
+
+        const userIds = [paymentData.from_user_id, paymentData.to_user_id].filter(Boolean);
+        let userMap: Record<
+          string,
+          { id: string; full_name: string; avatar_url: string | null }
+        > = {};
+
+        if (userIds.length > 0) {
+          const { data: users, error: usersError } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url')
+            .in('id', userIds);
+
+          if (!usersError && users) {
+            users.forEach((u: any) => {
+              userMap[u.id] = {
+                id: u.id,
+                full_name: u.full_name || 'User',
+                avatar_url: u.avatar_url || null,
+              };
+            });
+          }
+        }
+
+        const fromId = paymentData.from_user_id;
+        const toId = paymentData.to_user_id;
+
+        return {
+          ...paymentData,
+          message_id: messageData?.id,
+          created_at: paymentData.created_at || new Date().toISOString(),
+          from_user_id: fromId,
+          to_user_id: toId,
+          from_user: userMap[fromId] || { id: fromId, full_name: 'User', avatar_url: null },
+          to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
+        };
+      } catch (error) {
+        console.error('Error creating payment:', error);
+        Alert.alert('Error', 'Failed to create payment');
+        return null;
+      }
+    },
+    [user?.id]
+  );
+
+  const handleAcceptPayment = useCallback(
+    async (payment: PaymentRequest) => {
+      if (!user?.id) {
+        Alert.alert('Error', 'Please login');
+        return;
+      }
+
+      try {
+        const { data: userData, error: balanceError } = await supabase
           .from('users')
           .select('wallet_balance')
           .eq('id', user.id)
           .single();
 
-        if (userData) {
-          await supabase
-            .from('users')
-            .update({
-              wallet_balance: (userData.wallet_balance || 0) - amount,
-            })
-            .eq('id', user.id);
+        if (balanceError) {
+          console.error('Error checking balance:', balanceError);
+          Alert.alert('Error', 'Failed to check balance');
+          return;
         }
+
+        if ((userData?.wallet_balance || 0) < payment.amount) {
+          Alert.alert(
+            'Insufficient Balance',
+            `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(
+              userData?.wallet_balance || 0
+            ).toLocaleString()}`
+          );
+          return;
+        }
+
+        Alert.alert(
+          'Accept Payment',
+          `You are about to accept a payment of UGX ${payment.amount.toLocaleString()}\n\n` +
+            `From: ${payment.from_user?.full_name || 'User'}\n` +
+            `Reason: ${payment.reason || 'No reason provided'}\n\n` +
+            `This amount will be locked from your wallet until you confirm the transaction.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Accept & Lock',
+              onPress: async () => {
+                try {
+                  const { data: txData, error: txError } = await supabase
+                    .from('transactions')
+                    .insert({
+                      buyer_id: user.id,
+                      seller_id: payment.from_user_id,
+                      amount: payment.amount,
+                      locked_amount: payment.amount,
+                      type: 'payment',
+                      status: 'locked',
+                      reference: `PAY-${Date.now()}`,
+                    } as any)
+                    .select()
+                    .single();
+
+                  if (txError) {
+                    console.error('Error creating transaction:', txError);
+                    Alert.alert('Error', 'Failed to lock funds');
+                    return;
+                  }
+
+                  await supabase
+                    .from('payment_requests')
+                    .update({
+                      status: 'locked',
+                      locked_at: new Date().toISOString(),
+                      accepted_at: new Date().toISOString(),
+                      transaction_id: txData.id,
+                      buyer_id: user.id,
+                      seller_id: payment.from_user_id,
+                    } as any)
+                    .eq('id', payment.id);
+
+                  const { data: userBalance } = await supabase
+                    .from('users')
+                    .select('wallet_balance')
+                    .eq('id', user.id)
+                    .single();
+
+                  if (userBalance) {
+                    await supabase
+                      .from('users')
+                      .update({
+                        wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
+                      })
+                      .eq('id', user.id);
+                  }
+
+                  const { data: msgData } = await supabase
+                    .from('messages')
+                    .insert({
+                      sender_id: user.id,
+                      receiver_id: payment.from_user_id,
+                      text: `✅ Payment accepted and locked: UGX ${payment.amount.toLocaleString()}${
+                        payment.reason ? ` - ${payment.reason}` : ''
+                      }`,
+                      is_read: false,
+                    })
+                    .select()
+                    .single();
+
+                  if (msgData) {
+                    setMessages((prev) => {
+                      const newMsg = {
+                        ...msgData,
+                        payment: null,
+                        payment_request_id: null,
+                      };
+                      return [...prev, newMsg];
+                    });
+                  }
+
+                  if (selectedConversation?.id) {
+                    loadMessages(selectedConversation.id);
+                  }
+
+                  Alert.alert(
+                    '✅ Payment Locked',
+                    `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
+                      `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
+                  );
+                } catch (error) {
+                  console.error('Error processing payment:', error);
+                  Alert.alert('Error', 'Failed to process payment');
+                }
+              },
+            },
+          ]
+        );
+      } catch (error) {
+        console.error('Error:', error);
+        Alert.alert('Error', 'Failed to process payment');
+      }
+    },
+    [user?.id, selectedConversation, loadMessages]
+  );
+
+  const handlePayNow = useCallback(
+    async (payment: PaymentRequest) => {
+      if (!user?.id) {
+        Alert.alert('Error', 'Please login');
+        return;
       }
 
-      const userIds = [paymentData.from_user_id, paymentData.to_user_id].filter(Boolean);
-      let userMap: Record<string, { id: string; full_name: string; avatar_url: string | null }> = {};
-
-      if (userIds.length > 0) {
-        const { data: users, error: usersError } = await supabase
+      try {
+        const { data: userData, error: balanceError } = await supabase
           .from('users')
-          .select('id, full_name, avatar_url')
-          .in('id', userIds);
+          .select('wallet_balance')
+          .eq('id', user.id)
+          .single();
 
-        if (!usersError && users) {
-          users.forEach((u: any) => {
-            userMap[u.id] = { 
-              id: u.id,
-              full_name: u.full_name || 'User', 
-              avatar_url: u.avatar_url || null 
-            };
-          });
+        if (balanceError) {
+          console.error('Error checking balance:', balanceError);
+          Alert.alert('Error', 'Failed to check balance');
+          return;
         }
-      }
 
-      const fromId = paymentData.from_user_id;
-      const toId = paymentData.to_user_id;
+        if ((userData?.wallet_balance || 0) < payment.amount) {
+          Alert.alert(
+            'Insufficient Balance',
+            `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(
+              userData?.wallet_balance || 0
+            ).toLocaleString()}`
+          );
+          return;
+        }
 
-      return {
-        ...paymentData,
-        message_id: messageData?.id,
-        created_at: paymentData.created_at || new Date().toISOString(),
-        from_user_id: fromId,
-        to_user_id: toId,
-        from_user: userMap[fromId] || { id: fromId, full_name: 'User', avatar_url: null },
-        to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
-      };
-    } catch (error) {
-      console.error('Error creating payment:', error);
-      Alert.alert('Error', 'Failed to create payment');
-      return null;
-    }
-  }, [user?.id]);
-
-  // --- Accept Payment (For Pay Now received) ---
-  const handleAcceptPayment = useCallback(async (payment: PaymentRequest) => {
-    if (!user?.id) {
-      Alert.alert('Error', 'Please login');
-      return;
-    }
-
-    try {
-      const { data: userData, error: balanceError } = await supabase
-        .from('users')
-        .select('wallet_balance')
-        .eq('id', user.id)
-        .single();
-
-      if (balanceError) {
-        console.error('Error checking balance:', balanceError);
-        Alert.alert('Error', 'Failed to check balance');
-        return;
-      }
-
-      if ((userData?.wallet_balance || 0) < payment.amount) {
         Alert.alert(
-          'Insufficient Balance',
-          `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(userData?.wallet_balance || 0).toLocaleString()}`
-        );
-        return;
-      }
+          'Pay Request',
+          `You are about to pay UGX ${payment.amount.toLocaleString()}\n\n` +
+            `To: ${payment.from_user?.full_name || 'User'}\n` +
+            `Reason: ${payment.reason || 'No reason provided'}\n\n` +
+            `This amount will be locked from your wallet until you confirm the transaction.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Pay Now',
+              onPress: async () => {
+                try {
+                  const { data: txData, error: txError } = await supabase
+                    .from('transactions')
+                    .insert({
+                      buyer_id: user.id,
+                      seller_id: payment.from_user_id,
+                      amount: payment.amount,
+                      locked_amount: payment.amount,
+                      type: 'payment',
+                      status: 'locked',
+                      reference: `PAY-${Date.now()}`,
+                    } as any)
+                    .select()
+                    .single();
 
+                  if (txError) {
+                    console.error('Error creating transaction:', txError);
+                    Alert.alert('Error', 'Failed to lock funds');
+                    return;
+                  }
+
+                  await supabase
+                    .from('payment_requests')
+                    .update({
+                      status: 'locked',
+                      locked_at: new Date().toISOString(),
+                      accepted_at: new Date().toISOString(),
+                      transaction_id: txData.id,
+                      buyer_id: user.id,
+                      seller_id: payment.from_user_id,
+                    } as any)
+                    .eq('id', payment.id);
+
+                  const { data: userBalance } = await supabase
+                    .from('users')
+                    .select('wallet_balance')
+                    .eq('id', user.id)
+                    .single();
+
+                  if (userBalance) {
+                    await supabase
+                      .from('users')
+                      .update({
+                        wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
+                      })
+                      .eq('id', user.id);
+                  }
+
+                  const { data: msgData } = await supabase
+                    .from('messages')
+                    .insert({
+                      sender_id: user.id,
+                      receiver_id: payment.from_user_id,
+                      text: `✅ Payment locked: UGX ${payment.amount.toLocaleString()}${
+                        payment.reason ? ` - ${payment.reason}` : ''
+                      }`,
+                      is_read: false,
+                    })
+                    .select()
+                    .single();
+
+                  if (msgData) {
+                    setMessages((prev) => {
+                      const newMsg = {
+                        ...msgData,
+                        payment: null,
+                        payment_request_id: null,
+                      };
+                      return [...prev, newMsg];
+                    });
+                  }
+
+                  if (selectedConversation?.id) {
+                    loadMessages(selectedConversation.id);
+                  }
+
+                  Alert.alert(
+                    '✅ Payment Locked',
+                    `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
+                      `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
+                  );
+                } catch (error) {
+                  console.error('Error processing payment:', error);
+                  Alert.alert('Error', 'Failed to process payment');
+                }
+              },
+            },
+          ]
+        );
+      } catch (error) {
+        console.error('Error:', error);
+        Alert.alert('Error', 'Failed to process payment');
+      }
+    },
+    [user?.id, selectedConversation, loadMessages]
+  );
+
+  const handleCancelPayment = useCallback(
+    async (payment: PaymentRequest) => {
       Alert.alert(
-        'Accept Payment',
-        `You are about to accept a payment of UGX ${payment.amount.toLocaleString()}\n\n` +
-        `From: ${payment.from_user?.full_name || 'User'}\n` +
-        `Reason: ${payment.reason || 'No reason provided'}\n\n` +
-        `This amount will be locked from your wallet until you confirm the transaction.`,
+        'Cancel Payment',
+        `Are you sure you want to cancel this ${payment.is_request ? 'request' : 'payment'}?`,
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: 'No', style: 'cancel' },
           {
-            text: 'Accept & Lock',
+            text: 'Yes, Cancel',
+            style: 'destructive',
             onPress: async () => {
               try {
-                const { data: txData, error: txError } = await supabase
-                  .from('transactions')
-                  .insert({
-                    buyer_id: user.id,
-                    seller_id: payment.from_user_id,
-                    amount: payment.amount,
-                    locked_amount: payment.amount,
-                    type: 'payment',
-                    status: 'locked',
-                    reference: `PAY-${Date.now()}`,
-                  } as any)
-                  .select()
-                  .single();
-
-                if (txError) {
-                  console.error('Error creating transaction:', txError);
-                  Alert.alert('Error', 'Failed to lock funds');
-                  return;
-                }
-
                 await supabase
                   .from('payment_requests')
-                  .update({
-                    status: 'locked',
-                    locked_at: new Date().toISOString(),
-                    accepted_at: new Date().toISOString(),
-                    transaction_id: txData.id,
-                    buyer_id: user.id,
-                    seller_id: payment.from_user_id,
-                  } as any)
+                  .update({ status: 'cancelled' })
                   .eq('id', payment.id);
-
-                const { data: userBalance } = await supabase
-                  .from('users')
-                  .select('wallet_balance')
-                  .eq('id', user.id)
-                  .single();
-
-                if (userBalance) {
-                  await supabase
-                    .from('users')
-                    .update({
-                      wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
-                    })
-                    .eq('id', user.id);
-                }
 
                 const { data: msgData } = await supabase
                   .from('messages')
                   .insert({
-                    sender_id: user.id,
-                    receiver_id: payment.from_user_id,
-                    text: `✅ Payment accepted and locked: UGX ${payment.amount.toLocaleString()}${payment.reason ? ` - ${payment.reason}` : ''}`,
+                    sender_id: user?.id,
+                    receiver_id: payment.is_request
+                      ? payment.to_user_id
+                      : payment.from_user_id,
+                    text: `❌ Payment ${payment.is_request ? 'request' : ''} cancelled`,
                     is_read: false,
                   })
                   .select()
                   .single();
 
                 if (msgData) {
-                  setMessages(prev => {
+                  setMessages((prev) => {
                     const newMsg = {
                       ...msgData,
                       payment: null,
@@ -1038,125 +1375,51 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   loadMessages(selectedConversation.id);
                 }
 
-                Alert.alert(
-                  '✅ Payment Locked',
-                  `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
-                  `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
-                );
+                Alert.alert('✅ Cancelled', 'Payment has been cancelled.');
               } catch (error) {
-                console.error('Error processing payment:', error);
-                Alert.alert('Error', 'Failed to process payment');
+                console.error('Error cancelling payment:', error);
+                Alert.alert('Error', 'Failed to cancel payment.');
               }
-            }
-          }
+            },
+          },
         ]
       );
-    } catch (error) {
-      console.error('Error:', error);
-      Alert.alert('Error', 'Failed to process payment');
-    }
-  }, [user?.id, selectedConversation, loadMessages]);
+    },
+    [user?.id, selectedConversation, loadMessages]
+  );
 
-  // --- Pay Now (For Request received - to_user pays) ---
-  const handlePayNow = useCallback(async (payment: PaymentRequest) => {
-    if (!user?.id) {
-      Alert.alert('Error', 'Please login');
-      return;
-    }
-
-    try {
-      const { data: userData, error: balanceError } = await supabase
-        .from('users')
-        .select('wallet_balance')
-        .eq('id', user.id)
-        .single();
-
-      if (balanceError) {
-        console.error('Error checking balance:', balanceError);
-        Alert.alert('Error', 'Failed to check balance');
-        return;
-      }
-
-      if ((userData?.wallet_balance || 0) < payment.amount) {
-        Alert.alert(
-          'Insufficient Balance',
-          `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(userData?.wallet_balance || 0).toLocaleString()}`
-        );
-        return;
-      }
-
+  const handleRejectPayment = useCallback(
+    async (payment: PaymentRequest) => {
       Alert.alert(
-        'Pay Request',
-        `You are about to pay UGX ${payment.amount.toLocaleString()}\n\n` +
-        `To: ${payment.from_user?.full_name || 'User'}\n` +
-        `Reason: ${payment.reason || 'No reason provided'}\n\n` +
-        `This amount will be locked from your wallet until you confirm the transaction.`,
+        'Reject Payment',
+        `Are you sure you want to reject this ${payment.is_request ? 'request' : 'payment'}?`,
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: 'No', style: 'cancel' },
           {
-            text: 'Pay Now',
+            text: 'Yes, Reject',
+            style: 'destructive',
             onPress: async () => {
               try {
-                const { data: txData, error: txError } = await supabase
-                  .from('transactions')
-                  .insert({
-                    buyer_id: user.id,
-                    seller_id: payment.from_user_id,
-                    amount: payment.amount,
-                    locked_amount: payment.amount,
-                    type: 'payment',
-                    status: 'locked',
-                    reference: `PAY-${Date.now()}`,
-                  } as any)
-                  .select()
-                  .single();
-
-                if (txError) {
-                  console.error('Error creating transaction:', txError);
-                  Alert.alert('Error', 'Failed to lock funds');
-                  return;
-                }
-
                 await supabase
                   .from('payment_requests')
-                  .update({
-                    status: 'locked',
-                    locked_at: new Date().toISOString(),
-                    accepted_at: new Date().toISOString(),
-                    transaction_id: txData.id,
-                    buyer_id: user.id,
-                    seller_id: payment.from_user_id,
-                  } as any)
+                  .update({ status: 'cancelled' })
                   .eq('id', payment.id);
-
-                const { data: userBalance } = await supabase
-                  .from('users')
-                  .select('wallet_balance')
-                  .eq('id', user.id)
-                  .single();
-
-                if (userBalance) {
-                  await supabase
-                    .from('users')
-                    .update({
-                      wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
-                    })
-                    .eq('id', user.id);
-                }
 
                 const { data: msgData } = await supabase
                   .from('messages')
                   .insert({
-                    sender_id: user.id,
+                    sender_id: user?.id,
                     receiver_id: payment.from_user_id,
-                    text: `✅ Payment locked: UGX ${payment.amount.toLocaleString()}${payment.reason ? ` - ${payment.reason}` : ''}`,
+                    text: `❌ ${
+                      payment.is_request ? 'Payment request' : 'Payment'
+                    } rejected`,
                     is_read: false,
                   })
                   .select()
                   .single();
 
                 if (msgData) {
-                  setMessages(prev => {
+                  setMessages((prev) => {
                     const newMsg = {
                       ...msgData,
                       payment: null,
@@ -1170,159 +1433,47 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   loadMessages(selectedConversation.id);
                 }
 
-                Alert.alert(
-                  '✅ Payment Locked',
-                  `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
-                  `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
-                );
+                Alert.alert('✅ Rejected', 'Payment has been rejected.');
               } catch (error) {
-                console.error('Error processing payment:', error);
-                Alert.alert('Error', 'Failed to process payment');
+                console.error('Error rejecting payment:', error);
+                Alert.alert('Error', 'Failed to reject payment.');
               }
-            }
-          }
+            },
+          },
         ]
       );
-    } catch (error) {
-      console.error('Error:', error);
-      Alert.alert('Error', 'Failed to process payment');
-    }
-  }, [user?.id, selectedConversation, loadMessages]);
+    },
+    [user?.id, selectedConversation, loadMessages]
+  );
 
-  // --- Cancel Payment/Request (Sender cancels) ---
-  const handleCancelPayment = useCallback(async (payment: PaymentRequest) => {
-    Alert.alert(
-      'Cancel Payment',
-      `Are you sure you want to cancel this ${payment.is_request ? 'request' : 'payment'}?`,
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await supabase
-                .from('payment_requests')
-                .update({ status: 'cancelled' })
-                .eq('id', payment.id);
-
-              const { data: msgData } = await supabase
-                .from('messages')
-                .insert({
-                  sender_id: user?.id,
-                  receiver_id: payment.is_request ? payment.to_user_id : payment.from_user_id,
-                  text: `❌ Payment ${payment.is_request ? 'request' : ''} cancelled`,
-                  is_read: false,
-                })
-                .select()
-                .single();
-
-              if (msgData) {
-                setMessages(prev => {
-                  const newMsg = {
-                    ...msgData,
-                    payment: null,
-                    payment_request_id: null,
-                  };
-                  return [...prev, newMsg];
-                });
-              }
-
-              if (selectedConversation?.id) {
-                loadMessages(selectedConversation.id);
-              }
-
-              Alert.alert('✅ Cancelled', 'Payment has been cancelled.');
-            } catch (error) {
-              console.error('Error cancelling payment:', error);
-              Alert.alert('Error', 'Failed to cancel payment.');
-            }
-          }
-        }
-      ]
-    );
-  }, [user?.id, selectedConversation, loadMessages]);
-
-  // --- Reject Payment/Request (Receiver rejects) ---
-  const handleRejectPayment = useCallback(async (payment: PaymentRequest) => {
-    Alert.alert(
-      'Reject Payment',
-      `Are you sure you want to reject this ${payment.is_request ? 'request' : 'payment'}?`,
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Reject',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await supabase
-                .from('payment_requests')
-                .update({ status: 'cancelled' })
-                .eq('id', payment.id);
-
-              const { data: msgData } = await supabase
-                .from('messages')
-                .insert({
-                  sender_id: user?.id,
-                  receiver_id: payment.from_user_id,
-                  text: `❌ ${payment.is_request ? 'Payment request' : 'Payment'} rejected`,
-                  is_read: false,
-                })
-                .select()
-                .single();
-
-              if (msgData) {
-                setMessages(prev => {
-                  const newMsg = {
-                    ...msgData,
-                    payment: null,
-                    payment_request_id: null,
-                  };
-                  return [...prev, newMsg];
-                });
-              }
-
-              if (selectedConversation?.id) {
-                loadMessages(selectedConversation.id);
-              }
-
-              Alert.alert('✅ Rejected', 'Payment has been rejected.');
-            } catch (error) {
-              console.error('Error rejecting payment:', error);
-              Alert.alert('Error', 'Failed to reject payment.');
-            }
-          }
-        }
-      ]
-    );
-  }, [user?.id, selectedConversation, loadMessages]);
-
-  // --- Edit Payment Request (Sender edits) ---
   const handleEditPayment = useCallback((payment: PaymentRequest) => {
     setEditingPayment(payment);
     setPaymentAmount(String(payment.amount));
     setPaymentReason(payment.reason || '');
-    setPaymentIsRequest(true);
+    setPaymentIsRequest(payment.is_request);
     setShowPaymentModal(true);
   }, []);
 
-  // --- Navigate to Pay Screen ---
-  const handleViewInPay = useCallback((payment: PaymentRequest) => {
-    navigation.navigate('Pay', {
-      pendingPaymentId: payment.id,
-    });
-    setShowChat(false);
-  }, [navigation]);
+  const handleViewInPay = useCallback(
+    (payment: PaymentRequest) => {
+      closeChat();
+      navigation.navigate('Pay', {
+        pendingPaymentId: payment.id,
+      });
+    },
+    [navigation, closeChat]
+  );
 
   // ============================================================
   // OTHER FUNCTIONS
   // ============================================================
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current) return;
+    if (!newMessage.trim() || !selectedConversation?.id || !user?.id || !isMounted.current)
+      return;
 
     const receiverId = selectedConversation.id;
-    
+
     try {
       const { data, error } = await supabase
         .from('messages')
@@ -1347,12 +1498,14 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
           payment: null,
           payment_request_id: null,
         };
-        setMessages(prev => [...prev, newMsg]);
+        setMessages((prev) => [...prev, newMsg]);
         setNewMessage('');
-        
-        setConversations(prev => {
-          const updated = prev.map(c => 
-            c.id === receiverId ? { ...c, lastMessage: data.text || 'No messages yet', time: 'Just now' } : c
+
+        setConversations((prev) => {
+          const updated = prev.map((c) =>
+            c.id === receiverId
+              ? { ...c, lastMessage: data.text || 'No messages yet', time: 'Just now' }
+              : c
           );
           return updated.sort((a, b) => {
             const timeA = a.time === 'Just now' ? Date.now() : 0;
@@ -1371,54 +1524,6 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     }
   };
 
-  const openDirectChatIfNeeded = useCallback((currentConversations?: Conversation[]) => {
-    if (!directUserId || !user?.id || directUserId === user.id || hasOpenedDirectChat) {
-      return;
-    }
-
-    const convos = currentConversations || conversations;
-    const existingConvo = convos.find(c => c.id === directUserId);
-    
-    if (existingConvo) {
-      setSelectedConversation(existingConvo);
-      setShowChat(true);
-      setHasOpenedDirectChat(true);
-      loadMessages(directUserId);
-    } else {
-      const newConvo: Conversation = {
-        id: directUserId,
-        name: directUserName || 'User',
-        lastMessage: 'Start chatting...',
-        time: 'Just now',
-        unread: 0,
-        online: false,
-        avatar: directUserName?.charAt(0).toUpperCase() || 'U',
-        type: 'chat',
-        isVerified: false,
-      };
-      
-      setConversations(prev => {
-        const exists = prev.find(c => c.id === directUserId);
-        if (exists) {
-          setSelectedConversation(exists);
-          setShowChat(true);
-          setHasOpenedDirectChat(true);
-          return prev;
-        }
-        setSelectedConversation(newConvo);
-        setShowChat(true);
-        setHasOpenedDirectChat(true);
-        return [newConvo, ...prev];
-      });
-      
-      setFilteredConversations(prev => {
-        const exists = prev.find(c => c.id === directUserId);
-        if (exists) return prev;
-        return [newConvo, ...prev];
-      });
-    }
-  }, [directUserId, directUserName, user?.id, hasOpenedDirectChat, conversations, loadMessages]);
-
   const handleConversationPress = (conversation: Conversation) => {
     setSelectedConversation(conversation);
     setShowChat(true);
@@ -1428,7 +1533,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   };
 
   // ============================================================
-  // PAYMENT MODAL - For new payments and editing
+  // PAYMENT MODAL
   // ============================================================
 
   const handleSendPayment = useCallback(async () => {
@@ -1443,14 +1548,15 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       return;
     }
 
-    // If editing an existing payment
     if (editingPayment) {
       try {
         await supabase
           .from('payment_requests')
           .update({
             amount: amountNum,
-            reason: paymentReason || 'Payment Request',
+            reason:
+              paymentReason ||
+              (editingPayment.is_request ? 'Payment Request' : 'Payment'),
           })
           .eq('id', editingPayment.id);
 
@@ -1462,16 +1568,20 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         setPaymentAmount('');
         setPaymentReason('');
         setEditingPayment(null);
-        Alert.alert('✅ Updated', 'Payment request has been updated.');
+        Alert.alert(
+          '✅ Updated',
+          editingPayment.is_request
+            ? 'Payment request has been updated.'
+            : 'Payment has been updated.'
+        );
         return;
       } catch (error) {
         console.error('Error updating payment:', error);
-        Alert.alert('Error', 'Failed to update payment request.');
+        Alert.alert('Error', 'Failed to update payment.');
         return;
       }
     }
 
-    // New payment
     const result = await createPayment(
       amountNum,
       paymentReason || (paymentIsRequest ? 'Payment Request' : 'Payment'),
@@ -1484,11 +1594,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       setPaymentAmount('');
       setPaymentReason('');
       setEditingPayment(null);
-      
+
       Alert.alert(
         paymentIsRequest ? '💰 Payment Request Sent' : '💰 Payment Initiated',
         paymentIsRequest
-          ? `UGX ${amountNum.toLocaleString()} payment request sent to ${selectedConversation.name}.`
+          ? `UGX ${amountNum.toLocaleString()} payment request sent to ${
+              selectedConversation.name
+            }.`
           : `UGX ${amountNum.toLocaleString()} has been locked from your wallet.`
       );
 
@@ -1496,80 +1608,117 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         loadMessages(selectedConversation.id);
       }
     }
-  }, [selectedConversation, user?.id, paymentAmount, paymentReason, paymentIsRequest, editingPayment, createPayment, loadMessages]);
+  }, [
+    selectedConversation,
+    user?.id,
+    paymentAmount,
+    paymentReason,
+    paymentIsRequest,
+    editingPayment,
+    createPayment,
+    loadMessages,
+  ]);
 
   // ============================================================
   // REAL-TIME SUBSCRIPTION
   // ============================================================
 
+  // ============================================================
+  // REAL-TIME SUBSCRIPTION
+  // ============================================================
+  //
+  // ✅ Fix: cannot add `postgres_changes` callbacks after `subscribe()`.
+  //
+  //    - Unique channel name per effect run so Supabase never
+  //      hands back a stale subscribed channel.
+  //    - selectedConversation read via ref, NOT via deps, so
+  //      tapping a chat doesn't re-run this effect.
+  //    - subscribe() called last, after all .on() chains.
+  //
   useEffect(() => {
     if (!user?.id || !isMounted.current) return;
 
-    const channel = supabase.channel('messages-channel');
+    const channelName = `messages-channel-${user.id}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
 
+    const channel = supabase.channel(channelName);
+
+    // ✅ Build → attach listeners → subscribe, in that order.
     channel
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${user.id}`,
-      }, () => {
-        if (isMounted.current) {
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        () => {
+          if (!isMounted.current) return;
           loadConversations();
-          if (selectedConversation?.id) {
-            loadMessages(selectedConversation.id);
-          }
+          const openId = selectedConversationIdRef.current;
+          if (openId) loadMessages(openId);
         }
-      })
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `sender_id=eq.${user.id}`,
-      }, () => {
-        if (isMounted.current) {
-          const chatId = selectedConversation?.id;
-          if (chatId && typeof chatId === 'string') {
-            loadMessages(chatId);
-          }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        () => {
+          if (!isMounted.current) return;
           loadConversations();
+          const openId = selectedConversationIdRef.current;
+          if (openId) loadMessages(openId);
         }
-      })
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'payment_requests',
-      }, () => {
-        if (isMounted.current && selectedConversation?.id) {
-          loadMessages(selectedConversation.id);
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'payment_requests',
+        },
+        () => {
+          if (!isMounted.current) return;
           loadConversations();
+          const openId = selectedConversationIdRef.current;
+          if (openId) loadMessages(openId);
         }
-      });
+      );
 
+    // ✅ subscribe() LAST.
     channel.subscribe();
-
     subscriptionRef.current = channel;
 
     return () => {
       if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
+        try {
+          subscriptionRef.current.unsubscribe();
+        } catch {
+          /* noop */
+        }
         subscriptionRef.current = null;
       }
     };
-  }, [user?.id, selectedConversation, loadConversations, loadMessages]);
-
+  }, [user?.id, loadConversations, loadMessages]);
   // ============================================================
   // EFFECTS
   // ============================================================
 
   useEffect(() => {
     isMounted.current = true;
+    loadMyProfile();
     loadConversations();
 
     return () => {
       isMounted.current = false;
     };
-  }, [loadConversations]);
+  }, [loadConversations, loadMyProfile]);
 
   useEffect(() => {
     if (selectedConversation && selectedConversation.id && isMounted.current) {
@@ -1581,18 +1730,58 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     let filtered = [...conversations];
 
     if (searchQuery) {
-      filtered = filtered.filter(c => 
-        c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.lastMessage?.toLowerCase().includes(searchQuery.toLowerCase())
+      filtered = filtered.filter(
+        (c) =>
+          c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.lastMessage?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
     if (activeFilter === 'unread') {
-      filtered = filtered.filter(c => c.unread > 0);
+      filtered = filtered.filter((c) => c.unread > 0);
     }
 
     setFilteredConversations(filtered);
   }, [searchQuery, activeFilter, conversations]);
+
+  // ============================================================
+  // ✅ ROUTE-PARAM CONSUMPTION EFFECTS
+  // ============================================================
+  // Two effects work together:
+  //
+  //  1. When the incoming directUserId changes to a NEW user we haven't
+  //     consumed yet, reset the "already opened" flag so it can open.
+  //
+  //  2. Once the conversation list has loaded at least once, consume the
+  //     route param exactly once via openDirectChatIfNeeded. That function
+  //     is itself guarded by consumedDirectUserIdRef, so back-navigation
+  //     (which does not change the route param) will not re-open the chat.
+  // ============================================================
+
+  // (1) New target user → allow opening again
+  useEffect(() => {
+    if (!directUserId) return;
+    if (consumedDirectUserIdRef.current === directUserId) return;
+
+    // New target — clear the belt-and-braces flag so the effect below can proceed
+    setHasOpenedDirectChat(false);
+  }, [directUserId]);
+
+  // (2) Consume the route param exactly once per navigation
+  useEffect(() => {
+    if (!directUserId || !user?.id) return;
+    if (directUserId === user.id) return;
+    if (consumedDirectUserIdRef.current === directUserId) return;
+    if (loading) return; // wait until the conversation list has loaded
+
+    openDirectChatIfNeeded(conversations);
+  }, [
+    directUserId,
+    user?.id,
+    loading,
+    conversations,
+    openDirectChatIfNeeded,
+  ]);
 
   // ============================================================
   // RENDER FUNCTIONS
@@ -1601,125 +1790,150 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const renderChatView = () => {
     if (!selectedConversation) return null;
 
+    const headerAvatarSource = getAvatarSource(
+      partnerProfile?.name || selectedConversation.name,
+      partnerProfile?.avatarUrl ?? selectedConversation.avatarUrl
+    );
+
     return (
-      <View style={isDesktop ? styles.desktopChatContainer : styles.chatContainerFull}>
-        <View style={styles.chatHeader}>
-          <TouchableOpacity onPress={() => {
-            setShowChat(false);
-            setSelectedConversation(null);
-            setMessages([]);
-            loadConversations();
-          }}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <View style={styles.chatHeaderInfo}>
-            <Text style={styles.chatHeaderTitle}>{selectedConversation.name}</Text>
-            <Text style={styles.chatHeaderStatus}>Online</Text>
-          </View>
-          <TouchableOpacity style={styles.chatHeaderIcon}>
-            <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
-          contentContainerStyle={styles.messagesList}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-          renderItem={({ item }) => (
-            <MessageBubble 
-              message={item} 
-              isMe={item.sender_id === user?.id}
-              currentUserId={user?.id}
-              onPaymentAccept={handleAcceptPayment}
-              onPaymentPay={handlePayNow}
-              onPaymentCancel={handleCancelPayment}
-              onPaymentEdit={handleEditPayment}
-              onPaymentReject={handleRejectPayment}
-              onPaymentView={handleViewInPay}
-            />
-          )}
-          ListEmptyComponent={
-            <View style={styles.emptyChatContainer}>
-              <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
-              <Text style={styles.emptyChatTitle}>No messages yet</Text>
-              <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
-            </View>
-          }
-        />
-
-        <View style={styles.chatInputContainer}>
-          <View style={styles.chatInputRow}>
-            <TouchableOpacity style={styles.attachButton}>
-              <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
-            </TouchableOpacity>
-
-            <TextInput
-              style={styles.chatInput}
-              placeholder="Type a message..."
-              placeholderTextColor="#8A8AAE"
-              value={newMessage}
-              onChangeText={setNewMessage}
-              multiline
-            />
-
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <View style={isDesktop ? styles.desktopChatContainer : styles.chatContainerFull}>
+          <View style={styles.chatHeader}>
             <TouchableOpacity
-              style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-              onPress={sendMessage}
-              disabled={!newMessage.trim()}
+              onPress={closeChat}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Ionicons name="send" size={20} color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'} />
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <Image source={headerAvatarSource} style={styles.chatHeaderAvatar} />
+
+            <View style={styles.chatHeaderInfo}>
+              <Text style={styles.chatHeaderTitle}>
+                {partnerProfile?.name || selectedConversation.name}
+              </Text>
+              <Text style={styles.chatHeaderStatus}>Online</Text>
+            </View>
+            <TouchableOpacity style={styles.chatHeaderIcon}>
+              <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.paymentButtonsRow}>
-            <TouchableOpacity 
-              style={styles.paymentChatButton}
-              onPress={() => {
-                setPaymentIsRequest(false);
-                setPaymentAmount('');
-                setPaymentReason('');
-                setEditingPayment(null);
-                setShowPaymentModal(true);
-              }}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={['#4A7DFF', '#6B94FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.paymentChatGradient}
-              >
-                <Ionicons name="send-outline" size={14} color="#FFFFFF" />
-                <Text style={styles.paymentChatButtonText}>Pay Now</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+            contentContainerStyle={styles.messagesList}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            renderItem={({ item }) => (
+              <MessageBubble
+                message={item}
+                isMe={item.sender_id === user?.id}
+                currentUserId={user?.id}
+                partnerName={partnerProfile?.name || selectedConversation.name}
+                partnerAvatarUrl={
+                  partnerProfile?.avatarUrl ?? selectedConversation.avatarUrl ?? null
+                }
+                myName={myProfile?.name || user?.full_name || 'Me'}
+                myAvatarUrl={myProfile?.avatarUrl || null}
+                onPaymentAccept={handleAcceptPayment}
+                onPaymentPay={handlePayNow}
+                onPaymentCancel={handleCancelPayment}
+                onPaymentEdit={handleEditPayment}
+                onPaymentReject={handleRejectPayment}
+                onPaymentView={handleViewInPay}
+              />
+            )}
+            ListEmptyComponent={
+              <View style={styles.emptyChatContainer}>
+                <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
+                <Text style={styles.emptyChatTitle}>No messages yet</Text>
+                <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
+              </View>
+            }
+          />
 
-            <TouchableOpacity 
-              style={[styles.paymentChatButton, styles.requestPaymentChatButton]}
-              onPress={() => {
-                setPaymentIsRequest(true);
-                setPaymentAmount('');
-                setPaymentReason('');
-                setEditingPayment(null);
-                setShowPaymentModal(true);
-              }}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={['#F1C40F', '#F39C12']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.paymentChatGradient}
+          <View style={styles.chatInputContainer}>
+            <View style={styles.chatInputRow}>
+              <TouchableOpacity style={styles.attachButton}>
+                <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
+              </TouchableOpacity>
+
+              <TextInput
+                style={styles.chatInput}
+                placeholder="Type a message..."
+                placeholderTextColor="#8A8AAE"
+                value={newMessage}
+                onChangeText={setNewMessage}
+                multiline
+              />
+
+              <TouchableOpacity
+                style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+                onPress={sendMessage}
+                disabled={!newMessage.trim()}
               >
-                <Ionicons name="cash-outline" size={14} color="#FFFFFF" />
-                <Text style={styles.paymentChatButtonText}>Request</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <Ionicons
+                  name="send"
+                  size={20}
+                  color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.paymentButtonsRow}>
+              <TouchableOpacity
+                style={styles.paymentChatButton}
+                onPress={() => {
+                  setPaymentIsRequest(false);
+                  setPaymentAmount('');
+                  setPaymentReason('');
+                  setEditingPayment(null);
+                  setShowPaymentModal(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <LinearGradient
+                  colors={['#4A7DFF', '#6B94FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.paymentChatGradient}
+                >
+                  <Ionicons name="send-outline" size={14} color="#FFFFFF" />
+                  <Text style={styles.paymentChatButtonText}>Pay Now</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.paymentChatButton, styles.requestPaymentChatButton]}
+                onPress={() => {
+                  setPaymentIsRequest(true);
+                  setPaymentAmount('');
+                  setPaymentReason('');
+                  setEditingPayment(null);
+                  setShowPaymentModal(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <LinearGradient
+                  colors={['#F1C40F', '#F39C12']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.paymentChatGradient}
+                >
+                  <Ionicons name="cash-outline" size={14} color="#FFFFFF" />
+                  <Text style={styles.paymentChatButtonText}>Request</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     );
   };
 
@@ -1735,9 +1949,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         setEditingPayment(null);
       }}
     >
-      <View style={styles.modalOverlay}>
-        <TouchableOpacity 
-          style={styles.modalBackdrop} 
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
           activeOpacity={1}
           onPress={() => {
             setShowPaymentModal(false);
@@ -1749,19 +1967,31 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {editingPayment ? 'Edit Payment Request' : paymentIsRequest ? 'Request Payment' : 'Pay Now'}
+              {editingPayment
+                ? editingPayment.is_request
+                  ? 'Edit Payment Request'
+                  : 'Edit Payment'
+                : paymentIsRequest
+                ? 'Request Payment'
+                : 'Pay Now'}
             </Text>
-            <TouchableOpacity onPress={() => {
-              setShowPaymentModal(false);
-              setPaymentAmount('');
-              setPaymentReason('');
-              setEditingPayment(null);
-            }}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowPaymentModal(false);
+                setPaymentAmount('');
+                setPaymentReason('');
+                setEditingPayment(null);
+              }}
+            >
               <Ionicons name="close" size={24} color="#8A8AAE" />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.modalBody}>
+          <ScrollView
+            style={styles.modalBody}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalLabel}>Amount (UGX) *</Text>
             <TextInput
               style={styles.modalInput}
@@ -1784,12 +2014,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             />
 
             <Text style={styles.modalHelperText}>
-              {editingPayment 
-                ? `✏️ Editing payment request to ${selectedConversation?.name}`
-                : paymentIsRequest 
-                  ? `💰 You are requesting payment from ${selectedConversation?.name}`
-                  : `💳 You are sending payment to ${selectedConversation?.name}`
-              }
+              {editingPayment
+                ? editingPayment.is_request
+                  ? `✏️ Editing payment request to ${selectedConversation?.name}`
+                  : `✏️ Editing payment to ${selectedConversation?.name}`
+                : paymentIsRequest
+                ? `💰 You are requesting payment from ${selectedConversation?.name}`
+                : `💳 You are sending payment to ${selectedConversation?.name}`}
               {'\n\n'}⚠️ Funds will be locked when the recipient accepts.
             </Text>
 
@@ -1799,24 +2030,44 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={editingPayment ? ['#F39C12', '#E67E22'] : paymentIsRequest ? ['#F1C40F', '#F39C12'] : ['#4A7DFF', '#6B94FF']}
+                colors={
+                  editingPayment
+                    ? ['#F39C12', '#E67E22']
+                    : paymentIsRequest
+                    ? ['#F1C40F', '#F39C12']
+                    : ['#4A7DFF', '#6B94FF']
+                }
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.modalSendGradient}
               >
-                <Ionicons 
-                  name={editingPayment ? 'pencil-outline' : paymentIsRequest ? 'cash-outline' : 'send-outline'} 
-                  size={20} 
-                  color="#FFFFFF" 
+                <Ionicons
+                  name={
+                    editingPayment
+                      ? 'pencil-outline'
+                      : paymentIsRequest
+                      ? 'cash-outline'
+                      : 'send-outline'
+                  }
+                  size={20}
+                  color="#FFFFFF"
                 />
                 <Text style={styles.modalSendText}>
-                  {editingPayment ? 'Update Request' : paymentIsRequest ? 'Send Request' : 'Send Payment'}
+                  {editingPayment
+                    ? editingPayment.is_request
+                      ? 'Update Request'
+                      : 'Update Payment'
+                    : paymentIsRequest
+                    ? 'Send Request'
+                    : 'Send Payment'}
                 </Text>
               </LinearGradient>
             </TouchableOpacity>
-          </View>
+
+            <View style={{ height: 24 }} />
+          </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 
@@ -1832,7 +2083,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     return (
       <View style={styles.desktopContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
-        
+
         <View style={styles.desktopHeader}>
           <Text style={styles.desktopHeaderTitle}>Inbox</Text>
           <Text style={styles.desktopHeaderSubtitle}>Your conversations and updates</Text>
@@ -1861,9 +2112,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 { key: 'all', label: 'All' },
                 { key: 'unread', label: 'Unread' },
               ].map((filter) => {
-                const count = filter.key === 'all'
-                  ? conversations.filter(c => c.unread > 0).length
-                  : conversations.filter(c => c.unread > 0).length;
+                const count = conversations.filter((c) => c.unread > 0).length;
 
                 return (
                   <TouchableOpacity
@@ -1905,17 +2154,17 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                     item={item}
                     onPress={handleConversationPress}
                     onLongPress={(convo: Conversation) => {
-                      Alert.alert(
-                        convo.name,
-                        'Choose an action',
-                        [
-                          { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
-                          { text: 'Mute', onPress: () => console.log('Mute') },
-                          { text: 'Archive', onPress: () => console.log('Archive') },
-                          { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
-                          { text: 'Cancel', style: 'cancel' },
-                        ]
-                      );
+                      Alert.alert(convo.name, 'Choose an action', [
+                        { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
+                        { text: 'Mute', onPress: () => console.log('Mute') },
+                        { text: 'Archive', onPress: () => console.log('Archive') },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => console.log('Delete'),
+                        },
+                        { text: 'Cancel', style: 'cancel' },
+                      ]);
                     }}
                   />
                 )}
@@ -1926,7 +2175,9 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyIcon}>💬</Text>
                     <Text style={styles.emptyTitle}>No conversations</Text>
-                    <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
+                    <Text style={styles.emptySubtext}>
+                      Your messages and updates will appear here
+                    </Text>
                   </View>
                 }
               />
@@ -1934,11 +2185,15 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
           </View>
 
           <View style={styles.desktopRightColumn}>
-            {selectedConversation ? renderChatView() : (
+            {selectedConversation ? (
+              renderChatView()
+            ) : (
               <View style={styles.desktopEmptyChat}>
                 <Text style={styles.desktopEmptyChatIcon}>💬</Text>
                 <Text style={styles.desktopEmptyChatTitle}>Select a conversation</Text>
-                <Text style={styles.desktopEmptyChatSubtext}>Choose a conversation from the list to start chatting</Text>
+                <Text style={styles.desktopEmptyChatSubtext}>
+                  Choose a conversation from the list to start chatting
+                </Text>
               </View>
             )}
           </View>
@@ -1957,8 +2212,15 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       <View style={styles.mobileHeader}>
         <Text style={styles.mobileHeaderTitle}>Inbox</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerIcon} onPress={() => setShowSearch(!showSearch)}>
-            <Ionicons name={showSearch ? 'close-outline' : 'search-outline'} size={22} color="#FFFFFF" />
+          <TouchableOpacity
+            style={styles.headerIcon}
+            onPress={() => setShowSearch(!showSearch)}
+          >
+            <Ionicons
+              name={showSearch ? 'close-outline' : 'search-outline'}
+              size={22}
+              color="#FFFFFF"
+            />
           </TouchableOpacity>
           <TouchableOpacity style={styles.headerIcon}>
             <Ionicons name="options-outline" size={22} color="#FFFFFF" />
@@ -1993,9 +2255,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             { key: 'all', label: 'All' },
             { key: 'unread', label: 'Unread' },
           ].map((filter) => {
-            const count = filter.key === 'all'
-              ? conversations.filter(c => c.unread > 0).length
-              : conversations.filter(c => c.unread > 0).length;
+            const count = conversations.filter((c) => c.unread > 0).length;
 
             return (
               <TouchableOpacity
@@ -2043,17 +2303,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 item={item}
                 onPress={handleConversationPress}
                 onLongPress={(convo: Conversation) => {
-                  Alert.alert(
-                    convo.name,
-                    'Choose an action',
-                    [
-                      { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
-                      { text: 'Mute', onPress: () => console.log('Mute') },
-                      { text: 'Archive', onPress: () => console.log('Archive') },
-                      { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
-                      { text: 'Cancel', style: 'cancel' },
-                    ]
-                  );
+                  Alert.alert(convo.name, 'Choose an action', [
+                    { text: 'Mark as Read', onPress: () => console.log('Mark as read') },
+                    { text: 'Mute', onPress: () => console.log('Mute') },
+                    { text: 'Archive', onPress: () => console.log('Archive') },
+                    { text: 'Delete', style: 'destructive', onPress: () => console.log('Delete') },
+                    { text: 'Cancel', style: 'cancel' },
+                  ]);
                 }}
               />
             )}
@@ -2070,14 +2326,9 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         visible={showChat}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => {
-          setShowChat(false);
-          setSelectedConversation(null);
-          setMessages([]);
-          loadConversations();
-        }}
+        onRequestClose={closeChat}
       >
-        <SafeAreaView style={styles.chatContainer}>
+        <SafeAreaView style={styles.chatContainer} edges={['top']}>
           {renderChatView()}
         </SafeAreaView>
       </Modal>
@@ -2095,8 +2346,8 @@ export const InboxScreen = ({ navigation, route }: any) => {
   const { isDesktop } = useBreakpoint();
 
   return (
-    <ResponsiveLayout 
-      currentRoute="Inbox" 
+    <ResponsiveLayout
+      currentRoute="Inbox"
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
@@ -2370,6 +2621,12 @@ const styles = StyleSheet.create({
     position: 'relative',
     marginRight: 12,
   },
+  avatarImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+  },
   avatarCircle: {
     width: 48,
     height: 48,
@@ -2452,9 +2709,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
+  chatHeaderAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginLeft: 12,
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+  },
   chatHeaderInfo: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: 10,
   },
   chatHeaderTitle: {
     color: '#FFFFFF',
@@ -2489,10 +2753,8 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#4A7DFF',
-    justifyContent: 'center',
-    alignItems: 'center',
     marginRight: 6,
+    backgroundColor: 'rgba(74, 125, 255, 0.15)',
   },
   messageAvatarText: {
     color: '#FFFFFF',
@@ -2623,24 +2885,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  paymentCardAccept: {
-    flex: 1,
-  },
-  paymentCardPay: {
-    flex: 1,
-  },
-  paymentCardCancel: {
-    flex: 1,
-  },
-  paymentCardEdit: {
-    flex: 1,
-  },
-  paymentCardReject: {
-    flex: 1,
-  },
-  paymentCardConfirm: {
-    flex: 1,
-  },
+  paymentCardAccept: { flex: 1 },
+  paymentCardPay: { flex: 1 },
+  paymentCardCancel: { flex: 1 },
+  paymentCardEdit: { flex: 1 },
+  paymentCardReject: { flex: 1 },
+  paymentCardConfirm: { flex: 1 },
   paymentCardView: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2745,7 +2995,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalBackdrop: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
@@ -2753,7 +3007,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
-    maxHeight: height * 0.8,
+    maxHeight: height * 0.85,
   },
   modalHeader: {
     flexDirection: 'row',

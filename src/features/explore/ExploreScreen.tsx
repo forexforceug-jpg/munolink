@@ -1,6 +1,12 @@
 // src/features/explore/ExploreScreen.tsx
 
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+} from 'react';
 import {
   View,
   Text,
@@ -18,6 +24,8 @@ import {
   Modal,
   Platform,
   ListRenderItem,
+  ViewToken,
+  ViewabilityConfig,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,14 +39,24 @@ import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
-import { Opportunity } from '../../services/feed.service';
+import {
+  feedService,
+  Opportunity,
+  calculateDistance,
+} from '../../services/feed.service';
+import { locationService } from '../../services/location.service';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
+import { useIsFocused } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
 
-// --- Types ---
+const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
+  itemVisiblePercentThreshold: 60,
+  minimumViewTime: 100,
+};
+
 interface ExplorePost {
   id: string;
   user_id: string;
@@ -72,9 +90,13 @@ interface ExplorePost {
   imageUrl: string;
   catalogImages: string[];
   user_cover_url?: string | null;
+  distance?: number;
+  saveCount?: number;
+  isSaved?: boolean;
+  specifications?: any;
+  price_type?: string | null;
 }
 
-// --- Filter Categories ---
 const DEFAULT_CATEGORIES = [
   { key: 'all', label: 'All' },
   { key: 'products', label: 'Products' },
@@ -96,22 +118,15 @@ const sortOptions = [
   { key: 'popular', label: 'Most Popular' },
 ];
 
-// ============================================================
-// PRICE BADGE HELPER
-// ============================================================
-
-
-// ============================================================
-// SUB-COMPONENTS
-// ============================================================
-
 const FilterChip = ({ label, selected, onPress, count }: any) => (
   <TouchableOpacity
     style={[styles.filterChip, selected && styles.filterChipActive]}
     onPress={onPress}
     activeOpacity={0.7}
   >
-    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+    <Text
+      style={[styles.filterChipText, selected && styles.filterChipTextActive]}
+    >
       {label}
     </Text>
     {count !== undefined && count > 0 && (
@@ -122,84 +137,311 @@ const FilterChip = ({ label, selected, onPress, count }: any) => (
   </TouchableOpacity>
 );
 
-// ============================================================
-// GRID RESULT CARD - WITH PRICE BADGE
-// ============================================================
-const GridResultCard = React.memo(({ item, onPress }: { item: ExplorePost; onPress: (item: ExplorePost) => void }) => {
-  // Get thumbnail
-  let imageUrl = '';
-  if (item.images && item.images.length > 0) {
-    imageUrl = item.images[0];
-  } else if (item.video_thumbnail) {
-    imageUrl = item.video_thumbnail;
-  } else if (item.user_cover_url) {
-    imageUrl = item.user_cover_url;
-  } else if (item.user_avatar) {
-    imageUrl = item.user_avatar;
-  }
-  
-  const displayName = item.user_full_name || 'User';
-  const hasVideo = !!item.video;
-  const hasPrice = item.price !== undefined && item.price !== null && item.price > 0;
+const GridResultCard = React.memo(
+  ({
+    item,
+    onPress,
+  }: {
+    item: ExplorePost;
+    onPress: (item: ExplorePost) => void;
+  }) => {
+    let imageUrl = '';
+    if (item.images && item.images.length > 0) {
+      imageUrl = item.images[0];
+    } else if (item.video_thumbnail) {
+      imageUrl = item.video_thumbnail;
+    } else if (item.user_cover_url) {
+      imageUrl = item.user_cover_url;
+    } else if (item.user_avatar) {
+      imageUrl = item.user_avatar;
+    }
 
-  return (
-    <TouchableOpacity 
-      style={styles.gridCard} 
-      onPress={() => onPress(item)}
-      activeOpacity={0.8}
-    >
-      {imageUrl ? (
-        <Image 
-          source={{ uri: imageUrl }} 
-          style={styles.gridImage}
-          resizeMode="cover"
-        />
-      ) : (
-        <View style={[styles.gridImage, styles.gridImagePlaceholder]}>
-          <Ionicons name="image-outline" size={40} color="#4A7DFF" />
-        </View>
-      )}
-      
-      {hasVideo && (
-        <View style={styles.videoBadge}>
-          <Ionicons name="play-circle" size={24} color="#FFFFFF" />
-        </View>
-      )}
-      
-      
-      <View style={styles.gridOverlay}>
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.85)']}
-          style={styles.gridGradient}
-        />
-        <View style={styles.gridInfo}>
-          <Text style={styles.gridTitle} numberOfLines={1}>{item.name || 'Post'}</Text>
-          
-          {/* ✅ Show price if it exists */}
-          {hasPrice && (
-            <Text style={styles.gridPrice}>UGX {item.price!.toLocaleString()}</Text>
-          )}
-          
-          <View style={styles.gridFooter}>
-            <Text style={styles.gridShop} numberOfLines={1}>{displayName}</Text>
-            {item.like_count && item.like_count > 0 && (
-              <Text style={styles.gridRating}>❤️ {item.like_count}</Text>
+    const displayName = item.user_full_name || 'User';
+    const hasVideo = !!item.video;
+    const hasPrice =
+      item.price !== undefined && item.price !== null && item.price > 0;
+
+    return (
+      <TouchableOpacity
+        style={styles.gridCard}
+        onPress={() => onPress(item)}
+        activeOpacity={0.8}
+      >
+        {imageUrl ? (
+          <Image
+            source={{ uri: imageUrl }}
+            style={styles.gridImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.gridImage, styles.gridImagePlaceholder]}>
+            <Ionicons name="image-outline" size={40} color="#4A7DFF" />
+          </View>
+        )}
+
+        {hasVideo && (
+          <View style={styles.videoBadge}>
+            <Ionicons name="play-circle" size={24} color="#FFFFFF" />
+          </View>
+        )}
+
+        <View style={styles.gridOverlay}>
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.85)']}
+            style={styles.gridGradient}
+          />
+          <View style={styles.gridInfo}>
+            <Text style={styles.gridTitle} numberOfLines={1}>
+              {item.name || 'Post'}
+            </Text>
+
+            {hasPrice && (
+              <Text style={styles.gridPrice}>
+                UGX {item.price!.toLocaleString()}
+              </Text>
             )}
+
+            <View style={styles.gridFooter}>
+              <Text style={styles.gridShop} numberOfLines={1}>
+                {displayName}
+              </Text>
+              {item.like_count && item.like_count > 0 && (
+                <Text style={styles.gridRating}>❤️ {item.like_count}</Text>
+              )}
+            </View>
           </View>
         </View>
-      </View>
-    </TouchableOpacity>
-  );
-});
+      </TouchableOpacity>
+    );
+  }
+);
 
-// ============================================================
-// MAIN EXPLORE CONTENT
-// ============================================================
+function buildOpportunityFromPost(
+  item: ExplorePost,
+  isSaved: boolean
+): Opportunity {
+  return {
+    id: item.id,
+    title: item.name || 'Untitled',
+    price: item.price || 0,
+    currency: item.currency || 'UGX',
+    imageUrl:
+      item.images?.[0] ||
+      item.video_thumbnail ||
+      item.user_cover_url ||
+      '',
+    catalogImages: item.images || [],
+    description: item.description || '',
+    rating: null,
+    reviewCount: item.comment_count || 0,
+    userLatitude: null,
+    userLongitude: null,
+    userPhone: null,
+    area: item.location || null,
+    inStock: true,
+    category: item.category || item.detected_category || null,
+    type: 'product',
+    createdAt: item.created_at,
+    userId: item.user_id,
+    userFullName: item.user_full_name || 'User',
+    userAvatar: item.user_avatar || null,
+    video: item.video || null,
+    video_thumbnail: item.video_thumbnail || null,
+    video_duration: item.video_duration || null,
+    video_size: item.video_size || null,
+    likeCount: item.like_count || 0,
+    viewCount: item.view_count || 0,
+    shareCount: item.share_count || 0,
+    commentCount: item.comment_count || 0,
+    saveCount: item.saveCount || 0,
+    isSaved,
+    distance: item.distance,
+    specifications: item.specifications || {},
+  };
+}
+
+const ItemMediaLoadingSpinner: React.FC = () => {
+  return (
+    <View style={styles.itemMediaSpinnerOverlay} pointerEvents="none">
+      <ActivityIndicator size="large" color="#FFFFFF" />
+    </View>
+  );
+};
+
+interface FullscreenItemProps {
+  item: ExplorePost;
+  index: number;
+  fullscreenIndex: number;
+  isFocused: boolean;
+  isDesktop: boolean;
+  winWidth: number;
+  winHeight: number;
+  isSaved: boolean;
+  isLiked: boolean;
+  likeCount: number;
+  isItemLoading: boolean;
+  onShowMore: (item: ExplorePost) => void;
+  onShare: () => void;
+  onSave: (item: ExplorePost) => void;
+  onLike: (item: ExplorePost) => void;
+  onInbox: (item: ExplorePost) => void;
+  onMediaLoadStateChange: (isLoading: boolean) => void;
+  onUserPress: (item: ExplorePost) => void;
+  onReviewsPress: (item: ExplorePost) => void;
+  onDirectionsPress: (item: ExplorePost) => void;
+  onAIPress: (item: ExplorePost) => void;
+}
+
+const FullscreenItem: React.FC<FullscreenItemProps> = ({
+  item,
+  index,
+  fullscreenIndex,
+  isFocused,
+  isDesktop,
+  winWidth,
+  winHeight,
+  isSaved,
+  isLiked,
+  likeCount,
+  isItemLoading,
+  onShowMore,
+  onShare,
+  onSave,
+  onLike,
+  onInbox,
+  onMediaLoadStateChange,
+  onUserPress,
+  onReviewsPress,
+  onDirectionsPress,
+  onAIPress,
+}) => {
+  const opportunity = buildOpportunityFromPost(item, isSaved);
+
+  const mediaItems: {
+    type: 'image' | 'video';
+    url: string;
+    thumbnail?: string;
+  }[] = [];
+
+  const thumbnail =
+    item.video_thumbnail ||
+    item.images?.[0] ||
+    item.user_cover_url ||
+    item.user_avatar ||
+    undefined;
+
+  if (item.video) {
+    mediaItems.push({
+      type: 'video',
+      url: item.video,
+      thumbnail,
+    });
+  }
+
+  if (item.images && item.images.length > 0) {
+    for (const img of item.images) {
+      if (mediaItems.some((m) => m.url === img)) continue;
+      mediaItems.push({ type: 'image', url: img });
+    }
+  }
+
+  if (mediaItems.length === 0) {
+    const placeholderText = encodeURIComponent(item.name || 'Post');
+    mediaItems.push({
+      type: 'image',
+      url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(
+        0,
+        20
+      )}`,
+    });
+  }
+
+  const displayName = item.user_full_name || 'User';
+  const cardWidth = isDesktop ? 420 : winWidth;
+  const cardHeight = isDesktop ? winHeight : winHeight;
+
+  const isVisible = isFocused && index === fullscreenIndex;
+
+  return (
+    <View
+      style={{
+        height: cardHeight,
+        width: cardWidth,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+      }}
+    >
+      <SceneRenderer
+        key={item.id}
+        media={mediaItems}
+        title={item.name || 'Post'}
+        price={item.price || 0}
+        currency={item.currency || 'UGX'}
+        userName={displayName}
+        userAvatar={item.user_avatar || null}
+        description={item.description || null}
+        rating={null}
+        area={item.location || null}
+        inStock={true}
+        type="product"
+        createdAt={item.created_at}
+        isDesktop={isDesktop}
+        width={cardWidth}
+        height={cardHeight}
+        onShowMore={() => onShowMore(item)}
+        onShare={onShare}
+        onSave={() => onSave(item)}
+        onPrimaryAction={() => onInbox(item)}
+        onInboxPress={() => onInbox(item)}
+        showInboxButton={true}
+        onMediaLoadStateChange={onMediaLoadStateChange}
+        onSceneChange={(sceneIdx, source) => {
+          if (__DEV__) console.log('Scene changed:', sceneIdx, source);
+        }}
+        onBehavioralEvent={(event) => {
+          if (__DEV__) console.log('Behavioral event:', event);
+        }}
+        autoPlay={true}
+        autoPlayInterval={5000}
+        priceType={item.price_type as any}
+        resetKey={item.id}
+        bottomOffset={0}
+        isVisible={isVisible}
+      />
+
+      {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
+
+      <View style={styles.actionRailWrapper}>
+        <FloatingActionRail
+          key={`rail-${item.id}`}
+          opportunity={opportunity}
+          isLiked={isLiked}
+          likeCount={likeCount}
+          onLikePress={() => onLike(item)}
+          onUserPress={() => onUserPress(item)}
+          onReviewsPress={() => onReviewsPress(item)}
+          onDirectionsPress={() => onDirectionsPress(item)}
+          onSharePress={onShare}
+          onAIPress={() => onAIPress(item)}
+          onSavePress={() => onSave(item)}
+          isSaved={isSaved}
+          savedCount={item.saveCount || 0}
+          shareCount={item.share_count || 0}
+          reviewCount={item.comment_count || 0}
+          distance={item.distance || 0}
+          userAvatar={item.user_avatar || null}
+        />
+      </View>
+    </View>
+  );
+};
 
 const ExploreContent = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
-  const { height, width } = useWindowDimensions();
+  const isFocused = useIsFocused();
+  const { height: winHeight, width: winWidth } = useWindowDimensions();
 
   const [items, setItems] = useState<ExplorePost[]>([]);
   const [filteredItems, setFilteredItems] = useState<ExplorePost[]>([]);
@@ -210,137 +452,106 @@ const ExploreContent = ({ navigation }: any) => {
   const [showSortModal, setShowSortModal] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<ExplorePost | null>(null);
-  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>(
+    {}
+  );
+
+  // ✅ Likes
+  const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
+
+  const [categories] = useState(DEFAULT_CATEGORIES);
   const [showSearch, setShowSearch] = useState(false);
-  
-  // Modal states
-  const [selectedOpportunity, setSelectedOpportunity] = useState<ExplorePost | null>(null);
+
+  const [loadingItemsMap, setLoadingItemsMap] = useState<
+    Record<string, boolean>
+  >({});
+
+  const [fullscreenIndex, setFullscreenIndex] = useState(0);
+
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState<Opportunity | null>(null);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
   const searchInputRef = useRef<TextInput>(null);
-  
-  // Animated value for scroll
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  // ============================================================
-  // FETCH DATA - FROM CATALOG WITH USER INFO INCLUDING COVER
-  // ============================================================
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { data: catalogPosts, error: catalogError } = await supabase
-        .from('catalog')
-        .select('*')
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (catalogError) {
-        console.error('❌ Error fetching catalog posts:', catalogError);
-        setIsLoading(false);
-        return;
+      let userCoords: { latitude: number; longitude: number } | undefined;
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch (err) {
+        console.log('⚠️ Could not get location for explore distances:', err);
       }
 
-      if (!catalogPosts || catalogPosts.length === 0) {
+      const opportunities: Opportunity[] = await feedService.getOpportunities(
+        userCoords
+      );
+
+      if (!opportunities || opportunities.length === 0) {
         setItems([]);
         setFilteredItems([]);
         setIsLoading(false);
         return;
       }
 
-      console.log(`✅ Found ${catalogPosts.length} posts in catalog`);
-
-      // Get user info including cover_url
-      const userIds = catalogPosts
-        .map(post => post.user_id)
-        .filter((id): id is string => id !== null && id !== undefined && id !== '');
-
-      let userMap: Record<string, { 
-        full_name: string | null; 
-        avatar_url: string | null;
-        cover_url: string | null;
-      }> = {};
-
-      if (userIds.length > 0) {
-        const { data: users, error: usersError } = await supabase
-          .from('users')
-          .select('id, full_name, avatar_url, cover_url')
-          .in('id', userIds);
-
-        if (usersError) {
-          console.error('❌ Error fetching users:', usersError);
-        } else if (users) {
-          users.forEach((user: any) => {
-            userMap[user.id] = {
-              full_name: user.full_name,
-              avatar_url: user.avatar_url,
-              cover_url: user.cover_url,
-            };
-          });
-          console.log(`👤 Found ${Object.keys(userMap).length} users`);
-        }
-      }
-
-      // Build ExplorePost objects
-      const posts: ExplorePost[] = catalogPosts.map((post: any) => {
-        const userInfo = post.user_id ? userMap[post.user_id] : null;
-        const images = post.images || [];
-        
-        const videoUrl = post.video || null;
-        const videoThumbnail = post.video_thumbnail || null;
-        
-        // ✅ FIX: Get price from specifications if price column is null
-        let price = post.price || null;
-        if (!price && post.specifications && typeof post.specifications === 'object') {
-          const specPrice = post.specifications.price || post.specifications.regular_price || null;
-          if (specPrice) {
-            price = typeof specPrice === 'number' ? specPrice : parseFloat(String(specPrice));
-          }
-        }
-        
-        const finalThumbnail = videoThumbnail || (images.length > 0 ? images[0] : null);
+      const posts: ExplorePost[] = opportunities.map((opp) => {
+        const images = opp.catalogImages || [];
 
         return {
-          id: post.id,
-          user_id: post.user_id || '',
-          name: post.name || 'Untitled',
-          description: post.description || null,
-          price: price,
-          currency: 'UGX',
+          id: opp.id,
+          user_id: opp.userId || '',
+          name: opp.title || 'Untitled',
+          description: opp.description || null,
+          price: opp.price ?? null,
+          currency: opp.currency || 'UGX',
           images: images,
-          video: videoUrl,
-          video_thumbnail: finalThumbnail,
-          video_duration: post.video_duration || null,
-          video_size: post.video_size || null,
-          hashtags: post.tags || [],
-          location: post.location || null,
-          category: post.category || null,
-          status: post.status || 'active',
-          like_count: post.like_count || 0,
-          view_count: post.view_count || 0,
-          share_count: post.share_count || 0,
-          comment_count: post.comment_count || 0,
-          created_at: post.created_at || new Date().toISOString(),
-          updated_at: post.updated_at || new Date().toISOString(),
-          user_full_name: userInfo?.full_name || 'User',
-          user_avatar: userInfo?.avatar_url || null,
-          user_cover_url: userInfo?.cover_url || null,
-          detected_category: post.detected_category || null,
-          detected_intent: post.detected_intent || null,
-          detected_tags: post.detected_tags || [],
-          userId: post.user_id || '',
-          userFullName: userInfo?.full_name || 'User',
-          userAvatar: userInfo?.avatar_url || null,
-          imageUrl: images[0] || videoThumbnail || userInfo?.cover_url || '',
+          video: opp.video || null,
+          video_thumbnail: opp.video_thumbnail || null,
+          video_duration: opp.video_duration || null,
+          video_size: opp.video_size || null,
+          hashtags: opp.hashtags || [],
+          location: opp.area || null,
+          category: opp.category || null,
+          status: 'active',
+          like_count: opp.likeCount || 0,
+          view_count: opp.viewCount || 0,
+          share_count: opp.shareCount || 0,
+          comment_count: opp.commentCount || 0,
+          created_at: opp.createdAt || new Date().toISOString(),
+          updated_at: opp.createdAt || new Date().toISOString(),
+          user_full_name: opp.userFullName || 'User',
+          user_avatar: opp.userAvatar || null,
+          detected_category: opp.category || null,
+          detected_intent: null,
+          detected_tags: opp.hashtags || [],
+          userId: opp.userId || '',
+          userFullName: opp.userFullName || 'User',
+          userAvatar: opp.userAvatar || null,
+          imageUrl: images[0] || opp.video_thumbnail || '',
           catalogImages: images,
+          user_cover_url: null,
+          distance: opp.distance,
+          saveCount: opp.saveCount || 0,
+          isSaved: opp.isSaved || false,
+          specifications: opp.specifications || {},
+                price_type:
+        (opp as any).price_type ??
+        (opp.specifications && (opp.specifications as any).price_type) ??
+        null,
         };
       });
 
-      // Shuffle for variety
       const shuffled = posts.sort(() => Math.random() - 0.5);
       setItems(shuffled);
       setFilteredItems(shuffled);
@@ -355,41 +566,46 @@ const ExploreContent = ({ navigation }: any) => {
     fetchData();
   }, [fetchData]);
 
-  // ============================================================
-  // FILTERS AND SORTING
-  // ============================================================
   const applyFilters = useCallback(() => {
     let result = [...items];
 
     if (selectedFilter !== 'all') {
       if (selectedFilter === 'products') {
-        result = result.filter(item => 
-          item.detected_intent === 'sell' || 
-          item.detected_category?.toLowerCase().includes('product')
+        result = result.filter(
+          (item) =>
+            item.detected_intent === 'sell' ||
+            item.detected_category?.toLowerCase().includes('product') ||
+            true
         );
       } else if (selectedFilter === 'services') {
-        result = result.filter(item => 
-          item.detected_intent === 'service' || 
-          item.detected_category?.toLowerCase().includes('service')
+        result = result.filter(
+          (item) =>
+            item.detected_intent === 'service' ||
+            item.detected_category?.toLowerCase().includes('service')
         );
       } else {
-        result = result.filter(item => 
-          item.category?.toLowerCase().replace(/\s+/g, '_') === selectedFilter ||
-          item.category?.toLowerCase() === selectedFilter ||
-          item.detected_category?.toLowerCase().replace(/\s+/g, '_') === selectedFilter ||
-          item.detected_category?.toLowerCase() === selectedFilter
+        result = result.filter(
+          (item) =>
+            item.category?.toLowerCase().replace(/\s+/g, '_') ===
+              selectedFilter ||
+            item.category?.toLowerCase() === selectedFilter ||
+            item.detected_category?.toLowerCase().replace(/\s+/g, '_') ===
+              selectedFilter ||
+            item.detected_category?.toLowerCase() === selectedFilter
         );
       }
     }
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
-      result = result.filter(item =>
-        item.name?.toLowerCase().includes(query) ||
-        (item.description && item.description.toLowerCase().includes(query)) ||
-        item.user_full_name?.toLowerCase().includes(query) ||
-        item.category?.toLowerCase().includes(query) ||
-        item.hashtags.some(tag => tag.toLowerCase().includes(query))
+      result = result.filter(
+        (item) =>
+          item.name?.toLowerCase().includes(query) ||
+          (item.description &&
+            item.description.toLowerCase().includes(query)) ||
+          item.user_full_name?.toLowerCase().includes(query) ||
+          item.category?.toLowerCase().includes(query) ||
+          item.hashtags.some((tag) => tag.toLowerCase().includes(query))
       );
     }
 
@@ -421,18 +637,80 @@ const ExploreContent = ({ navigation }: any) => {
     applyFilters();
   }, [applyFilters]);
 
-  // ============================================================
-  // HANDLERS
-  // ============================================================
-  const handleItemPress = useCallback((item: ExplorePost) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedItem(item);
-    setViewMode('fullscreen');
-  }, []);
+  useEffect(() => {
+    if (filteredItems.length === 0) return;
+
+    setLoadingItemsMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const post of filteredItems) {
+        if (next[post.id] === undefined) {
+          next[post.id] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredItems]);
+
+  // ✅ Prefetch likes
+  useEffect(() => {
+    if (!user?.id) return;
+    const postIds = filteredItems.map((o) => o.id);
+    if (postIds.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          // `likes` is not present in the generated Supabase database types.
+          .from('likes' as any)
+          .select('post_id')
+          .eq('user_id', user.id)
+          .in('post_id', postIds);
+
+        if (cancelled || error || !data) return;
+
+        const likedIds: Record<string, boolean> = {};
+        data.forEach((row: any) => {
+          likedIds[row.post_id] = true;
+        });
+        setLikedItemsMap((prev) => ({ ...prev, ...likedIds }));
+      } catch (e) {
+        console.warn('Failed to prefetch likes:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, filteredItems]);
+
+  const handleMediaLoadStateChange = useCallback(
+    (postId: string, isLoading: boolean) => {
+      setLoadingItemsMap((prev) => {
+        if (prev[postId] === isLoading) return prev;
+        return { ...prev, [postId]: isLoading };
+      });
+    },
+    []
+  );
+
+  const handleItemPress = useCallback(
+    (item: ExplorePost) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const idx = filteredItems.findIndex((p) => p.id === item.id);
+      setSelectedItem(item);
+      setFullscreenIndex(idx >= 0 ? idx : 0);
+      setViewMode('fullscreen');
+    },
+    [filteredItems]
+  );
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
+    setFullscreenIndex(0);
   }, []);
 
   const toggleSearch = useCallback(() => {
@@ -446,187 +724,33 @@ const ExploreContent = ({ navigation }: any) => {
     }
   }, [showSearch]);
 
-  // ============================================================
-  // FULLSCREEN RENDER
-  // ============================================================
-  const renderFullScreenItem = useCallback((item: ExplorePost) => {
-    if (!item) return null;
+  const fullscreenViewabilityRef = useRef<
+    | ((info: {
+        viewableItems: ViewToken<ExplorePost>[];
+        changed: ViewToken<ExplorePost>[];
+      }) => void)
+    | null
+  >(null);
 
-    const isSaved = savedItemsMap[item.id] || false;
-    
-    const mediaItems = [];
-    let thumbnail = item.video_thumbnail || item.images?.[0] || item.user_cover_url || item.user_avatar || undefined;
-    
-    if (item.video) {
-      mediaItems.push({ 
-        type: 'video' as const, 
-        url: item.video,
-        thumbnail: thumbnail
-      });
+  fullscreenViewabilityRef.current = (info) => {
+    const { viewableItems } = info;
+    if (!viewableItems || viewableItems.length === 0) return;
+    const first = viewableItems[0];
+    const idx = first.index;
+    if (idx == null) return;
+    if (idx === fullscreenIndex) return;
+    setFullscreenIndex(idx);
+  };
+
+  const handleFullscreenViewableItemsChanged = useRef(
+    (info: {
+      viewableItems: ViewToken<ExplorePost>[];
+      changed: ViewToken<ExplorePost>[];
+    }) => {
+      fullscreenViewabilityRef.current?.(info);
     }
-    
-    if (item.images && item.images.length > 0) {
-      for (const img of item.images) {
-        if (mediaItems.some(m => m.url === img)) continue;
-        mediaItems.push({ type: 'image' as const, url: img });
-      }
-    }
-    
-    if (mediaItems.length === 0) {
-      const placeholderText = encodeURIComponent(item.name || 'Post');
-      mediaItems.push({ 
-        type: 'image' as const, 
-        url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(0, 20)}` 
-      });
-    }
+  ).current;
 
-    const displayName = item.user_full_name || 'User';
-
-    const cardWidth = isDesktop ? 420 : width;
-    const cardHeight = isDesktop ? height : height;
-
-    const opportunity: Opportunity = {
-      id: item.id,
-      title: item.name || 'Untitled',
-      price: item.price || 0,
-      currency: item.currency || 'UGX',
-      imageUrl: item.images?.[0] || item.video_thumbnail || item.user_cover_url || '',
-      catalogImages: item.images || [],
-      description: item.description || '',
-      rating: null,
-      reviewCount: 0,
-      userLatitude: null,
-      userLongitude: null,
-      userPhone: null,
-      area: item.location || null,
-      inStock: true,
-      category: item.category || item.detected_category || null,
-      type: 'product',
-      createdAt: item.created_at,
-      userId: item.user_id,
-      userFullName: item.user_full_name || 'User',
-      userAvatar: item.user_avatar || null,
-      video: item.video || null,
-      video_thumbnail: item.video_thumbnail || null,
-      video_duration: item.video_duration || null,
-      video_size: item.video_size || null,
-      likeCount: item.like_count || 0,
-      viewCount: item.view_count || 0,
-      shareCount: item.share_count || 0,
-      commentCount: item.comment_count || 0,
-    };
-
-    return (
-      <View
-        style={{
-          height: cardHeight,
-          width: cardWidth,
-          paddingVertical: 0,
-          alignItems: 'center',
-          justifyContent: 'center',
-          position: 'relative',
-        }}
-      >
-        <SceneRenderer
-          key={item.id}
-          media={mediaItems}
-          title={item.name || 'Post'}
-          price={item.price || 0}
-          currency={item.currency || 'UGX'}
-          userName={displayName}
-          userAvatar={item.user_avatar || null}
-          description={item.description || null}
-          rating={null}
-          area={item.location || null}
-          inStock={true}
-          type="product"
-          createdAt={item.created_at}
-          isDesktop={isDesktop}
-          width={cardWidth}
-          height={cardHeight}
-          onShowMore={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setSelectedOpportunity(item);
-            setShowAIModal(true);
-          }}
-          onShare={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }}
-          onSave={() => {
-            if (!user?.id) return;
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            const currentSaved = savedItemsMap[item.id] || false;
-            const newSaved = !currentSaved;
-            setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-          }}
-          onPrimaryAction={() => {
-            navigation.navigate('Inbox', {
-              userId: item.user_id,
-              userName: item.user_full_name || 'User',
-            });
-          }}
-          onSceneChange={(index, source) => {
-            if (__DEV__) {
-              console.log('Scene changed to:', index, source);
-            }
-          }}
-          onBehavioralEvent={(event) => {
-            if (__DEV__) {
-              console.log('Behavioral event:', event);
-            }
-          }}
-          autoPlay={false}
-          autoPlayInterval={9000}
-          resetKey={item.id}
-          bottomOffset={0}
-        />
-
-        <View style={styles.actionRailWrapper}>
-          <FloatingActionRail
-            key={`rail-${item.id}`}
-            opportunity={opportunity}
-            onUserPress={() => {
-              navigation.navigate('UserProfile' as any, {
-                userId: item.user_id,
-                userName: item.user_full_name || 'User',
-              });
-            }}
-            onReviewsPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setShowReviewsModal(true);
-            }}
-            onDirectionsPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setShowDirectionsModal(true);
-            }}
-            onSharePress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-            onAIPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              setSelectedOpportunity(item);
-              setShowAIModal(true);
-            }}
-            onSavePress={() => {
-              if (!user?.id) return;
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              const currentSaved = savedItemsMap[item.id] || false;
-              const newSaved = !currentSaved;
-              setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-            }}
-            isSaved={isSaved}
-            savedCount={0}
-            shareCount={0}
-            reviewCount={0}
-          />
-        </View>
-      </View>
-    );
-  }, [isDesktop, width, height, navigation, user?.id, savedItemsMap]);
-
-  // ============================================================
-  // MODAL HANDLERS
-  // ============================================================
   const handleCloseAI = useCallback(() => {
     setShowAIModal(false);
     setSelectedOpportunity(null);
@@ -642,9 +766,61 @@ const ExploreContent = ({ navigation }: any) => {
     setSelectedOpportunity(null);
   }, []);
 
-  // ============================================================
-  // RENDER SORT MODAL
-  // ============================================================
+  // ✅ Toggle like
+  const handleLikePress = useCallback(
+    async (opportunity: Opportunity) => {
+      if (!user?.id) {
+        navigation.navigate('Join');
+        return;
+      }
+
+      const currentlyLiked = likedItemsMap[opportunity.id] || false;
+      const nextLiked = !currentlyLiked;
+
+      setLikedItemsMap((prev) => ({ ...prev, [opportunity.id]: nextLiked }));
+      setLikeCountMap((prev) => {
+        const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+        return {
+          ...prev,
+          [opportunity.id]: Math.max(0, current + (nextLiked ? 1 : -1)),
+        };
+      });
+
+      try {
+        if (nextLiked) {
+          const { error } = await (supabase as any)
+            .from('likes')
+            .insert({ user_id: user.id, post_id: opportunity.id });
+          if (error && (error as any).code !== '23505') throw error;
+        } else {
+          const { error } = await (supabase as any)
+            .from('likes')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('post_id', opportunity.id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error('Like toggle failed:', err);
+        setLikedItemsMap((prev) => ({
+          ...prev,
+          [opportunity.id]: currentlyLiked,
+        }));
+        setLikeCountMap((prev) => {
+          const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+          return {
+            ...prev,
+            [opportunity.id]: Math.max(
+              0,
+              current + (currentlyLiked ? 1 : -1)
+            ),
+          };
+        });
+      }
+    },
+    [user?.id, likedItemsMap, navigation]
+  );
+
   const renderSortModal = () => (
     <Modal
       visible={showSortModal}
@@ -653,10 +829,10 @@ const ExploreContent = ({ navigation }: any) => {
       onRequestClose={() => setShowSortModal(false)}
     >
       <View style={styles.modalOverlay}>
-        <TouchableOpacity 
-          style={styles.modalBackdrop} 
-          activeOpacity={1} 
-          onPress={() => setShowSortModal(false)} 
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowSortModal(false)}
         />
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
@@ -677,10 +853,12 @@ const ExploreContent = ({ navigation }: any) => {
                 setShowSortModal(false);
               }}
             >
-              <Text style={[
-                styles.sortOptionText,
-                selectedSort === option.key && styles.sortOptionTextActive,
-              ]}>
+              <Text
+                style={[
+                  styles.sortOptionText,
+                  selectedSort === option.key && styles.sortOptionTextActive,
+                ]}
+              >
                 {option.label}
               </Text>
               {selectedSort === option.key && (
@@ -693,16 +871,11 @@ const ExploreContent = ({ navigation }: any) => {
     </Modal>
   );
 
-  // ============================================================
-  // RENDER GRID ITEM
-  // ============================================================
-  const renderGridItem: ListRenderItem<ExplorePost> = useCallback(({ item }) => (
-    <GridResultCard item={item} onPress={handleItemPress} />
-  ), [handleItemPress]);
+  const renderGridItem: ListRenderItem<ExplorePost> = useCallback(
+    ({ item }) => <GridResultCard item={item} onPress={handleItemPress} />,
+    [handleItemPress]
+  );
 
-  // ============================================================
-  // LIST HEADER - Filters only (search is separate)
-  // ============================================================
   const ListHeader = useMemo(() => {
     return (
       <View style={styles.filterContainer}>
@@ -712,21 +885,30 @@ const ExploreContent = ({ navigation }: any) => {
           contentContainerStyle={styles.filterContent}
         >
           {categories.map((filter) => {
-            const count = filter.key === 'all' ? items.length :
-                         filter.key === 'products' ? items.filter(i => 
-                           i.detected_intent === 'sell' || 
-                           i.detected_category?.toLowerCase().includes('product')
-                         ).length :
-                         filter.key === 'services' ? items.filter(i => 
-                           i.detected_intent === 'service' || 
-                           i.detected_category?.toLowerCase().includes('service')
-                         ).length :
-                         items.filter(i => 
-                           i.category?.toLowerCase().replace(/\s+/g, '_') === filter.key || 
-                           i.category?.toLowerCase() === filter.key ||
-                           i.detected_category?.toLowerCase().replace(/\s+/g, '_') === filter.key ||
-                           i.detected_category?.toLowerCase() === filter.key
-                         ).length;
+            const count =
+              filter.key === 'all'
+                ? items.length
+                : filter.key === 'products'
+                ? items.filter(
+                    (i) =>
+                      i.detected_intent === 'sell' ||
+                      i.detected_category?.toLowerCase().includes('product')
+                  ).length
+                : filter.key === 'services'
+                ? items.filter(
+                    (i) =>
+                      i.detected_intent === 'service' ||
+                      i.detected_category?.toLowerCase().includes('service')
+                  ).length
+                : items.filter(
+                    (i) =>
+                      i.category?.toLowerCase().replace(/\s+/g, '_') ===
+                        filter.key ||
+                      i.category?.toLowerCase() === filter.key ||
+                      i.detected_category?.toLowerCase().replace(/\s+/g, '_') ===
+                        filter.key ||
+                      i.detected_category?.toLowerCase() === filter.key
+                  ).length;
             return (
               <FilterChip
                 key={filter.key}
@@ -742,9 +924,6 @@ const ExploreContent = ({ navigation }: any) => {
     );
   }, [categories, selectedFilter, items]);
 
-  // ============================================================
-  // LOADING / EMPTY STATES
-  // ============================================================
   if (isLoading) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]} edges={['top']}>
@@ -755,12 +934,11 @@ const ExploreContent = ({ navigation }: any) => {
     );
   }
 
-  // ============================================================
-  // FULLSCREEN VIEW
-  // ============================================================
   if (viewMode === 'fullscreen' && selectedItem) {
     const allItems = filteredItems;
-    const currentIndex = allItems.findIndex(item => item.id === selectedItem.id);
+    const currentIndex = allItems.findIndex(
+      (item) => item.id === selectedItem.id
+    );
     const initialIndex = currentIndex !== -1 ? currentIndex : 0;
 
     return (
@@ -769,7 +947,10 @@ const ExploreContent = ({ navigation }: any) => {
           <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-            <TouchableOpacity style={styles.backButton} onPress={handleBackToGrid}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={handleBackToGrid}
+            >
               <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
               <Text style={styles.backButtonText}>Back to explore</Text>
             </TouchableOpacity>
@@ -777,47 +958,130 @@ const ExploreContent = ({ navigation }: any) => {
             <FlatList
               ref={flatListRef}
               data={allItems}
-              renderItem={({ item }) => (
-                <View style={{ height: height, width: width }}>
-                  {renderFullScreenItem(item)}
+              renderItem={({ item, index }) => (
+                <View style={{ height: winHeight, width: winWidth }}>
+                  <FullscreenItem
+                    item={item}
+                    index={index}
+                    fullscreenIndex={fullscreenIndex}
+                    isFocused={isFocused}
+                    isDesktop={isDesktop}
+                    winWidth={winWidth}
+                    winHeight={winHeight}
+                    isSaved={
+                      savedItemsMap[item.id] !== undefined
+                        ? savedItemsMap[item.id]
+                        : item.isSaved || false
+                    }
+                    isLiked={likedItemsMap[item.id] || false}
+                    likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
+                    isItemLoading={loadingItemsMap[item.id] === true}
+                    onShowMore={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                      setShowAIModal(true);
+                    }}
+                    onShare={() =>
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    }
+                    onSave={(p) => {
+                      if (!user?.id) return;
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSavedItemsMap((prev) => ({
+                        ...prev,
+                        [p.id]: !(prev[p.id] ?? p.isSaved ?? false),
+                      }));
+                    }}
+                    onLike={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      handleLikePress(buildOpportunityFromPost(p, false));
+                    }}
+                    onInbox={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      if (!user?.id) {
+                        navigation.navigate('Join');
+                        return;
+                      }
+                      navigation.navigate('Inbox', {
+                        userId: p.user_id || '',
+                        userName: p.user_full_name || 'User',
+                      });
+                    }}
+                    onMediaLoadStateChange={(isLoading) =>
+                      handleMediaLoadStateChange(item.id, isLoading)
+                    }
+                    onUserPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      navigation.navigate('UserProfile' as any, {
+                        userId: p.user_id,
+                        userName: p.user_full_name || 'User',
+                      });
+                    }}
+                    onReviewsPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                      setShowReviewsModal(true);
+                    }}
+                    onDirectionsPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                      setShowDirectionsModal(true);
+                    }}
+                    onAIPress={(p) => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                      setShowAIModal(true);
+                    }}
+                  />
                 </View>
               )}
               keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
               pagingEnabled={!isDesktop}
               showsVerticalScrollIndicator={false}
-              snapToInterval={height}
+              snapToInterval={winHeight}
               snapToAlignment="start"
               decelerationRate="fast"
               initialScrollIndex={initialIndex}
               getItemLayout={(data, index) => ({
-                length: height,
-                offset: height * index,
+                length: winHeight,
+                offset: winHeight * index,
                 index,
               })}
-              removeClippedSubviews={true}
-              maxToRenderPerBatch={isDesktop ? 3 : 1}
-              windowSize={isDesktop ? 5 : 2}
-              scrollEventThrottle={32}
+              viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
+              onViewableItemsChanged={handleFullscreenViewableItemsChanged}
+              extraData={`${fullscreenIndex}-${isFocused}-${Object.keys(
+                loadingItemsMap
+              )
+                .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
+                .join(',')}`}
+              removeClippedSubviews={false}
+              maxToRenderPerBatch={isDesktop ? 3 : 2}
+              windowSize={isDesktop ? 5 : 3}
+              scrollEventThrottle={16}
             />
 
             <ReviewsBottomSheet
               visible={showReviewsModal}
               productId={selectedOpportunity?.id || ''}
-              productTitle={selectedOpportunity?.name || ''}
+              productTitle={selectedOpportunity?.title || ''}
               onClose={handleCloseReviews}
             />
 
             <AIBottomSheet
               visible={showAIModal}
-              opportunity={selectedOpportunity as any}
-              contextHint={`Explore: ${selectedOpportunity?.name}`}
+              opportunity={selectedOpportunity}
+              contextHint={
+                selectedOpportunity
+                  ? `Explore: ${selectedOpportunity.title}`
+                  : ''
+              }
               onClose={handleCloseAI}
               isDesktopView={isDesktop}
             />
 
             <DirectionsBottomSheet
               visible={showDirectionsModal}
-              opportunity={selectedOpportunity as any}
+              opportunity={selectedOpportunity}
               onClose={handleCloseDirections}
               isDesktopView={isDesktop}
             />
@@ -827,23 +1091,29 @@ const ExploreContent = ({ navigation }: any) => {
     );
   }
 
-  // ============================================================
-  // GRID VIEW
-  // ============================================================
   const numColumns = isDesktop ? 4 : 3;
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+    <SafeAreaView
+      style={[styles.container, isDesktop && styles.containerDesktop]}
+      edges={['top']}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-      {/* Header with Title and Search Icon */}
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Explore</Text>
           {!isDesktop && (
-            <TouchableOpacity onPress={toggleSearch} style={styles.searchIconButton}>
-              <Ionicons name={showSearch ? 'close' : 'search'} size={22} color="#FFFFFF" />
+            <TouchableOpacity
+              onPress={toggleSearch}
+              style={styles.searchIconButton}
+            >
+              <Ionicons
+                name={showSearch ? 'close' : 'search'}
+                size={22}
+                color="#FFFFFF"
+              />
             </TouchableOpacity>
           )}
         </View>
@@ -855,9 +1125,13 @@ const ExploreContent = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
-      {/* Search Bar - Only visible when showSearch is true */}
       {showSearch && (
-        <View style={[styles.searchContainer, isDesktop && styles.searchContainerDesktop]}>
+        <View
+          style={[
+            styles.searchContainer,
+            isDesktop && styles.searchContainerDesktop,
+          ]}
+        >
           <View style={styles.searchInputWrapper}>
             <Ionicons name="search-outline" size={20} color="#8A8AAE" />
             <TextInput
@@ -895,7 +1169,9 @@ const ExploreContent = ({ navigation }: any) => {
           <View style={styles.emptyContainer}>
             <Ionicons name="search-outline" size={48} color="#8A8AAE" />
             <Text style={styles.emptyTitle}>No posts found</Text>
-            <Text style={styles.emptySubtext}>Try adjusting your filters or search terms</Text>
+            <Text style={styles.emptySubtext}>
+              Try adjusting your filters or search terms
+            </Text>
           </View>
         }
         stickyHeaderIndices={[0]}
@@ -906,15 +1182,12 @@ const ExploreContent = ({ navigation }: any) => {
   );
 };
 
-// ============================================================
-// MAIN COMPONENT
-// ============================================================
 export const ExploreScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
   return (
-    <ResponsiveLayout 
-      currentRoute="Explore" 
+    <ResponsiveLayout
+      currentRoute="Explore"
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
@@ -925,32 +1198,20 @@ export const ExploreScreen = ({ navigation }: any) => {
   );
 };
 
-// ============================================================
-// STYLES
-// ============================================================
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0D0D1A',
-  },
-  containerDesktop: {
-    backgroundColor: '#0D0D1A',
-    padding: 24,
-  },
-  centered: {
-    flex: 1,
+  container: { flex: 1, backgroundColor: '#0D0D1A' },
+  containerDesktop: { backgroundColor: '#0D0D1A', padding: 24 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { color: '#8A8AAE', fontSize: 14, marginTop: 12 },
+
+  itemMediaSpinnerOverlay: {
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  loadingText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 12,
+    zIndex: 100,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
 
-  // ============================================================
-  // HEADER - With Search Icon
-  // ============================================================
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -960,24 +1221,10 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     backgroundColor: '#0D0D1A',
   },
-  headerDesktop: {
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 12,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  searchIconButton: {
-    padding: 4,
-  },
+  headerDesktop: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 12 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#FFFFFF' },
+  searchIconButton: { padding: 4 },
   sortButtonHeader: {
     padding: 8,
     borderRadius: 12,
@@ -989,10 +1236,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-
-  // ============================================================
-  // SEARCH BAR - Toggleable
-  // ============================================================
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1001,9 +1244,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0D0D1A',
     gap: 10,
   },
-  searchContainerDesktop: {
-    paddingHorizontal: 0,
-  },
+  searchContainerDesktop: { paddingHorizontal: 0 },
   searchInputWrapper: {
     flex: 1,
     flexDirection: 'row',
@@ -1017,16 +1258,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.05)',
     minHeight: 44,
   },
-  searchInput: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 14,
-    padding: 0,
-  },
+  searchInput: { flex: 1, color: '#FFFFFF', fontSize: 14, padding: 0 },
 
-  // ============================================================
-  // FILTERS - Sticky
-  // ============================================================
   filterContainer: {
     backgroundColor: '#0D0D1A',
     paddingVertical: 8,
@@ -1057,14 +1290,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderColor: '#4A7DFF',
   },
-  filterChipText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  filterChipTextActive: {
-    color: '#4A7DFF',
-  },
+  filterChipText: { color: '#8A8AAE', fontSize: 12, fontWeight: '500' },
+  filterChipTextActive: { color: '#4A7DFF' },
   filterChipBadge: {
     backgroundColor: '#4A7DFF',
     borderRadius: 8,
@@ -1073,19 +1300,9 @@ const styles = StyleSheet.create({
     minWidth: 16,
     alignItems: 'center',
   },
-  filterChipBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: 'bold',
-  },
+  filterChipBadgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: 'bold' },
 
-  // ============================================================
-  // GRID STYLES
-  // ============================================================
-  gridContainer: {
-    padding: 4,
-    paddingBottom: 20,
-  },
+  gridContainer: { padding: 4, paddingBottom: 20 },
   gridCard: {
     flex: 1,
     margin: 1,
@@ -1119,26 +1336,6 @@ const styles = StyleSheet.create({
     padding: 4,
     zIndex: 5,
   },
-  
-  // ✅ PRICE BADGE - Top Left
-  priceBadgeContainer: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    zIndex: 5,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.1)',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  priceBadgeText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-
   gridOverlay: {
     position: 'absolute',
     bottom: 0,
@@ -1146,10 +1343,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: '60%',
   },
-  gridGradient: {
-    width: '100%',
-    height: '100%',
-  },
+  gridGradient: { width: '100%', height: '100%' },
   gridInfo: {
     position: 'absolute',
     bottom: 0,
@@ -1157,32 +1351,16 @@ const styles = StyleSheet.create({
     right: 0,
     padding: 10,
   },
-  gridTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  gridPrice: {
-    color: '#4A7DFF',
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 2,
-  },
+  gridTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
+  gridPrice: { color: '#4A7DFF', fontSize: 13, fontWeight: '700', marginTop: 2 },
   gridFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 4,
   },
-  gridShop: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 11,
-    flex: 1,
-  },
-  gridRating: {
-    color: '#F1C40F',
-    fontSize: 11,
-  },
+  gridShop: { color: 'rgba(255,255,255,0.7)', fontSize: 11, flex: 1 },
+  gridRating: { color: '#F1C40F', fontSize: 11 },
 
   emptyContainer: {
     flex: 1,
@@ -1196,15 +1374,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 12,
   },
-  emptySubtext: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 4,
-  },
+  emptySubtext: { color: '#8A8AAE', fontSize: 14, marginTop: 4 },
 
-  // ============================================================
-  // FULLSCREEN STYLES
-  // ============================================================
   backButton: {
     position: 'absolute',
     top: 50,
@@ -1218,11 +1389,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 6,
   },
-  backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
+  backButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500' },
   actionRailWrapper: {
     position: 'absolute',
     right: 16,
@@ -1231,16 +1398,17 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
 
-  // ============================================================
-  // MODAL STYLES
-  // ============================================================
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   modalBackdrop: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   modalContent: {
     backgroundColor: '#1A1A2E',
@@ -1258,11 +1426,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.05)',
     marginBottom: 16,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+  modalTitle: { fontSize: 18, fontWeight: '600', color: '#FFFFFF' },
   sortOption: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1272,15 +1436,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.03)',
   },
-  sortOptionActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
-  },
-  sortOptionText: {
-    color: '#E8ECF4',
-    fontSize: 16,
-  },
-  sortOptionTextActive: {
-    color: '#4A7DFF',
-    fontWeight: '500',
-  },
+  sortOptionActive: { backgroundColor: 'rgba(74, 125, 255, 0.08)' },
+  sortOptionText: { color: '#E8ECF4', fontSize: 16 },
+  sortOptionTextActive: { color: '#4A7DFF', fontWeight: '500' },
 });

@@ -1,6 +1,12 @@
 // src/features/search/SearchResultsScreen.tsx
 
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+} from 'react';
 import {
   View,
   Text,
@@ -13,12 +19,15 @@ import {
   useWindowDimensions,
   ScrollView,
   ActivityIndicator,
+  ViewToken,
+  ViewabilityConfig,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
@@ -27,12 +36,19 @@ import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet'
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { ViewabilityConfig, ViewToken } from 'react-native';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
+import { useIsFocused } from '@react-navigation/native';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-// --- Types ---
+const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
+  itemVisiblePercentThreshold: 60,
+  minimumViewTime: 100,
+};
+
+// ============================================================
+// TYPES
+// ============================================================
 interface SearchResult {
   id: string;
   title: string;
@@ -67,6 +83,8 @@ interface SearchResult {
   specifications?: any;
   relevanceScore?: number;
   aiTag?: boolean;
+  /** ✅ Carried through from the catalog row (or specifications) */
+  price_type?: string | null;
 }
 
 interface SearchIntent {
@@ -94,7 +112,6 @@ interface SearchResultsScreenProps {
   navigation: any;
 }
 
-// --- Filter Categories (10+ categories like Explore) ---
 const DEFAULT_CATEGORIES = [
   { key: 'all', label: 'All' },
   { key: 'products', label: 'Products' },
@@ -109,26 +126,51 @@ const DEFAULT_CATEGORIES = [
 ];
 
 // ============================================================
-// HELPER: GET ITEM IMAGE
+// ✅ HELPER: Resolve effective price type for a SearchResult
+//    Priority:
+//      1. item.price_type (catalog row)
+//      2. item.specifications.price_type (legacy rows)
+//      3. 'free' if price is 0 / null / undefined
+//      4. 'fixed' fallback
 // ============================================================
+const VALID_PRICE_TYPES = [
+  'fixed',
+  'negotiable',
+  'starting_from',
+  'free',
+] as const;
 
-const getItemImage = (item: SearchResult): string => {
-  if (item.catalogImages && item.catalogImages.length > 0) {
-    return item.catalogImages[0];
-  }
-  if (item.imageUrl) {
-    return item.imageUrl;
-  }
-  if (item.video_thumbnail) {
-    return item.video_thumbnail;
-  }
-  const productName = item.title || 'Product';
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(productName)}&background=4A7DFF&color=fff&size=200&font-size=0.33`;
-};
+type PriceType = typeof VALID_PRICE_TYPES[number];
 
-// ============================================================
-// SUB-COMPONENTS - FILTER CHIP (Matches Explore)
-// ============================================================
+function resolvePriceType(item: SearchResult): PriceType {
+  const fromRow =
+    typeof item.price_type === 'string' && item.price_type.length > 0
+      ? item.price_type
+      : null;
+
+  const fromSpecs =
+    item.specifications &&
+    typeof item.specifications === 'object' &&
+    typeof item.specifications.price_type === 'string' &&
+    item.specifications.price_type.length > 0
+      ? item.specifications.price_type
+      : null;
+
+  const raw = fromRow || fromSpecs;
+
+  if (raw && (VALID_PRICE_TYPES as readonly string[]).includes(raw)) {
+    // If it says fixed but price is 0/undefined → free
+    if (raw === 'fixed' && (!item.price || item.price <= 0)) {
+      return 'free';
+    }
+    return raw as PriceType;
+  }
+
+  if (item.price === 0 || item.price === null || item.price === undefined) {
+    return 'free';
+  }
+  return 'fixed';
+}
 
 const FilterChip = React.memo(({ label, selected, onPress, count }: any) => (
   <TouchableOpacity
@@ -136,7 +178,9 @@ const FilterChip = React.memo(({ label, selected, onPress, count }: any) => (
     onPress={onPress}
     activeOpacity={0.7}
   >
-    <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
+    <Text
+      style={[styles.filterChipText, selected && styles.filterChipTextActive]}
+    >
       {label}
     </Text>
     {count !== undefined && count > 0 && (
@@ -148,9 +192,9 @@ const FilterChip = React.memo(({ label, selected, onPress, count }: any) => (
 ));
 
 // ============================================================
-// GRID RESULT CARD - NO PRICE BADGE
+// GRID RESULT CARD
+// ✅ Now shows "Free" for free items, price for others.
 // ============================================================
-
 const GridResultCard = React.memo(({ item, onPress }: any) => {
   let imageUrl = '';
   if (item.catalogImages && item.catalogImages.length > 0) {
@@ -160,20 +204,26 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
   } else if (item.imageUrl) {
     imageUrl = item.imageUrl;
   }
-  
+
   const displayName = item.userFullName || 'User';
   const hasVideo = !!item.video;
-  const hasPrice = item.price !== undefined && item.price !== null && item.price > 0;
+  const priceType = resolvePriceType(item);
+  const isFree = priceType === 'free';
+  const hasPrice =
+    !isFree &&
+    item.price !== undefined &&
+    item.price !== null &&
+    item.price > 0;
 
   return (
-    <TouchableOpacity 
-      style={styles.gridCard} 
+    <TouchableOpacity
+      style={styles.gridCard}
       onPress={() => onPress(item)}
       activeOpacity={0.8}
     >
       {imageUrl ? (
-        <Image 
-          source={{ uri: imageUrl }} 
+        <Image
+          source={{ uri: imageUrl }}
           style={styles.gridImage}
           resizeMode="cover"
         />
@@ -182,25 +232,35 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
           <Ionicons name="image-outline" size={40} color="#4A7DFF" />
         </View>
       )}
-      
+
       {hasVideo && (
         <View style={styles.videoBadge}>
           <Ionicons name="play-circle" size={24} color="#FFFFFF" />
         </View>
       )}
-      
+
       <View style={styles.gridOverlay}>
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.85)']}
           style={styles.gridGradient}
         />
         <View style={styles.gridInfo}>
-          <Text style={styles.gridTitle} numberOfLines={1}>{item.title || 'Post'}</Text>
-          {hasPrice && (
-            <Text style={styles.gridPrice}>UGX {item.price!.toLocaleString()}</Text>
-          )}
+          <Text style={styles.gridTitle} numberOfLines={1}>
+            {item.title || 'Post'}
+          </Text>
+
+          {isFree ? (
+            <Text style={styles.gridPriceFree}>Free</Text>
+          ) : hasPrice ? (
+            <Text style={styles.gridPrice}>
+              UGX {item.price!.toLocaleString()}
+            </Text>
+          ) : null}
+
           <View style={styles.gridFooter}>
-            <Text style={styles.gridShop} numberOfLines={1}>{displayName}</Text>
+            <Text style={styles.gridShop} numberOfLines={1}>
+              {displayName}
+            </Text>
             {item.likeCount && item.likeCount > 0 && (
               <Text style={styles.gridRating}>❤️ {item.likeCount}</Text>
             )}
@@ -211,39 +271,288 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
   );
 });
 
-// ============================================================
-// MAIN SEARCH RESULTS CONTENT
-// ============================================================
+const ItemMediaLoadingSpinner: React.FC = () => {
+  return (
+    <View style={styles.itemMediaSpinnerOverlay} pointerEvents="none">
+      <ActivityIndicator size="large" color="#FFFFFF" />
+    </View>
+  );
+};
 
-const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) => {
+// ============================================================
+// HELPER: build Opportunity from SearchResult
+// ✅ Now carries price_type through.
+// ============================================================
+function buildOpportunityFromResult(item: SearchResult): any {
+  return {
+    id: item.id,
+    title: item.title || 'Untitled',
+    price: item.price || 0,
+    currency: item.currency || 'UGX',
+    imageUrl: item.catalogImages?.[0] || item.imageUrl || '',
+    catalogImages: item.catalogImages || [],
+    description: item.description || '',
+    rating: item.rating,
+    reviewCount: item.reviewCount || 0,
+    userLatitude: item.userLatitude || null,
+    userLongitude: item.userLongitude || null,
+    userPhone: item.userPhone || null,
+    area: item.area || null,
+    inStock: item.inStock !== false,
+    category: item.category || null,
+    type: item.type || 'product',
+    createdAt: item.createdAt,
+    userId: item.userId || '',
+    userFullName: item.userFullName || 'User',
+    userAvatar: item.userAvatar || null,
+    video: item.video || null,
+    video_thumbnail: item.video_thumbnail || null,
+    video_duration: item.video_duration || null,
+    video_size: item.video_size || null,
+    likeCount: item.likeCount || 0,
+    viewCount: item.viewCount || 0,
+    shareCount: item.shareCount || 0,
+    commentCount: item.commentCount || 0,
+    saveCount: item.saveCount || 0,
+    isSaved: item.isSaved || false,
+    distance: undefined,
+    specifications: item.specifications || {},
+    // ✅ NEW
+    price_type: item.price_type ?? null,
+  };
+}
+
+// ============================================================
+// FULLSCREEN ITEM
+// ============================================================
+interface FullscreenItemProps {
+  item: SearchResult;
+  index: number;
+  fullscreenIndex: number;
+  isFocused: boolean;
+  isDesktop: boolean;
+  winWidth: number;
+  winHeight: number;
+  isSaved: boolean;
+  isLiked: boolean;
+  likeCount: number;
+  isItemLoading: boolean;
+  query: string;
+  onShowMore: (item: SearchResult) => void;
+  onShare: () => void;
+  onSave: (item: SearchResult) => void;
+  onLike: (item: SearchResult) => void;
+  onInbox: (item: SearchResult) => void;
+  onMediaLoadStateChange: (isLoading: boolean) => void;
+  onUserPress: (item: SearchResult) => void;
+  onReviewsPress: (item: SearchResult) => void;
+  onDirectionsPress: (item: SearchResult) => void;
+  onAIPress: (item: SearchResult) => void;
+}
+
+const FullscreenItem: React.FC<FullscreenItemProps> = ({
+  item,
+  index,
+  fullscreenIndex,
+  isFocused,
+  isDesktop,
+  winWidth,
+  winHeight,
+  isSaved,
+  isLiked,
+  likeCount,
+  isItemLoading,
+  onShowMore,
+  onShare,
+  onSave,
+  onLike,
+  onInbox,
+  onMediaLoadStateChange,
+  onUserPress,
+  onReviewsPress,
+  onDirectionsPress,
+  onAIPress,
+}) => {
+  const opportunity = buildOpportunityFromResult(item);
+
+  const mediaItems: {
+    type: 'image' | 'video';
+    url: string;
+    thumbnail?: string;
+  }[] = [];
+  const thumbnail =
+    item.video_thumbnail ||
+    item.catalogImages?.[0] ||
+    item.imageUrl ||
+    undefined;
+
+  if (item.video) {
+    mediaItems.push({
+      type: 'video',
+      url: item.video,
+      thumbnail,
+    });
+  }
+
+  if (item.catalogImages && item.catalogImages.length > 0) {
+    for (const img of item.catalogImages) {
+      if (mediaItems.some((m) => m.url === img)) continue;
+      mediaItems.push({ type: 'image', url: img });
+    }
+  } else if (item.imageUrl && !item.video) {
+    mediaItems.push({ type: 'image', url: item.imageUrl });
+  }
+
+  if (mediaItems.length === 0) {
+    const placeholderText = encodeURIComponent(item.title || 'Item');
+    mediaItems.push({
+      type: 'image',
+      url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(
+        0,
+        20
+      )}`,
+    });
+  }
+
+  // ✅ Resolve price type — single source of truth
+  const priceType = resolvePriceType(item);
+
+  const displayName = item.userFullName || 'User';
+  const cardWidth = isDesktop ? 420 : winWidth;
+  const cardHeight = isDesktop ? winHeight : winHeight;
+
+  const isVisible = isFocused && index === fullscreenIndex;
+
+  return (
+    <View
+      style={{
+        height: cardHeight,
+        width: cardWidth,
+        paddingVertical: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+      }}
+    >
+      <SceneRenderer
+        key={item.id}
+        media={mediaItems}
+        title={item.title || 'Product'}
+        price={item.price || 0}
+        // ✅ Correctly-resolved price type
+        priceType={priceType}
+        currency={item.currency || 'UGX'}
+        userName={displayName}
+        userAvatar={item.userAvatar || null}
+        description={item.description || null}
+        rating={item.rating ?? undefined}
+        area={item.area ?? undefined}
+        inStock={item.inStock !== false}
+        type={item.type || 'product'}
+        createdAt={item.createdAt}
+        isDesktop={isDesktop}
+        width={cardWidth}
+        height={cardHeight}
+        onShowMore={() => onShowMore(item)}
+        onShare={onShare}
+        onSave={() => onSave(item)}
+        onPrimaryAction={() => onInbox(item)}
+        onInboxPress={() => onInbox(item)}
+        showInboxButton={true}
+        onMediaLoadStateChange={onMediaLoadStateChange}
+        onSceneChange={(idx, source) => {
+          if (__DEV__) console.log('Scene changed to:', idx, source);
+        }}
+        onBehavioralEvent={(event) => {
+          if (__DEV__) console.log('Behavioral event:', event);
+        }}
+        autoPlay={true}
+        autoPlayInterval={5000}
+        resetKey={item.id}
+        bottomOffset={0}
+        isVisible={isVisible}
+      />
+
+      {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
+
+      <View style={styles.actionRailWrapper}>
+        <FloatingActionRail
+          key={`rail-${item.id}`}
+          opportunity={opportunity}
+          isLiked={isLiked}
+          likeCount={likeCount}
+          onLikePress={() => onLike(item)}
+          onUserPress={() => onUserPress(item)}
+          onReviewsPress={() => onReviewsPress(item)}
+          onDirectionsPress={() => onDirectionsPress(item)}
+          onSharePress={onShare}
+          onAIPress={() => onAIPress(item)}
+          onSavePress={() => onSave(item)}
+          isSaved={isSaved}
+          savedCount={0}
+          shareCount={item.shareCount || 0}
+          reviewCount={0}
+          distance={0}
+          userAvatar={item.userAvatar || null}
+        />
+      </View>
+    </View>
+  );
+};
+
+// ============================================================
+// MAIN CONTENT
+// ============================================================
+const SearchResultsContent = ({
+  route,
+  navigation,
+}: SearchResultsScreenProps) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
+  const isFocused = useIsFocused();
 
-  const { 
-    results, 
-    query, 
-    initialIndex = 0, 
+  const {
+    results,
+    query,
+    initialIndex = 0,
     intent,
     hasResults = true,
     totalResults = 0,
-    recommendationsCount = 0
+    recommendationsCount = 0,
   } = route.params || { results: [], query: '', initialIndex: 0 };
 
   const [activeFilter, setActiveFilter] = useState<string>('all');
-  const [filteredResults, setFilteredResults] = useState<SearchResult[]>(results);
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
-  
+  const [filteredResults, setFilteredResults] = useState<SearchResult[]>(
+    results
+  );
+  const [categories] = useState(DEFAULT_CATEGORIES);
+
   const flatListRef = useRef<FlatList>(null);
   const trackedViewRef = useRef<string>('');
   const currentIndexRef = useRef(initialIndex);
 
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>({});
+  const [fullscreenIndex, setFullscreenIndex] = useState(initialIndex);
+  const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>(
+    {}
+  );
+
+  // ✅ Likes
+  const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
+
+  const [loadingItemsMap, setLoadingItemsMap] = useState<
+    Record<string, boolean>
+  >({});
+
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<SearchResult | null>(null);
-  
-  const [selectedOpportunity, setSelectedOpportunity] = useState<SearchResult | null>(null);
+
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState<SearchResult | null>(null);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
@@ -251,42 +560,50 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
   const memoizedResults = useMemo(() => results, [results]);
 
-  // Get filter counts for badges
   const getFilterCounts = useCallback(() => {
     const counts: Record<string, number> = {
       all: memoizedResults.length,
-      products: memoizedResults.filter(item => item.type === 'product').length,
-      services: memoizedResults.filter(item => item.type === 'service').length,
-      electronics: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('electronics') ||
-        item.category?.toLowerCase().includes('phone') ||
-        item.category?.toLowerCase().includes('computer')
+      products: memoizedResults.filter((item) => item.type === 'product')
+        .length,
+      services: memoizedResults.filter((item) => item.type === 'service')
+        .length,
+      electronics: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('electronics') ||
+          item.category?.toLowerCase().includes('phone') ||
+          item.category?.toLowerCase().includes('computer')
       ).length,
-      fashion: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('fashion') ||
-        item.category?.toLowerCase().includes('clothing')
+      fashion: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('fashion') ||
+          item.category?.toLowerCase().includes('clothing')
       ).length,
-      food: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('food') ||
-        item.category?.toLowerCase().includes('restaurant')
+      food: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('food') ||
+          item.category?.toLowerCase().includes('restaurant')
       ).length,
-      art: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('art') ||
-        item.category?.toLowerCase().includes('craft')
+      art: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('art') ||
+          item.category?.toLowerCase().includes('craft')
       ).length,
-      vehicles: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('vehicle') ||
-        item.category?.toLowerCase().includes('car') ||
-        item.category?.toLowerCase().includes('auto')
+      vehicles: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('vehicle') ||
+          item.category?.toLowerCase().includes('car') ||
+          item.category?.toLowerCase().includes('auto')
       ).length,
-      property: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('property') ||
-        item.category?.toLowerCase().includes('real estate') ||
-        item.category?.toLowerCase().includes('house')
+      property: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('property') ||
+          item.category?.toLowerCase().includes('real estate') ||
+          item.category?.toLowerCase().includes('house')
       ).length,
-      jobs: memoizedResults.filter(item => 
-        item.category?.toLowerCase().includes('job') ||
-        item.category?.toLowerCase().includes('employment')
+      jobs: memoizedResults.filter(
+        (item) =>
+          item.category?.toLowerCase().includes('job') ||
+          item.category?.toLowerCase().includes('employment')
       ).length,
     };
     return counts;
@@ -296,20 +613,21 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 
   useEffect(() => {
     let filtered = [...memoizedResults];
-    
+
     if (activeFilter !== 'all') {
       if (activeFilter === 'products') {
-        filtered = filtered.filter(item => item.type === 'product');
+        filtered = filtered.filter((item) => item.type === 'product');
       } else if (activeFilter === 'services') {
-        filtered = filtered.filter(item => item.type === 'service');
+        filtered = filtered.filter((item) => item.type === 'service');
       } else {
-        filtered = filtered.filter(item => 
-          item.category?.toLowerCase().includes(activeFilter) ||
-          item.category?.toLowerCase().replace(/\s+/g, '_') === activeFilter
+        filtered = filtered.filter(
+          (item) =>
+            item.category?.toLowerCase().includes(activeFilter) ||
+            item.category?.toLowerCase().replace(/\s+/g, '_') === activeFilter
         );
       }
     }
-    
+
     setFilteredResults(filtered);
   }, [activeFilter, memoizedResults]);
 
@@ -317,11 +635,66 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     trackedViewRef.current = '';
     currentIndexRef.current = initialIndex;
     setCurrentIndex(initialIndex);
+    setFullscreenIndex(initialIndex);
   }, [results, initialIndex]);
 
-  // ============================================================
-  // HANDLERS
-  // ============================================================
+  useEffect(() => {
+    if (filteredResults.length === 0) return;
+
+    setLoadingItemsMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const r of filteredResults) {
+        if (next[r.id] === undefined) {
+          next[r.id] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredResults]);
+
+  // ✅ Prefetch likes
+  useEffect(() => {
+    if (!user?.id) return;
+    const postIds = filteredResults.map((r) => r.id);
+    if (postIds.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await (supabase as any)
+          .from('likes')
+          .select('post_id')
+          .eq('user_id', user.id)
+          .in('post_id', postIds);
+
+        if (cancelled || error || !data) return;
+
+        const likedIds: Record<string, boolean> = {};
+        data.forEach((row: any) => {
+          likedIds[row.post_id] = true;
+        });
+        setLikedItemsMap((prev) => ({ ...prev, ...likedIds }));
+      } catch (e) {
+        console.warn('Failed to prefetch likes:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, filteredResults]);
+
+  const handleMediaLoadStateChange = useCallback(
+    (itemId: string, isLoading: boolean) => {
+      setLoadingItemsMap((prev) => {
+        if (prev[itemId] === isLoading) return prev;
+        return { ...prev, [itemId]: isLoading };
+      });
+    },
+    []
+  );
 
   const handleFilterPress = useCallback((filterKey: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -329,63 +702,77 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, []);
 
-  const handleGridItemPress = useCallback((item: SearchResult) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedItem(item);
-    setViewMode('fullscreen');
-    
-    const index = memoizedResults.findIndex(r => r.id === item.id);
-    if (index !== -1) {
-      currentIndexRef.current = index;
-      setCurrentIndex(index);
-    }
-  }, [memoizedResults]);
+  const handleGridItemPress = useCallback(
+    (item: SearchResult) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setSelectedItem(item);
+      setViewMode('fullscreen');
+
+      const index = memoizedResults.findIndex((r) => r.id === item.id);
+      if (index !== -1) {
+        currentIndexRef.current = index;
+        setCurrentIndex(index);
+        setFullscreenIndex(index);
+      }
+    },
+    [memoizedResults]
+  );
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
+    setFullscreenIndex(0);
   }, []);
 
-  // ============================================================
-  // VIEWABILITY
-  // ============================================================
+  const onViewableItemsChangedRef = useRef<
+    | ((info: {
+        viewableItems: ViewToken<SearchResult>[];
+        changed: ViewToken<SearchResult>[];
+      }) => void)
+    | null
+  >(null);
 
-  const onViewableItemsChanged = useCallback((info: { viewableItems: ViewToken<SearchResult>[]; changed: ViewToken<SearchResult>[] }) => {
+  onViewableItemsChangedRef.current = (info) => {
     const { viewableItems } = info;
     if (!viewableItems || viewableItems.length === 0) return;
 
     const firstItem = viewableItems[0];
     const index = firstItem.index;
-    
+
     if (index === null || index === undefined) return;
     if (index === currentIndexRef.current) return;
     if (index < 0 || index >= filteredResults.length) return;
 
     currentIndexRef.current = index;
     setCurrentIndex(index);
-  }, [filteredResults]);
+    setFullscreenIndex(index);
+  };
 
-  const viewabilityConfig = useMemo<ViewabilityConfig>(() => ({
-    itemVisiblePercentThreshold: 50,
-    minimumViewTime: 300,
-  }), []);
+  const handleViewableItemsChanged = useRef(
+    (info: {
+      viewableItems: ViewToken<SearchResult>[];
+      changed: ViewToken<SearchResult>[];
+    }) => {
+      onViewableItemsChangedRef.current?.(info);
+    }
+  ).current;
 
-  const keyExtractor = useCallback((item: SearchResult, index: number) => {
-    return `result-${item.id}-${index}`;
-  }, []);
+  const keyExtractor = useCallback(
+    (item: SearchResult, index: number) => `result-${item.id}-${index}`,
+    []
+  );
 
-  const getItemLayout = useCallback((data: any, index: number) => {
-    const itemHeight = isDesktop ? height : height;
-    return {
-      length: itemHeight,
-      offset: itemHeight * index,
-      index,
-    };
-  }, [isDesktop, height]);
-
-  // ============================================================
-  // RENDER GRID ITEM
-  // ============================================================
+  const getItemLayout = useCallback(
+    (data: any, index: number) => {
+      const itemHeight = isDesktop ? height : height;
+      return {
+        length: itemHeight,
+        offset: itemHeight * index,
+        index,
+      };
+    },
+    [isDesktop, height]
+  );
 
   const renderGridItem = useCallback(
     ({ item }: { item: SearchResult }) => (
@@ -393,10 +780,6 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     ),
     [handleGridItemPress]
   );
-
-  // ============================================================
-  // LIST HEADER - 10+ Categories like Explore
-  // ============================================================
 
   const ListHeader = useMemo(() => {
     return (
@@ -423,210 +806,6 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     );
   }, [categories, activeFilter, filterCounts, handleFilterPress]);
 
-  // ============================================================
-  // RENDER FULLSCREEN ITEM
-  // ============================================================
-
-  const renderFullScreenItem = useCallback(
-    ({ item }: { item: SearchResult }) => {
-      if (!item) return null;
-      
-      const isSaved = savedItemsMap[item.id] || false;
-
-      // Build media array
-      const mediaItems = [];
-      const thumbnail = item.video_thumbnail || item.catalogImages?.[0] || item.imageUrl || undefined;
-      
-      if (item.video) {
-        mediaItems.push({ 
-          type: 'video' as const, 
-          url: item.video,
-          thumbnail: thumbnail
-        });
-      }
-      
-      if (item.catalogImages && item.catalogImages.length > 0) {
-        for (const img of item.catalogImages) {
-          if (mediaItems.some(m => m.url === img)) continue;
-          mediaItems.push({ type: 'image' as const, url: img });
-        }
-      } else if (item.imageUrl && !item.video) {
-        mediaItems.push({ type: 'image' as const, url: item.imageUrl });
-      }
-      
-      if (mediaItems.length === 0) {
-        const placeholderText = encodeURIComponent(item.title || 'Item');
-        mediaItems.push({ 
-          type: 'image' as const, 
-          url: `https://via.placeholder.com/400x400/1A2A4F/4A7DFF?text=${placeholderText.substring(0, 20)}` 
-        });
-      }
-
-      // Get price type for badge
-      let priceType: 'fixed' | 'negotiable' | 'starting_from' | 'free' = 'fixed';
-      if (item.price === 0 || item.price === null) {
-        priceType = 'free';
-      } else if (item.specifications && typeof item.specifications === 'object') {
-        if (item.specifications.price_type) {
-          priceType = item.specifications.price_type;
-        }
-      }
-
-      const displayName = item.userFullName || 'User';
-
-      const cardWidth = isDesktop ? 420 : width;
-      const cardHeight = isDesktop ? height : height;
-
-      // Build Opportunity object for FloatingActionRail
-      const opportunity = {
-        id: item.id,
-        title: item.title || 'Untitled',
-        price: item.price || 0,
-        currency: item.currency || 'UGX',
-        imageUrl: item.catalogImages?.[0] || item.imageUrl || '',
-        catalogImages: item.catalogImages || [],
-        description: item.description || '',
-        rating: item.rating,
-        reviewCount: item.reviewCount || 0,
-        userLatitude: item.userLatitude || null,
-        userLongitude: item.userLongitude || null,
-        userPhone: item.userPhone || null,
-        area: item.area || null,
-        inStock: item.inStock !== false,
-        category: item.category || null,
-        type: item.type || 'product',
-        createdAt: item.createdAt,
-        userId: item.userId || '',
-        userFullName: item.userFullName || 'User',
-        userAvatar: item.userAvatar || null,
-        video: item.video || null,
-        video_thumbnail: item.video_thumbnail || null,
-        video_duration: item.video_duration || null,
-        video_size: item.video_size || null,
-        likeCount: item.likeCount || 0,
-        viewCount: item.viewCount || 0,
-        shareCount: item.shareCount || 0,
-        commentCount: item.commentCount || 0,
-      };
-
-      return (
-        <View
-          style={{
-            height: cardHeight,
-            width: cardWidth,
-            paddingVertical: 0,
-            alignItems: 'center',
-            justifyContent: 'center',
-            position: 'relative',
-          }}
-        >
-          <SceneRenderer
-            key={item.id}
-            media={mediaItems}
-            title={item.title || 'Product'}
-            price={item.price || 0}
-            priceType={priceType}
-            currency={item.currency || 'UGX'}
-            userName={displayName}
-            userAvatar={item.userAvatar || null}
-            description={item.description || null}
-            rating={item.rating ?? undefined}
-            area={item.area ?? undefined}
-            inStock={item.inStock !== false}
-            type={item.type || 'product'}
-            createdAt={item.createdAt}
-            isDesktop={isDesktop}
-            width={cardWidth}
-            height={cardHeight}
-            onShowMore={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setSelectedOpportunity(item);
-            }}
-            onShare={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-            onSave={() => {
-              if (!user?.id) return;
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              const currentSaved = savedItemsMap[item.id] || false;
-              const newSaved = !currentSaved;
-              setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-            }}
-            onPrimaryAction={() => {
-              navigation.navigate('Inbox', {
-                userId: item.userId || '',
-                userName: item.userFullName || 'User',
-              });
-            }}
-            onSceneChange={(index, source) => {
-              if (__DEV__) {
-                console.log('Scene changed to:', index, source);
-              }
-            }}
-            onBehavioralEvent={(event) => {
-              if (__DEV__) {
-                console.log('Behavioral event:', event);
-              }
-            }}
-            autoPlay={false}
-            autoPlayInterval={9000}
-            resetKey={item.id}
-            bottomOffset={0}
-          />
-
-          <View style={styles.actionRailWrapper}>
-            <FloatingActionRail
-              key={`rail-${item.id}`}
-              opportunity={opportunity}
-              onUserPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                navigation.navigate('UserProfile', {
-                  userId: item.userId || '',
-                  userName: item.userFullName || 'User',
-                });
-              }}
-              onReviewsPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setSelectedOpportunity(item);
-                setShowReviewsModal(true);
-              }}
-              onDirectionsPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setSelectedOpportunity(item);
-                setShowDirectionsModal(true);
-              }}
-              onSharePress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }}
-              onAIPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                setSelectedOpportunity(item);
-                setAiContextHint(`Search results for "${query}"`);
-                setShowAIModal(true);
-              }}
-              onSavePress={() => {
-                if (!user?.id) return;
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                const currentSaved = savedItemsMap[item.id] || false;
-                const newSaved = !currentSaved;
-                setSavedItemsMap(prev => ({ ...prev, [item.id]: newSaved }));
-              }}
-              isSaved={isSaved}
-              savedCount={0}
-              shareCount={item.shareCount || 0}
-              reviewCount={0}
-            />
-          </View>
-        </View>
-      );
-    },
-    [isDesktop, width, height, navigation, user?.id, savedItemsMap, query]
-  );
-
-  // ============================================================
-  // MODAL HANDLERS
-  // ============================================================
-
   const handleCloseAI = useCallback(() => {
     setShowAIModal(false);
     setSelectedOpportunity(null);
@@ -643,9 +822,60 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     setSelectedOpportunity(null);
   }, []);
 
-  // ============================================================
-  // LOADING STATE
-  // ============================================================
+  // ✅ Toggle like
+  const handleLikePress = useCallback(
+    async (opportunity: any) => {
+      if (!user?.id) {
+        navigation.navigate('Join');
+        return;
+      }
+
+      const currentlyLiked = likedItemsMap[opportunity.id] || false;
+      const nextLiked = !currentlyLiked;
+
+      setLikedItemsMap((prev) => ({ ...prev, [opportunity.id]: nextLiked }));
+      setLikeCountMap((prev) => {
+        const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+        return {
+          ...prev,
+          [opportunity.id]: Math.max(0, current + (nextLiked ? 1 : -1)),
+        };
+      });
+
+      try {
+        if (nextLiked) {
+          const { error } = await (supabase as any)
+            .from('likes')
+            .insert({ user_id: user.id, post_id: opportunity.id });
+          if (error && (error as any).code !== '23505') throw error;
+        } else {
+          const { error } = await (supabase as any)
+            .from('likes')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('post_id', opportunity.id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error('Like toggle failed:', err);
+        setLikedItemsMap((prev) => ({
+          ...prev,
+          [opportunity.id]: currentlyLiked,
+        }));
+        setLikeCountMap((prev) => {
+          const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+          return {
+            ...prev,
+            [opportunity.id]: Math.max(
+              0,
+              current + (currentlyLiked ? 1 : -1)
+            ),
+          };
+        });
+      }
+    },
+    [user?.id, likedItemsMap, navigation]
+  );
 
   if (!memoizedResults) {
     return (
@@ -657,30 +887,27 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     );
   }
 
-  // ============================================================
-  // EMPTY STATE
-  // ============================================================
-
   if (memoizedResults.length === 0) {
     return (
       <SafeAreaView style={styles.emptyContainer}>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
-        <TouchableOpacity style={styles.emptyBackButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          style={styles.emptyBackButton}
+          onPress={() => navigation.goBack()}
+        >
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
           <Text style={styles.emptyBackText}>Back</Text>
         </TouchableOpacity>
         <View style={styles.emptyContent}>
           <Ionicons name="search-outline" size={64} color="#8A8AAE" />
           <Text style={styles.emptyTitle}>No results found</Text>
-          <Text style={styles.emptySubtext}>Try adjusting your search terms</Text>
+          <Text style={styles.emptySubtext}>
+            Try adjusting your search terms
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
-
-  // ============================================================
-  // FULLSCREEN VIEW
-  // ============================================================
 
   if (viewMode === 'fullscreen') {
     return (
@@ -689,7 +916,10 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
           <SafeAreaView style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-            <TouchableOpacity style={styles.backButton} onPress={handleBackToGrid}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={handleBackToGrid}
+            >
               <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
               <Text style={styles.backButtonText}>Back to results</Text>
             </TouchableOpacity>
@@ -697,22 +927,98 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
             <FlatList
               ref={flatListRef}
               data={filteredResults}
-              renderItem={renderFullScreenItem}
+              renderItem={({ item, index }) => (
+                <FullscreenItem
+                  item={item}
+                  index={index}
+                  fullscreenIndex={fullscreenIndex}
+                  isFocused={isFocused}
+                  isDesktop={isDesktop}
+                  winWidth={width}
+                  winHeight={height}
+                  isSaved={savedItemsMap[item.id] || false}
+                  isLiked={likedItemsMap[item.id] || false}
+                  likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
+                  isItemLoading={loadingItemsMap[item.id] === true}
+                  query={query}
+                  onShowMore={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setSelectedOpportunity(p);
+                  }}
+                  onShare={() =>
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                  }
+                  onSave={(p) => {
+                    if (!user?.id) return;
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setSavedItemsMap((prev) => ({
+                      ...prev,
+                      [p.id]: !(prev[p.id] ?? p.isSaved ?? false),
+                    }));
+                  }}
+                  onLike={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    handleLikePress(buildOpportunityFromResult(p));
+                  }}
+                  onInbox={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    if (!user?.id) {
+                      navigation.navigate('Join');
+                      return;
+                    }
+                    navigation.navigate('Inbox', {
+                      userId: p.userId || '',
+                      userName: p.userFullName || 'User',
+                    });
+                  }}
+                  onMediaLoadStateChange={(isLoading) =>
+                    handleMediaLoadStateChange(item.id, isLoading)
+                  }
+                  onUserPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    navigation.navigate('UserProfile', {
+                      userId: p.userId || '',
+                      userName: p.userFullName || 'User',
+                    });
+                  }}
+                  onReviewsPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setSelectedOpportunity(p);
+                    setShowReviewsModal(true);
+                  }}
+                  onDirectionsPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setSelectedOpportunity(p);
+                    setShowDirectionsModal(true);
+                  }}
+                  onAIPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                    setSelectedOpportunity(p);
+                    setAiContextHint(`Search results for "${query}"`);
+                    setShowAIModal(true);
+                  }}
+                />
+              )}
               keyExtractor={keyExtractor}
               pagingEnabled={!isDesktop}
               showsVerticalScrollIndicator={false}
               snapToInterval={isDesktop ? undefined : height}
               snapToAlignment="start"
               decelerationRate="fast"
-              viewabilityConfig={viewabilityConfig}
-              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
+              onViewableItemsChanged={handleViewableItemsChanged}
               getItemLayout={getItemLayout}
               initialScrollIndex={currentIndex}
-              removeClippedSubviews={true}
-              maxToRenderPerBatch={isDesktop ? 3 : 1}
-              windowSize={isDesktop ? 5 : 2}
+              extraData={`${fullscreenIndex}-${isFocused}-${Object.keys(
+                loadingItemsMap
+              )
+                .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
+                .join(',')}`}
+              removeClippedSubviews={false}
+              maxToRenderPerBatch={isDesktop ? 3 : 2}
+              windowSize={isDesktop ? 5 : 3}
               onScrollToIndexFailed={() => {}}
-              scrollEventThrottle={32}
+              scrollEventThrottle={16}
               style={styles.list}
             />
 
@@ -743,82 +1049,94 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
     );
   }
 
-  // ============================================================
-  // GRID VIEW - MATCHES EXPLORE SCREEN STYLE
-  // ============================================================
-
   const numColumns = isDesktop ? 4 : 3;
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+    <SafeAreaView
+      style={[styles.container, isDesktop && styles.containerDesktop]}
+      edges={['top']}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-      {/* Header with Search Query - Shows the search term instead of "Results" */}
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
         <View style={styles.headerLeft}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonHeader}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backButtonHeader}
+          >
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>
             {query || 'Search'}
           </Text>
         </View>
-        <Text style={styles.headerSubtitle}>
-          {filteredResults.length}
-        </Text>
+        <Text style={styles.headerSubtitle}>{filteredResults.length}</Text>
       </View>
 
-      {/* Intent Chips - Show detected search intent */}
-      {intent && (intent.keywords.length > 0 || intent.categories.length > 0 || intent.priceRange || intent.location) && (
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.intentContainer}
-          contentContainerStyle={styles.intentContent}
-        >
-          {intent.keywords.length > 0 && (
-            <View style={styles.intentChip}>
-              <Ionicons name="search" size={12} color="#4A7DFF" />
-              <Text style={styles.intentChipText}>{intent.keywords.join(', ')}</Text>
-            </View>
-          )}
-          {intent.categories.length > 0 && (
-            <View style={styles.intentChip}>
-              <Ionicons name="pricetag" size={12} color="#4A7DFF" />
-              <Text style={styles.intentChipText}>{intent.categories.join(', ')}</Text>
-            </View>
-          )}
-          {intent.priceRange && (
-            <View style={styles.intentChip}>
-              <Ionicons name="cash" size={12} color="#4A7DFF" />
-              <Text style={styles.intentChipText}>
-                UGX {intent.priceRange.min.toLocaleString()} - {intent.priceRange.max.toLocaleString()}
-              </Text>
-            </View>
-          )}
-          {intent.location && (
-            <View style={styles.intentChip}>
-              <Ionicons name="location" size={12} color="#4A7DFF" />
-              <Text style={styles.intentChipText}>{intent.location}</Text>
-            </View>
-          )}
-          {intent.inStock && (
-            <View style={styles.intentChip}>
-              <Ionicons name="checkmark-circle" size={12} color="#2ECC71" />
-              <Text style={styles.intentChipText}>In Stock</Text>
-            </View>
-          )}
-          {intent.minRating > 0 && (
-            <View style={styles.intentChip}>
-              <Ionicons name="star" size={12} color="#F1C40F" />
-              <Text style={styles.intentChipText}>{intent.minRating}+ Stars</Text>
-            </View>
-          )}
-        </ScrollView>
-      )}
+      {intent &&
+        (intent.keywords.length > 0 ||
+          intent.categories.length > 0 ||
+          intent.priceRange ||
+          intent.location) && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.intentContainer}
+            contentContainerStyle={styles.intentContent}
+          >
+            {intent.keywords.length > 0 && (
+              <View style={styles.intentChip}>
+                <Ionicons name="search" size={12} color="#4A7DFF" />
+                <Text style={styles.intentChipText}>
+                  {intent.keywords.join(', ')}
+                </Text>
+              </View>
+            )}
+            {intent.categories.length > 0 && (
+              <View style={styles.intentChip}>
+                <Ionicons name="pricetag" size={12} color="#4A7DFF" />
+                <Text style={styles.intentChipText}>
+                  {intent.categories.join(', ')}
+                </Text>
+              </View>
+            )}
+            {intent.priceRange && (
+              <View style={styles.intentChip}>
+                <Ionicons name="cash" size={12} color="#4A7DFF" />
+                <Text style={styles.intentChipText}>
+                  UGX {intent.priceRange.min.toLocaleString()} -{' '}
+                  {intent.priceRange.max.toLocaleString()}
+                </Text>
+              </View>
+            )}
+            {intent.location && (
+              <View style={styles.intentChip}>
+                <Ionicons name="location" size={12} color="#4A7DFF" />
+                <Text style={styles.intentChipText}>{intent.location}</Text>
+              </View>
+            )}
+            {intent.inStock && (
+              <View style={styles.intentChip}>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={12}
+                  color="#2ECC71"
+                />
+                <Text style={styles.intentChipText}>In Stock</Text>
+              </View>
+            )}
+            {intent.minRating > 0 && (
+              <View style={styles.intentChip}>
+                <Ionicons name="star" size={12} color="#F1C40F" />
+                <Text style={styles.intentChipText}>
+                  {intent.minRating}+ Stars
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+        )}
 
-      {/* Main Grid with Sticky Filters */}
       <FlatList
         key={gridKey}
         data={filteredResults}
@@ -836,8 +1154,10 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
           <View style={styles.emptyGrid}>
             <Ionicons name="filter-outline" size={48} color="#8A8AAE" />
             <Text style={styles.emptyGridTitle}>No {activeFilter} found</Text>
-            <Text style={styles.emptyGridSubtext}>Try adjusting your filter</Text>
-            <TouchableOpacity 
+            <Text style={styles.emptyGridSubtitle}>
+              Try adjusting your filter
+            </Text>
+            <TouchableOpacity
               style={styles.clearFilterButton}
               onPress={() => handleFilterPress('all')}
             >
@@ -874,15 +1194,17 @@ const SearchResultsContent = ({ route, navigation }: SearchResultsScreenProps) =
 };
 
 // ============================================================
-// MAIN COMPONENT (Wrapped with ResponsiveLayout)
+// MAIN EXPORT
 // ============================================================
-
-export const SearchResultsScreen = ({ route, navigation }: SearchResultsScreenProps) => {
+export const SearchResultsScreen = ({
+  route,
+  navigation,
+}: SearchResultsScreenProps) => {
   const { isDesktop } = useBreakpoint();
 
   return (
-    <ResponsiveLayout 
-      currentRoute="Search" 
+    <ResponsiveLayout
+      currentRoute="Search"
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}
@@ -896,16 +1218,9 @@ export const SearchResultsScreen = ({ route, navigation }: SearchResultsScreenPr
 // ============================================================
 // STYLES
 // ============================================================
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0D0D1A',
-  },
-  containerDesktop: {
-    backgroundColor: '#0D0D1A',
-    padding: 24,
-  },
+  container: { flex: 1, backgroundColor: '#0D0D1A' },
+  containerDesktop: { backgroundColor: '#0D0D1A', padding: 24 },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -913,19 +1228,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#0D0D1A',
     padding: 20,
   },
-  loadingText: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 12,
-  },
-  list: {
-    flex: 1,
-    backgroundColor: '#0D0D1A',
+  loadingText: { color: '#8A8AAE', fontSize: 14, marginTop: 12 },
+  list: { flex: 1, backgroundColor: '#0D0D1A' },
+
+  itemMediaSpinnerOverlay: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
 
-  // ============================================================
-  // HEADER - Shows search query instead of "Results"
-  // ============================================================
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -946,24 +1259,15 @@ const styles = StyleSheet.create({
     gap: 12,
     flex: 1,
   },
-  backButtonHeader: {
-    padding: 4,
-  },
+  backButtonHeader: { padding: 4 },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#FFFFFF',
     flex: 1,
   },
-  headerSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginLeft: 8,
-  },
+  headerSubtitle: { color: '#8A8AAE', fontSize: 14, marginLeft: 8 },
 
-  // ============================================================
-  // INTENT CHIPS
-  // ============================================================
   intentContainer: {
     backgroundColor: 'rgba(13, 13, 26, 0.9)',
     borderBottomWidth: 1,
@@ -985,14 +1289,8 @@ const styles = StyleSheet.create({
     gap: 4,
     marginRight: 4,
   },
-  intentChipText: {
-    color: '#8A8AAE',
-    fontSize: 10,
-  },
+  intentChipText: { color: '#8A8AAE', fontSize: 10 },
 
-  // ============================================================
-  // FILTERS - 10+ Categories, Sticky
-  // ============================================================
   filterContainer: {
     backgroundColor: '#0D0D1A',
     paddingVertical: 8,
@@ -1023,14 +1321,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderColor: '#4A7DFF',
   },
-  filterChipText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  filterChipTextActive: {
-    color: '#4A7DFF',
-  },
+  filterChipText: { color: '#8A8AAE', fontSize: 12, fontWeight: '500' },
+  filterChipTextActive: { color: '#4A7DFF' },
   filterChipBadge: {
     backgroundColor: '#4A7DFF',
     borderRadius: 8,
@@ -1039,19 +1331,9 @@ const styles = StyleSheet.create({
     minWidth: 16,
     alignItems: 'center',
   },
-  filterChipBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 8,
-    fontWeight: 'bold',
-  },
+  filterChipBadgeText: { color: '#FFFFFF', fontSize: 8, fontWeight: 'bold' },
 
-  // ============================================================
-  // GRID STYLES (Matches Explore)
-  // ============================================================
-  gridContainer: {
-    padding: 4,
-    paddingBottom: 20,
-  },
+  gridContainer: { padding: 4, paddingBottom: 20 },
   gridCard: {
     flex: 1,
     margin: 1,
@@ -1092,10 +1374,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: '60%',
   },
-  gridGradient: {
-    width: '100%',
-    height: '100%',
-  },
+  gridGradient: { width: '100%', height: '100%' },
   gridInfo: {
     position: 'absolute',
     bottom: 0,
@@ -1103,13 +1382,11 @@ const styles = StyleSheet.create({
     right: 0,
     padding: 10,
   },
-  gridTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  gridPrice: {
-    color: '#4A7DFF',
+  gridTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
+  gridPrice: { color: '#4A7DFF', fontSize: 13, fontWeight: '700', marginTop: 2 },
+  // ✅ Green "Free" label
+  gridPriceFree: {
+    color: '#2ECC71',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 2,
@@ -1120,15 +1397,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 4,
   },
-  gridShop: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 11,
-    flex: 1,
-  },
-  gridRating: {
-    color: '#F1C40F',
-    fontSize: 11,
-  },
+  gridShop: { color: 'rgba(255,255,255,0.7)', fontSize: 11, flex: 1 },
+  gridRating: { color: '#F1C40F', fontSize: 11 },
 
   emptyGrid: {
     flex: 1,
@@ -1142,11 +1412,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 12,
   },
-  emptyGridSubtext: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 4,
-  },
+  emptyGridSubtitle: { color: '#8A8AAE', fontSize: 14, marginTop: 4 },
   clearFilterButton: {
     backgroundColor: '#4A7DFF',
     paddingHorizontal: 16,
@@ -1160,9 +1426,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ============================================================
-  // FULLSCREEN STYLES
-  // ============================================================
   backButton: {
     position: 'absolute',
     top: 50,
@@ -1176,11 +1439,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 6,
   },
-  backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '500',
-  },
+  backButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500' },
   actionRailWrapper: {
     position: 'absolute',
     right: 16,
@@ -1189,13 +1448,7 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
 
-  // ============================================================
-  // EMPTY STATE
-  // ============================================================
-  emptyContainer: {
-    flex: 1,
-    backgroundColor: '#0D0D1A',
-  },
+  emptyContainer: { flex: 1, backgroundColor: '#0D0D1A' },
   emptyBackButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1203,10 +1456,7 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     gap: 8,
   },
-  emptyBackText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-  },
+  emptyBackText: { color: '#FFFFFF', fontSize: 16 },
   emptyContent: {
     flex: 1,
     justifyContent: 'center',
@@ -1219,9 +1469,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 16,
   },
-  emptySubtext: {
-    color: '#8A8AAE',
-    fontSize: 14,
-    marginTop: 8,
-  },
+  emptySubtext: { color: '#8A8AAE', fontSize: 14, marginTop: 8 },
 });

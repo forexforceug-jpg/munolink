@@ -1,11 +1,11 @@
 // src/features/feed/components/FloatingActionRail.tsx
 
 import React, { memo, useRef, useEffect, useState, useCallback } from 'react';
-import { 
-  View, 
-  TouchableOpacity, 
-  Text, 
-  StyleSheet, 
+import {
+  View,
+  TouchableOpacity,
+  Text,
+  StyleSheet,
   Image,
   Platform,
   Share,
@@ -15,11 +15,9 @@ import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
 import { useBreakpoint } from '../../../hooks/useBreakpoint';
 
-// Logo import
 let munoLogo: any = null;
 try {
-  const logoPath = '../../../assets/muno.png';
-  munoLogo = require(logoPath);
+  munoLogo = require('../../../assets/muno.png');
 } catch (e) {
   try {
     munoLogo = require('../../../../assets/muno.png');
@@ -32,6 +30,8 @@ try {
 type IconName = keyof typeof Ionicons.glyphMap;
 
 const ICONS: Record<string, IconName> = {
+  like: 'heart',
+  likeOutline: 'heart-outline',
   reviews: 'chatbubble-ellipses',
   directions: 'location',
   share: 'share-social',
@@ -42,11 +42,16 @@ const ICONS: Record<string, IconName> = {
 interface FloatingActionRailProps {
   opportunity: Opportunity;
   onUserPress: () => void;
+  /** ✅ Toggle like for this post. */
+  onLikePress?: (opportunity: Opportunity) => void;
   onReviewsPress: (productId: string) => void;
   onDirectionsPress: (userName: string, area: string) => void;
   onSharePress: (opportunity: Opportunity) => void;
   onAIPress: (opportunity: Opportunity) => void;
   onSavePress?: (opportunity: Opportunity) => void;
+  /** ✅ Initial liked state + count from the parent. */
+  isLiked?: boolean;
+  likeCount?: number;
   reviewCount?: number;
   shareCount?: number;
   savedCount?: number;
@@ -69,7 +74,7 @@ const MOBILE_POSITION = {
   BUTTON_SIZE: 58,
   SHOP_BUTTON_SIZE: 52,
   GAP: 7,
-  AI_GAP: 45,
+  AI_GAP: 25,
   ICON_SIZE: 32,
   VALUE_FONT_SIZE: 11,
   LABEL_FONT_SIZE: 9,
@@ -101,11 +106,14 @@ const LogoImage = ({ size }: { size: number }) => {
 const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   opportunity,
   onUserPress,
+  onLikePress,
   onReviewsPress,
   onDirectionsPress,
   onSharePress,
   onAIPress,
   onSavePress,
+  isLiked = false,
+  likeCount = 0,
   reviewCount = 0,
   shareCount = 0,
   savedCount = 0,
@@ -114,59 +122,107 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   userAvatar = null,
 }) => {
   const { isDesktop } = useBreakpoint();
-  
-  const [currentOpportunityId, setCurrentOpportunityId] = useState(opportunity.id);
+
+  const [currentOpportunityId, setCurrentOpportunityId] = useState(
+    opportunity.id
+  );
+
+  // ✅ Optimistic like state
+  const [isLikedState, setIsLikedState] = useState(isLiked);
+  const [likeCountState, setLikeCountState] = useState(likeCount);
+
   const [isSavedState, setIsSavedState] = useState(isSaved);
   const [saveCount, setSaveCount] = useState(savedCount);
-  const hasInteractedRef = useRef(false);
+
+  const hasInteractedLikeRef = useRef(false);
+  const hasInteractedSaveRef = useRef(false);
 
   // Reset state when opportunity changes
   useEffect(() => {
     if (opportunity.id !== currentOpportunityId) {
       setCurrentOpportunityId(opportunity.id);
+
+      setIsLikedState(isLiked);
+      setLikeCountState(likeCount);
+      hasInteractedLikeRef.current = false;
+
       setIsSavedState(isSaved);
       setSaveCount(savedCount);
-      hasInteractedRef.current = false;
+      hasInteractedSaveRef.current = false;
     } else {
-      if (!hasInteractedRef.current) {
+      if (!hasInteractedLikeRef.current) {
+        setIsLikedState(isLiked);
+        setLikeCountState(likeCount);
+      }
+      if (!hasInteractedSaveRef.current) {
         setIsSavedState(isSaved);
         setSaveCount(savedCount);
       }
     }
-  }, [opportunity.id, isSaved, savedCount]);
+  }, [opportunity.id, isLiked, likeCount, isSaved, savedCount]);
 
-  const triggerHaptic = useCallback(async (style: 'light' | 'medium' | 'heavy') => {
-    try {
-      if (Platform.OS !== 'web') {
-        const styleMap = {
-          light: Haptics.ImpactFeedbackStyle.Light,
-          medium: Haptics.ImpactFeedbackStyle.Medium,
-          heavy: Haptics.ImpactFeedbackStyle.Heavy,
-        };
-        await Haptics.impactAsync(styleMap[style]);
+  const triggerHaptic = useCallback(
+    async (style: 'light' | 'medium' | 'heavy') => {
+      try {
+        if (Platform.OS !== 'web') {
+          const styleMap = {
+            light: Haptics.ImpactFeedbackStyle.Light,
+            medium: Haptics.ImpactFeedbackStyle.Medium,
+            heavy: Haptics.ImpactFeedbackStyle.Heavy,
+          };
+          await Haptics.impactAsync(styleMap[style]);
+        }
+      } catch (error) {
+        // Silently fail
       }
-    } catch (error) {
-      // Silently fail
-    }
-  }, []);
+    },
+    []
+  );
 
-  const handlePress = useCallback((action: string, callback: () => void) => {
-    triggerHaptic('light');
-    if (callback && typeof callback === 'function') {
-      callback();
+  const handlePress = useCallback(
+    (action: string, callback: () => void) => {
+      triggerHaptic('light');
+      if (callback && typeof callback === 'function') {
+        callback();
+      }
+    },
+    [triggerHaptic]
+  );
+
+  // ✅ Like toggle — optimistic
+  const handleLikePress = useCallback(() => {
+    hasInteractedLikeRef.current = true;
+    triggerHaptic('medium');
+
+    const newLiked = !isLikedState;
+    const newCount = newLiked
+      ? likeCountState + 1
+      : Math.max(0, likeCountState - 1);
+
+    setIsLikedState(newLiked);
+    setLikeCountState(newCount);
+
+    if (onLikePress) {
+      onLikePress(opportunity);
     }
-  }, [triggerHaptic]);
+  }, [
+    isLikedState,
+    likeCountState,
+    triggerHaptic,
+    onLikePress,
+    opportunity,
+  ]);
 
   const handleSavePress = useCallback(() => {
-    hasInteractedRef.current = true;
+    hasInteractedSaveRef.current = true;
     triggerHaptic('medium');
-    
+
     const newSaved = !isSavedState;
     const newCount = newSaved ? saveCount + 1 : Math.max(0, saveCount - 1);
-    
+
     setIsSavedState(newSaved);
     setSaveCount(newCount);
-    
+
     if (onSavePress) {
       onSavePress(opportunity);
     }
@@ -175,27 +231,29 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const handleSharePress = useCallback(async () => {
     try {
       triggerHaptic('light');
-      
-      // Increment share count via callback
+
       if (onSharePress) {
         onSharePress(opportunity);
       }
-      
+
       const title = opportunity.title || 'Check this out on Munolink';
-      const price = opportunity.price ? `UGX ${opportunity.price.toLocaleString()}` : '';
-      const user = opportunity.userFullName ? `from ${opportunity.userFullName}` : '';
-      const distanceText = opportunity.distance ? `${opportunity.distance.toFixed(1)}km away` : '';
-      
+      const price = opportunity.price
+        ? `UGX ${opportunity.price.toLocaleString()}`
+        : '';
+      const user = opportunity.userFullName
+        ? `from ${opportunity.userFullName}`
+        : '';
+      const distanceText = opportunity.distance
+        ? `${opportunity.distance.toFixed(1)}km away`
+        : '';
+
       let message = `🛍️ ${title}`;
       if (price) message += `\n💰 ${price}`;
       if (user) message += `\n👤 ${user}`;
       if (distanceText) message += `\n📍 ${distanceText}`;
       message += `\n\n📱 Check it out on Munolink: https://munolink.com/post/${opportunity.id}`;
-      
-      await Share.share({
-        message: message,
-      });
-      
+
+      await Share.share({ message });
     } catch (error) {
       console.error('Share error:', error);
     }
@@ -206,39 +264,76 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     return null;
   }
 
-  const buttonSize = isDesktop ? DESKTOP_POSITION.BUTTON_SIZE : MOBILE_POSITION.BUTTON_SIZE;
-  const shopButtonSize = isDesktop ? DESKTOP_POSITION.SHOP_BUTTON_SIZE : MOBILE_POSITION.SHOP_BUTTON_SIZE;
-  const iconSize = isDesktop ? DESKTOP_POSITION.ICON_SIZE : MOBILE_POSITION.ICON_SIZE;
-  const valueFontSize = isDesktop ? DESKTOP_POSITION.VALUE_FONT_SIZE : MOBILE_POSITION.VALUE_FONT_SIZE;
-  const labelFontSize = isDesktop ? DESKTOP_POSITION.LABEL_FONT_SIZE : MOBILE_POSITION.LABEL_FONT_SIZE;
+  const buttonSize = isDesktop
+    ? DESKTOP_POSITION.BUTTON_SIZE
+    : MOBILE_POSITION.BUTTON_SIZE;
+  const shopButtonSize = isDesktop
+    ? DESKTOP_POSITION.SHOP_BUTTON_SIZE
+    : MOBILE_POSITION.SHOP_BUTTON_SIZE;
+  const iconSize = isDesktop
+    ? DESKTOP_POSITION.ICON_SIZE
+    : MOBILE_POSITION.ICON_SIZE;
+  const valueFontSize = isDesktop
+    ? DESKTOP_POSITION.VALUE_FONT_SIZE
+    : MOBILE_POSITION.VALUE_FONT_SIZE;
+  const labelFontSize = isDesktop
+    ? DESKTOP_POSITION.LABEL_FONT_SIZE
+    : MOBILE_POSITION.LABEL_FONT_SIZE;
   const gap = isDesktop ? DESKTOP_POSITION.GAP : MOBILE_POSITION.GAP;
   const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : MOBILE_POSITION.AI_GAP;
 
   const userLetter = opportunity.userFullName?.charAt(0).toUpperCase() || 'U';
-  
-  const LOGO_SIZE_DESKTOP = 80;
-  const LOGO_SIZE_MOBILE = 70;
-  const logoSize = isDesktop ? LOGO_SIZE_DESKTOP : LOGO_SIZE_MOBILE;
 
-  // Distance display
-  let distanceDisplay = '0km';
-  if (distance && distance > 0) {
-    if (distance < 1) {
-      distanceDisplay = `${Math.round(distance * 1000)}m`;
-    } else if (distance < 10) {
-      distanceDisplay = `${distance.toFixed(1)}km`;
+  const logoSize = isDesktop ? 80 : 70;
+
+  // ---- Distance ----
+  const effectiveDistance =
+    typeof opportunity.distance === 'number' && opportunity.distance > 0
+      ? opportunity.distance
+      : typeof distance === 'number' && distance > 0
+      ? distance
+      : 0;
+
+  let distanceDisplay = '—';
+  if (effectiveDistance > 0) {
+    if (effectiveDistance < 1) {
+      distanceDisplay = `${Math.round(effectiveDistance * 1000)}m`;
+    } else if (effectiveDistance < 10) {
+      distanceDisplay = `${effectiveDistance.toFixed(1)}km`;
     } else {
-      distanceDisplay = `${Math.round(distance)}km`;
+      distanceDisplay = `${Math.round(effectiveDistance)}km`;
     }
   }
 
+  // ---- Review count ----
+  const displayReviewCount =
+    typeof opportunity.commentCount === 'number' &&
+    opportunity.commentCount >= 0
+      ? opportunity.commentCount
+      : reviewCount || 0;
+
+  // ---- Share count ----
+  const displayShareCount =
+    typeof opportunity.shareCount === 'number'
+      ? opportunity.shareCount
+      : shareCount || 0;
+
+  // ---- Save count ----
+  const displaySaveCount = hasInteractedSaveRef.current
+    ? saveCount
+    : typeof opportunity.saveCount === 'number'
+    ? opportunity.saveCount
+    : saveCount || 0;
+
+  // ---- Like count ----
+  const displayLikeCount = hasInteractedLikeRef.current
+    ? likeCountState
+    : typeof opportunity.likeCount === 'number'
+    ? opportunity.likeCount
+    : likeCountState || 0;
+
   const avatarUrl = userAvatar || opportunity.userAvatar || null;
   const hasValidAvatar = avatarUrl && avatarUrl.startsWith('http');
-
-  // ✅ Use real counts from opportunity
-  const displayShareCount = opportunity.shareCount || shareCount || 0;
-  const displaySaveCount = saveCount > 0 ? saveCount : (opportunity.saveCount || 0);
-  const displayReviewCount = opportunity.commentCount || reviewCount || 0;
 
   return (
     <View style={[styles.container, { gap }]}>
@@ -246,11 +341,11 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
       <TouchableOpacity
         style={[
           styles.userButton,
-          { 
-            width: shopButtonSize, 
+          {
+            width: shopButtonSize,
             height: shopButtonSize,
             borderRadius: shopButtonSize / 2,
-          }
+          },
         ]}
         onPress={() => handlePress('User', onUserPress)}
         activeOpacity={0.8}
@@ -261,25 +356,64 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
               source={{ uri: avatarUrl }}
               style={[
                 styles.userAvatar,
-                { width: shopButtonSize * 0.7, height: shopButtonSize * 0.7 }
+                { width: shopButtonSize * 0.7, height: shopButtonSize * 0.7 },
               ]}
               resizeMode="cover"
             />
           ) : (
-            <Text style={[styles.userLetter, { fontSize: shopButtonSize * 0.5 }]}>
+            <Text
+              style={[styles.userLetter, { fontSize: shopButtonSize * 0.5 }]}
+            >
               {userLetter}
             </Text>
           )}
         </View>
       </TouchableOpacity>
 
-      {/* Reviews Button - Shows comment count */}
+      {/* ✅ LIKE BUTTON — above Reviews */}
       <TouchableOpacity
         style={[
           styles.actionButton,
-          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+          {
+            width: buttonSize,
+            height: buttonSize,
+            borderRadius: buttonSize / 2,
+          },
         ]}
-        onPress={() => handlePress('Reviews', () => onReviewsPress(opportunity.id))}
+        onPress={handleLikePress}
+        activeOpacity={0.7}
+      >
+        <Ionicons
+          name={isLikedState ? ICONS.like : ICONS.like}
+          size={iconSize}
+          color={isLikedState ? '#FF4D6D' : '#FFFFFF'}
+        />
+        <Text
+          style={[
+            styles.valueText,
+            {
+              fontSize: valueFontSize,
+              color: isLikedState ? '#FF4D6D' : 'rgba(255,255,255,0.9)',
+            },
+          ]}
+        >
+          {displayLikeCount}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Reviews */}
+      <TouchableOpacity
+        style={[
+          styles.actionButton,
+          {
+            width: buttonSize,
+            height: buttonSize,
+            borderRadius: buttonSize / 2,
+          },
+        ]}
+        onPress={() =>
+          handlePress('Reviews', () => onReviewsPress(opportunity.id))
+        }
         activeOpacity={0.7}
       >
         <Ionicons name={ICONS.reviews} size={iconSize} color="#FFFFFF" />
@@ -288,26 +422,41 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* Directions Button - Shows distance */}
-<TouchableOpacity
-  style={[
-    styles.actionButton,
-    { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
-  ]}
-  onPress={() => handlePress('Directions', () => onDirectionsPress(opportunity.userFullName || 'User', opportunity.area || ''))}
-  activeOpacity={0.7}
->
-  <Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />  
-  <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
-    {distanceDisplay}
-  </Text>
-</TouchableOpacity>
-
-      {/* Share Button - Shows share count */}
+      {/* Directions */}
       <TouchableOpacity
         style={[
           styles.actionButton,
-          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+          {
+            width: buttonSize,
+            height: buttonSize,
+            borderRadius: buttonSize / 2,
+          },
+        ]}
+        onPress={() =>
+          handlePress('Directions', () =>
+            onDirectionsPress(
+              opportunity.userFullName || 'User',
+              opportunity.area || ''
+            )
+          )
+        }
+        activeOpacity={0.7}
+      >
+        <Ionicons name={ICONS.directions} size={iconSize} color="#FFFFFF" />
+        <Text style={[styles.valueText, { fontSize: valueFontSize }]}>
+          {distanceDisplay}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Share */}
+      <TouchableOpacity
+        style={[
+          styles.actionButton,
+          {
+            width: buttonSize,
+            height: buttonSize,
+            borderRadius: buttonSize / 2,
+          },
         ]}
         onPress={handleSharePress}
         activeOpacity={0.7}
@@ -318,38 +467,47 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </Text>
       </TouchableOpacity>
 
-      {/* Save Button - Shows save count */}
+      {/* Save */}
       <TouchableOpacity
         style={[
           styles.actionButton,
-          { width: buttonSize, height: buttonSize, borderRadius: buttonSize / 2 }
+          {
+            width: buttonSize,
+            height: buttonSize,
+            borderRadius: buttonSize / 2,
+          },
         ]}
         onPress={handleSavePress}
         activeOpacity={0.7}
       >
-        <Ionicons 
-          name={isSavedState ? ICONS.save : ICONS.saveOutline} 
-          size={iconSize} 
-          color={isSavedState ? '#FF6B6B' : '#FFFFFF'} 
+        <Ionicons
+          name={isSavedState ? ICONS.save : ICONS.saveOutline}
+          size={iconSize}
+          color={isSavedState ? '#FF6B6B' : '#FFFFFF'}
         />
-        <Text style={[styles.valueText, { 
-          fontSize: valueFontSize,
-          color: isSavedState ? '#FF6B6B' : 'rgba(255,255,255,0.8)'
-        }]}>
+        <Text
+          style={[
+            styles.valueText,
+            {
+              fontSize: valueFontSize,
+              color: isSavedState ? '#FF6B6B' : 'rgba(255,255,255,0.8)',
+            },
+          ]}
+        >
           {displaySaveCount}
         </Text>
       </TouchableOpacity>
 
-      {/* AI Button */}
+      {/* AI */}
       <View style={[styles.aiWrapper, { marginTop: aiGap }]}>
         <TouchableOpacity
           style={[
             styles.aiButton,
-            { 
-              width: shopButtonSize, 
+            {
+              width: shopButtonSize,
               height: shopButtonSize,
               borderRadius: shopButtonSize / 2,
-            }
+            },
           ]}
           onPress={() => {
             triggerHaptic('heavy');
@@ -363,13 +521,18 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
             </View>
           </View>
         </TouchableOpacity>
-        
-        <Text style={[styles.labelText, { 
-          fontSize: labelFontSize,
-          marginTop: 3,
-          color: '#4A7DFF',
-          textAlign: 'center',
-        }]}>
+
+        <Text
+          style={[
+            styles.labelText,
+            {
+              fontSize: labelFontSize,
+              marginTop: 3,
+              color: '#4A7DFF',
+              textAlign: 'center',
+            },
+          ]}
+        >
           AI
         </Text>
       </View>
@@ -377,20 +540,47 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   );
 };
 
-export const FloatingActionRail = memo(FloatingActionRailComponent, (prevProps, nextProps) => {
-  const opportunityChanged = prevProps.opportunity.id !== nextProps.opportunity.id;
-  const saveStateChanged = prevProps.isSaved !== nextProps.isSaved || 
-                          prevProps.savedCount !== nextProps.savedCount;
-  const otherPropsChanged = prevProps.shareCount !== nextProps.shareCount ||
-                           prevProps.reviewCount !== nextProps.reviewCount ||
-                           prevProps.distance !== nextProps.distance ||
-                           prevProps.userAvatar !== nextProps.userAvatar;
-  
-  if (!opportunityChanged && !saveStateChanged && !otherPropsChanged) {
-    return true;
+export const FloatingActionRail = memo(
+  FloatingActionRailComponent,
+  (prevProps, nextProps) => {
+    const opportunityChanged =
+      prevProps.opportunity.id !== nextProps.opportunity.id;
+
+    const likeStateChanged =
+      prevProps.isLiked !== nextProps.isLiked ||
+      prevProps.likeCount !== nextProps.likeCount;
+
+    const saveStateChanged =
+      prevProps.isSaved !== nextProps.isSaved ||
+      prevProps.savedCount !== nextProps.savedCount;
+
+    const otherPropsChanged =
+      prevProps.shareCount !== nextProps.shareCount ||
+      prevProps.reviewCount !== nextProps.reviewCount ||
+      prevProps.distance !== nextProps.distance ||
+      prevProps.userAvatar !== nextProps.userAvatar;
+
+    const opportunityDataChanged =
+      prevProps.opportunity.distance !== nextProps.opportunity.distance ||
+      prevProps.opportunity.commentCount !==
+        nextProps.opportunity.commentCount ||
+      prevProps.opportunity.saveCount !== nextProps.opportunity.saveCount ||
+      prevProps.opportunity.shareCount !== nextProps.opportunity.shareCount ||
+      prevProps.opportunity.likeCount !== nextProps.opportunity.likeCount ||
+      prevProps.opportunity.userAvatar !== nextProps.opportunity.userAvatar;
+
+    if (
+      !opportunityChanged &&
+      !likeStateChanged &&
+      !saveStateChanged &&
+      !otherPropsChanged &&
+      !opportunityDataChanged
+    ) {
+      return true;
+    }
+    return false;
   }
-  return false;
-});
+);
 
 const styles = StyleSheet.create({
   container: {
