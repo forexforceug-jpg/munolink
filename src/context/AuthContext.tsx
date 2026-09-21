@@ -14,6 +14,7 @@ import { Session } from '@supabase/supabase-js';
 import { Alert } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
+import * as Crypto from 'expo-crypto';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -62,6 +63,16 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function generateNonce(length = 32): string {
+  // ✅ Cast to any, then back to Uint8Array so TS accepts it across
+  //    all platforms (native returns Uint8Array, web may return a
+  //    different typed array in some SDK versions).
+  const bytes: any = Crypto.getRandomBytes(length);
+  return Array.from(bytes as Uint8Array)
+    .map((b: number) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 // ============================================================
 // PROVIDER
 // ============================================================
@@ -74,28 +85,115 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Google OAuth request (must be at top level)
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+  const rawNonceRef = React.useRef<string | null>(null);
+
+  // ============================================================
+  // GOOGLE OAUTH REQUEST
+  // ============================================================
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
   });
 
   // ============================================================
-  // CHECK AUTH ON START
+  // ✅ CHECK AUTH ON START
+  //
+  // Priority:
+  //   1. Supabase's own session (from signInWithIdToken)
+  //   2. AsyncStorage token + userData (from phone/email/legacy sign-in)
+  //   3. Fall back to guest
+  //
+  // This ordering is what keeps users signed in across refreshes.
   // ============================================================
   useEffect(() => {
+    let cancelled = false;
+
     const checkAuth = async () => {
       try {
         console.log('🔍 Checking auth state...');
 
+        // 1️⃣ Try Supabase's own persisted session first
+        try {
+          const { data, error } = await supabase.auth.getSession();
+          if (!cancelled && !error && data.session?.user) {
+            console.log(
+              '✅ Restored Supabase session for:',
+              data.session.user.id
+            );
+
+            setSession(data.session);
+
+            // Look up the full profile from the users table
+            const { data: dbUser } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', data.session.user.id)
+              .maybeSingle();
+
+            // ✅ Cast to any so TS doesn't complain about columns
+            //    that aren't in the generated types (e.g. `email`).
+            const db: any = dbUser || {};
+
+            const mergedUser = {
+              id: data.session.user.id,
+              email: db.email || data.session.user.email,
+              full_name:
+                db.full_name ||
+                data.session.user.user_metadata?.full_name ||
+                data.session.user.user_metadata?.name ||
+                'Munolink Member',
+              name:
+                db.full_name ||
+                data.session.user.user_metadata?.full_name ||
+                'Munolink Member',
+              phone: db.phone_number || data.session.user.phone || '',
+              phone_number: db.phone_number || data.session.user.phone || '',
+              avatar_url:
+                db.avatar_url ||
+                data.session.user.user_metadata?.avatar_url ||
+                null,
+              role: db.role || 'customer',
+              wallet_balance: db.wallet_balance || 0,
+              lifetime_savings: db.lifetime_savings || 0,
+              location_city: db.location_city || null,
+              location_region: db.location_region || null,
+              location_country: db.location_country || null,
+              latitude: db.latitude ?? null,
+              longitude: db.longitude ?? null,
+            };
+
+            setUser(mergedUser);
+            setIsAuthenticated(true);
+            setIsGuest(false);
+
+            // Also persist to AsyncStorage so other screens can read it fast
+            await AsyncStorage.setItem(
+              'authToken',
+              data.session.access_token
+            );
+            await AsyncStorage.setItem(
+              'userData',
+              JSON.stringify(mergedUser)
+            );
+
+            return; // ✅ We're done — no need to check AsyncStorage
+          }
+        } catch (supabaseErr) {
+          console.warn('⚠️ Supabase session check failed:', supabaseErr);
+        }
+
+        // 2️⃣ Fall back to AsyncStorage (phone/email/legacy)
         const token = await AsyncStorage.getItem('authToken');
         const userDataStr = await AsyncStorage.getItem('userData');
 
         if (!token || !userDataStr) {
           console.log('ℹ️ No stored auth data found');
-          setIsAuthenticated(false);
-          setIsGuest(true);
+          if (!cancelled) {
+            setIsAuthenticated(false);
+            setIsGuest(true);
+          }
           return;
         }
 
@@ -106,8 +204,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           console.error('Error parsing user data:', parseError);
           await AsyncStorage.removeItem('authToken');
           await AsyncStorage.removeItem('userData');
-          setIsAuthenticated(false);
-          setIsGuest(true);
+          if (!cancelled) {
+            setIsAuthenticated(false);
+            setIsGuest(true);
+          }
           return;
         }
 
@@ -115,12 +215,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           console.log('⚠️ Invalid user data, clearing session');
           await AsyncStorage.removeItem('authToken');
           await AsyncStorage.removeItem('userData');
-          setIsAuthenticated(false);
-          setIsGuest(true);
+          if (!cancelled) {
+            setIsAuthenticated(false);
+            setIsGuest(true);
+          }
           return;
         }
 
-        console.log('✅ Found stored user:', parsedUser.id);
+        console.log('✅ Found stored user in AsyncStorage:', parsedUser.id);
 
         // Fail-safe DB check
         try {
@@ -130,35 +232,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             .eq('id', parsedUser.id)
             .maybeSingle();
 
-          if (dbUser) {
-            console.log('✅ User verified in database');
+          const db: any = dbUser || {};
+
+          if (dbUser && !cancelled) {
             setUser({
               ...parsedUser,
-              full_name: dbUser.full_name || parsedUser.full_name,
-              avatar_url: dbUser.avatar_url || parsedUser.avatar_url,
-              email: (dbUser as any).email || parsedUser.email,
-              role: dbUser.role || 'customer',
-              wallet_balance: dbUser.wallet_balance || 0,
-              lifetime_savings: dbUser.lifetime_savings || 0,
-              location_city: dbUser.location_city || null,
-              location_region: dbUser.location_region || null,
-              location_country: dbUser.location_country || null,
-              latitude: dbUser.latitude ?? null,
-              longitude: dbUser.longitude ?? null,
+              full_name: db.full_name || parsedUser.full_name,
+              avatar_url: db.avatar_url || parsedUser.avatar_url,
+              email: db.email || parsedUser.email,
+              role: db.role || 'customer',
+              wallet_balance: db.wallet_balance || 0,
+              lifetime_savings: db.lifetime_savings || 0,
+              location_city: db.location_city || null,
+              location_region: db.location_region || null,
+              location_country: db.location_country || null,
+              latitude: db.latitude ?? null,
+              longitude: db.longitude ?? null,
             });
             setIsAuthenticated(true);
             setIsGuest(false);
-            console.log('✅ Session restored successfully');
-          } else if (dbError) {
-            console.warn(
-              '⚠️ Could not verify user with DB. Using cached session:',
-              dbError.message
-            );
+          } else if (dbError && !cancelled) {
+            console.warn('⚠️ DB check failed, using cached session');
             setUser(parsedUser);
             setIsAuthenticated(true);
             setIsGuest(false);
-          } else {
-            console.log('⚠️ User not found in database, clearing session');
+          } else if (!cancelled) {
+            console.log('⚠️ User not found in DB, clearing session');
             await AsyncStorage.removeItem('authToken');
             await AsyncStorage.removeItem('userData');
             setIsAuthenticated(false);
@@ -166,21 +265,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setUser(null);
           }
         } catch (networkErr) {
-          console.warn('⚠️ DB check threw, using cached session:', networkErr);
-          setUser(parsedUser);
-          setIsAuthenticated(true);
-          setIsGuest(false);
+          console.warn(
+            '⚠️ DB check threw, using cached session:',
+            networkErr
+          );
+          if (!cancelled) {
+            setUser(parsedUser);
+            setIsAuthenticated(true);
+            setIsGuest(false);
+          }
         }
       } catch (error) {
         console.error('Error checking auth:', error);
-        setIsAuthenticated(false);
-        setIsGuest(true);
+        if (!cancelled) {
+          setIsAuthenticated(false);
+          setIsGuest(true);
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ============================================================
+  // ✅ LISTEN TO SUPABASE AUTH EVENTS
+  // ============================================================
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      console.log('🔔 Supabase auth event:', event);
+
+      if (event === 'SIGNED_IN' && newSession) {
+        setSession(newSession);
+        setIsAuthenticated(true);
+        setIsGuest(false);
+      } else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setUser(null);
+        setIsAuthenticated(false);
+        setIsGuest(true);
+      } else if (event === 'TOKEN_REFRESHED' && newSession) {
+        setSession(newSession);
+        await AsyncStorage.setItem('authToken', newSession.access_token);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   // ============================================================
@@ -190,7 +326,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     if (response?.type === 'success') {
       const { id_token } = response.params;
       if (id_token) {
-        handleGoogleSignIn(id_token);
+        handleGoogleSignIn(id_token, rawNonceRef.current || undefined);
       } else {
         Alert.alert('Error', 'No ID token received from Google.');
       }
@@ -200,7 +336,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [response]);
 
-  const handleGoogleSignIn = async (idToken: string) => {
+  const handleGoogleSignIn = async (idToken: string, rawNonce?: string) => {
     try {
       setIsLoading(true);
       console.log('🔑 Signing in with Google ID token');
@@ -208,6 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const { data, error } = await supabase.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
+        nonce: rawNonce,
       });
 
       if (error) throw error;
@@ -224,12 +361,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           googleUser.user_metadata?.picture ||
           null;
 
-        // Check if we already have this user
         const { data: existing } = await supabase
           .from('users')
           .select('*')
           .eq('id', googleUser.id)
           .maybeSingle();
+
+        const existingAny: any = existing || {};
 
         if (!existing) {
           const { error: insertError } = await supabase
@@ -253,18 +391,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
         const userData = {
           id: googleUser.id,
-          phone: googleUser.phone || (existing as any)?.phone_number || '',
+          phone: googleUser.phone || existingAny.phone_number || '',
+          phone_number: existingAny.phone_number || googleUser.phone || '',
           email: userEmail,
-          full_name: (existing as any)?.full_name || userName,
-          avatar_url: (existing as any)?.avatar_url || avatar,
+          full_name: existingAny.full_name || userName,
+          name: existingAny.full_name || userName,
+          avatar_url: existingAny.avatar_url || avatar,
           created_at: new Date().toISOString(),
           isVerified: true,
-          role: 'customer',
-          wallet_balance: 0,
-          lifetime_savings: 0,
+          role: existingAny.role || 'customer',
+          wallet_balance: existingAny.wallet_balance || 0,
+          lifetime_savings: existingAny.lifetime_savings || 0,
+          location_city: existingAny.location_city || null,
+          location_region: existingAny.location_region || null,
+          location_country: existingAny.location_country || null,
+          latitude: existingAny.latitude ?? null,
+          longitude: existingAny.longitude ?? null,
         };
 
-        await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+        await AsyncStorage.setItem(
+          'authToken',
+          data.session?.access_token || `token_${Date.now()}`
+        );
         await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
         setUser(userData);
@@ -287,6 +435,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const signInWithGoogle = async () => {
     try {
+      rawNonceRef.current = generateNonce();
       await promptAsync();
     } catch (error: any) {
       console.error('Google sign-in error:', error);
@@ -353,6 +502,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const userData = {
         id: userId,
         phone: fullPhone,
+        phone_number: fullPhone,
         full_name: userName,
         name: userName,
         created_at: new Date().toISOString(),
@@ -375,7 +525,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
-  // EMAIL SIGN UP (NO HASHING — plain text for now)
+  // EMAIL SIGN UP
   // ============================================================
   const signUpWithEmail = async (
     fullName: string,
@@ -398,7 +548,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         throw new Error('Password must be at least 6 characters');
       }
 
-      // Check email uniqueness
       const { data: existing } = await (supabase.from('users' as any) as any)
         .select('id')
         .eq('email', normalizedEmail)
@@ -416,7 +565,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           id: userId,
           full_name: trimmedName,
           email: normalizedEmail,
-          password_hash: password, // ⚠️ plain-text for now — do NOT ship this
+          password_hash: password, // ⚠️ plain-text for now
           role: 'customer',
           wallet_balance: 0,
           lifetime_savings: 0,
@@ -453,7 +602,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
-  // EMAIL SIGN IN (NO HASHING — plain-text comparison)
+  // EMAIL SIGN IN
   // ============================================================
   const signInWithEmail = async (
     email: string,
@@ -535,9 +684,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signOut = async (): Promise<void> => {
     setIsLoading(true);
     try {
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut();
+      } catch (e) {
+        console.warn('Supabase signOut failed:', e);
+      }
+
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
+
       setUser(null);
       setSession(null);
       setIsAuthenticated(false);
@@ -560,6 +715,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshSession = async (): Promise<void> => {
     try {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        setSession(data.session);
+        setIsAuthenticated(true);
+        setIsGuest(false);
+        return;
+      }
+
       const userDataStr = await AsyncStorage.getItem('userData');
       if (userDataStr) {
         setUser(JSON.parse(userDataStr));

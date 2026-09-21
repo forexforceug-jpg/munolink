@@ -1,6 +1,6 @@
 // src/features/profile/ProfileScreen.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,6 @@ import {
   Image,
   StatusBar,
   TextInput,
-  Alert,
   ActivityIndicator,
   Platform,
 } from 'react-native';
@@ -21,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { supabase } from '../../lib/supabase';
+import { StyledAlert } from '../feed/components/StyledAlert';
 import * as ImagePicker from 'expo-image-picker';
 
 const ProfileContent = ({ navigation }: any) => {
@@ -32,6 +32,49 @@ const ProfileContent = ({ navigation }: any) => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   useEffect(() => {
     fetchProfile();
@@ -60,7 +103,13 @@ const ProfileContent = ({ navigation }: any) => {
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
-      Alert.alert('Error', 'Failed to load profile');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to load profile',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } finally {
       setLoading(false);
     }
@@ -99,14 +148,22 @@ const ProfileContent = ({ navigation }: any) => {
         });
 
         input.click();
-        const fileData = await fileSelected as any;
+        const fileData = (await fileSelected) as any;
         await uploadAvatar(fileData);
         return;
       }
 
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        showStyledAlert({
+          title: 'Permission Required',
+          message: 'Please allow access to your photos.',
+          icon: 'images-outline',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+          ],
+        });
         return;
       }
 
@@ -130,14 +187,28 @@ const ProfileContent = ({ navigation }: any) => {
     } catch (error: any) {
       if (error.message !== 'Cancelled') {
         console.error('Image pick error:', error);
-        Alert.alert('Error', 'Failed to select image. Please try again.');
+        showStyledAlert({
+          title: 'Error',
+          message: 'Failed to select image. Please try again.',
+          icon: 'alert-circle-outline',
+          iconColor: '#E74C3C',
+          buttons: [
+            { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+          ],
+        });
       }
     }
   };
 
   const uploadAvatar = async (file: any) => {
     if (!user?.id) {
-      Alert.alert('Error', 'Please sign in first');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Please sign in first',
+        icon: 'lock-closed-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
@@ -146,7 +217,7 @@ const ProfileContent = ({ navigation }: any) => {
       console.log('📤 Uploading avatar...');
 
       let base64Data = '';
-      
+
       if (Platform.OS === 'web' && file.blob) {
         const reader = new FileReader();
         base64Data = await new Promise((resolve, reject) => {
@@ -189,9 +260,9 @@ const ProfileContent = ({ navigation }: any) => {
         throw uploadError;
       }
 
-      const { data: { publicUrl } } = supabase.storage
-        .from(bucket)
-        .getPublicUrl(path);
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from(bucket).getPublicUrl(path);
 
       const { error: updateError } = await supabase
         .from('users')
@@ -204,10 +275,22 @@ const ProfileContent = ({ navigation }: any) => {
       }
 
       setAvatarUrl(publicUrl);
-      Alert.alert('Success', 'Avatar updated successfully!');
+      showStyledAlert({
+        title: 'Success',
+        message: 'Avatar updated successfully!',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#2ECC71',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } catch (error: any) {
       console.error('Upload error:', error);
-      Alert.alert('Error', error.message || 'Failed to upload avatar');
+      showStyledAlert({
+        title: 'Error',
+        message: error.message || 'Failed to upload avatar',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } finally {
       setUploading(false);
     }
@@ -215,7 +298,13 @@ const ProfileContent = ({ navigation }: any) => {
 
   const saveProfile = async () => {
     if (!user?.id) {
-      Alert.alert('Error', 'Please sign in first');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Please sign in first',
+        icon: 'lock-closed-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
@@ -230,10 +319,22 @@ const ProfileContent = ({ navigation }: any) => {
 
       if (error) throw error;
 
-      Alert.alert('Success', 'Profile updated successfully!');
+      showStyledAlert({
+        title: 'Success',
+        message: 'Profile updated successfully!',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#2ECC71',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } catch (error: any) {
       console.error('Save error:', error);
-      Alert.alert('Error', error.message || 'Failed to save profile');
+      showStyledAlert({
+        title: 'Error',
+        message: error.message || 'Failed to save profile',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } finally {
       setSaving(false);
     }
@@ -241,18 +342,28 @@ const ProfileContent = ({ navigation }: any) => {
 
   if (loading) {
     return (
-      <View style={[styles.loadingContainer, isDesktop && styles.desktopContainer]}>
+      <View
+        style={[styles.loadingContainer, isDesktop && styles.desktopContainer]}
+      >
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading profile...</Text>
       </View>
     );
   }
 
-  const avatarDisplayUrl = avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName || 'User')}&background=4A7DFF&color=fff&size=200`;
+  const avatarDisplayUrl =
+    avatarUrl ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(
+      fullName || 'User'
+    )}&background=4A7DFF&color=fff&size=200`;
 
   return (
-      <SafeAreaView style={[styles.container, isDesktop && styles.desktopContainer]} edges={['top']}>      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
+    <SafeAreaView
+      style={[styles.container, isDesktop && styles.desktopContainer]}
+      edges={['top']}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -265,8 +376,8 @@ const ProfileContent = ({ navigation }: any) => {
       <ScrollView contentContainerStyle={styles.content}>
         {/* Avatar Section */}
         <View style={styles.avatarSection}>
-          <TouchableOpacity 
-            style={styles.avatarContainer} 
+          <TouchableOpacity
+            style={styles.avatarContainer}
             onPress={pickImage}
             disabled={uploading}
           >
@@ -328,6 +439,17 @@ const ProfileContent = ({ navigation }: any) => {
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* ✅ StyledAlert */}
+      <StyledAlert
+        visible={styledAlertConfig.visible}
+        title={styledAlertConfig.title}
+        message={styledAlertConfig.message}
+        icon={styledAlertConfig.icon}
+        iconColor={styledAlertConfig.iconColor}
+        buttons={styledAlertConfig.buttons}
+        onClose={hideStyledAlert}
+      />
     </SafeAreaView>
   );
 };
@@ -336,8 +458,8 @@ export const ProfileScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
   return (
-    <ResponsiveLayout 
-      currentRoute="Profile" 
+    <ResponsiveLayout
+      currentRoute="Profile"
       onNavigate={(route) => navigation?.navigate(route)}
       floatingActions={null}
       hideContextPanel={true}

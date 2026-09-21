@@ -33,6 +33,7 @@ import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
+import { StyledAlert } from '../feed/components/StyledAlert';
 import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -83,7 +84,6 @@ interface SearchResult {
   specifications?: any;
   relevanceScore?: number;
   aiTag?: boolean;
-  /** ✅ Carried through from the catalog row (or specifications) */
   price_type?: string | null;
 }
 
@@ -126,12 +126,7 @@ const DEFAULT_CATEGORIES = [
 ];
 
 // ============================================================
-// ✅ HELPER: Resolve effective price type for a SearchResult
-//    Priority:
-//      1. item.price_type (catalog row)
-//      2. item.specifications.price_type (legacy rows)
-//      3. 'free' if price is 0 / null / undefined
-//      4. 'fixed' fallback
+// HELPER: Resolve effective price type for a SearchResult
 // ============================================================
 const VALID_PRICE_TYPES = [
   'fixed',
@@ -159,7 +154,6 @@ function resolvePriceType(item: SearchResult): PriceType {
   const raw = fromRow || fromSpecs;
 
   if (raw && (VALID_PRICE_TYPES as readonly string[]).includes(raw)) {
-    // If it says fixed but price is 0/undefined → free
     if (raw === 'fixed' && (!item.price || item.price <= 0)) {
       return 'free';
     }
@@ -193,7 +187,6 @@ const FilterChip = React.memo(({ label, selected, onPress, count }: any) => (
 
 // ============================================================
 // GRID RESULT CARD
-// ✅ Now shows "Free" for free items, price for others.
 // ============================================================
 const GridResultCard = React.memo(({ item, onPress }: any) => {
   let imageUrl = '';
@@ -281,7 +274,6 @@ const ItemMediaLoadingSpinner: React.FC = () => {
 
 // ============================================================
 // HELPER: build Opportunity from SearchResult
-// ✅ Now carries price_type through.
 // ============================================================
 function buildOpportunityFromResult(item: SearchResult): any {
   return {
@@ -317,7 +309,6 @@ function buildOpportunityFromResult(item: SearchResult): any {
     isSaved: item.isSaved || false,
     distance: undefined,
     specifications: item.specifications || {},
-    // ✅ NEW
     price_type: item.price_type ?? null,
   };
 }
@@ -414,7 +405,6 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
     });
   }
 
-  // ✅ Resolve price type — single source of truth
   const priceType = resolvePriceType(item);
 
   const displayName = item.userFullName || 'User';
@@ -422,6 +412,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   const cardHeight = isDesktop ? winHeight : winHeight;
 
   const isVisible = isFocused && index === fullscreenIndex;
+  const specs = (item as any).specifications || {};
 
   return (
     <View
@@ -439,10 +430,11 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         media={mediaItems}
         title={item.title || 'Product'}
         price={item.price || 0}
-        // ✅ Correctly-resolved price type
         priceType={priceType}
         currency={item.currency || 'UGX'}
         userName={displayName}
+        filter={specs.filter ?? null}
+        textOverlays={specs.text_overlays ?? null}
         userAvatar={item.userAvatar || null}
         description={item.description || null}
         rating={item.rating ?? undefined}
@@ -480,6 +472,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
           key={`rail-${item.id}`}
           opportunity={opportunity}
           isLiked={isLiked}
+          bottomInset={80}
+          rightShift={-6}
           likeCount={likeCount}
           onLikePress={() => onLike(item)}
           onUserPress={() => onUserPress(item)}
@@ -557,6 +551,49 @@ const SearchResultsContent = ({
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
   const [aiContextHint, setAiContextHint] = useState('');
+
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   const memoizedResults = useMemo(() => results, [results]);
 
@@ -826,7 +863,23 @@ const SearchResultsContent = ({
   const handleLikePress = useCallback(
     async (opportunity: any) => {
       if (!user?.id) {
-        navigation.navigate('Join');
+        showStyledAlert({
+          title: 'Join Munolink',
+          message: 'Create a free account to like posts.',
+          icon: 'lock-closed-outline',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
         return;
       }
 
@@ -874,7 +927,13 @@ const SearchResultsContent = ({
         });
       }
     },
-    [user?.id, likedItemsMap, navigation]
+    [
+      user?.id,
+      likedItemsMap,
+      navigation,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
   );
 
   if (!memoizedResults) {
@@ -949,7 +1008,30 @@ const SearchResultsContent = ({
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                   }
                   onSave={(p) => {
-                    if (!user?.id) return;
+                    if (!user?.id) {
+                      showStyledAlert({
+                        title: 'Join Munolink',
+                        message: 'Create a free account to save items.',
+                        icon: 'lock-closed-outline',
+                        iconColor: '#4A7DFF',
+                        buttons: [
+                          {
+                            text: 'Continue Browsing',
+                            style: 'cancel',
+                            onPress: hideStyledAlert,
+                          },
+                          {
+                            text: 'Join Now',
+                            style: 'primary',
+                            onPress: () => {
+                              hideStyledAlert();
+                              navigation.navigate('Join');
+                            },
+                          },
+                        ],
+                      });
+                      return;
+                    }
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     setSavedItemsMap((prev) => ({
                       ...prev,
@@ -963,7 +1045,28 @@ const SearchResultsContent = ({
                   onInbox={(p) => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     if (!user?.id) {
-                      navigation.navigate('Join');
+                      showStyledAlert({
+                        title: 'Join Munolink',
+                        message:
+                          'Create a free account to message sellers and providers.',
+                        icon: 'lock-closed-outline',
+                        iconColor: '#4A7DFF',
+                        buttons: [
+                          {
+                            text: 'Continue Browsing',
+                            style: 'cancel',
+                            onPress: hideStyledAlert,
+                          },
+                          {
+                            text: 'Join Now',
+                            style: 'primary',
+                            onPress: () => {
+                              hideStyledAlert();
+                              navigation.navigate('Join');
+                            },
+                          },
+                        ],
+                      });
                       return;
                     }
                     navigation.navigate('Inbox', {
@@ -1042,6 +1145,17 @@ const SearchResultsContent = ({
               opportunity={selectedOpportunity as any}
               onClose={handleCloseDirections}
               isDesktopView={false}
+            />
+
+            {/* ✅ StyledAlert */}
+            <StyledAlert
+              visible={styledAlertConfig.visible}
+              title={styledAlertConfig.title}
+              message={styledAlertConfig.message}
+              icon={styledAlertConfig.icon}
+              iconColor={styledAlertConfig.iconColor}
+              buttons={styledAlertConfig.buttons}
+              onClose={hideStyledAlert}
             />
           </SafeAreaView>
         </BottomSheetModalProvider>
@@ -1188,6 +1302,17 @@ const SearchResultsContent = ({
         opportunity={selectedOpportunity as any}
         onClose={handleCloseDirections}
         isDesktopView={false}
+      />
+
+      {/* ✅ StyledAlert (grid view) */}
+      <StyledAlert
+        visible={styledAlertConfig.visible}
+        title={styledAlertConfig.title}
+        message={styledAlertConfig.message}
+        icon={styledAlertConfig.icon}
+        iconColor={styledAlertConfig.iconColor}
+        buttons={styledAlertConfig.buttons}
+        onClose={hideStyledAlert}
       />
     </SafeAreaView>
   );
@@ -1384,7 +1509,6 @@ const styles = StyleSheet.create({
   },
   gridTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
   gridPrice: { color: '#4A7DFF', fontSize: 13, fontWeight: '700', marginTop: 2 },
-  // ✅ Green "Free" label
   gridPriceFree: {
     color: '#2ECC71',
     fontSize: 13,

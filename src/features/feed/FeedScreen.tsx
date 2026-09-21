@@ -10,7 +10,6 @@ import React, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { Alert } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
@@ -34,7 +33,7 @@ import {
   ViewabilityConfig,
   ViewToken,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { FloatingActionRail } from './components/FloatingActionRail';
 import { useFeedStore } from '../../store/feedStore';
@@ -59,6 +58,7 @@ import { RootStackParamList } from '../../navigation/RootNavigator';
 import { locationService, UserLocation } from '../../services/location.service';
 import { LocationPicker } from './components/LocationPicker';
 import { useIsFocused } from '@react-navigation/native';
+import { StyledAlert } from './components/StyledAlert'; // ✅ Import
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -101,8 +101,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const { isDesktop } = useBreakpoint();
   const { isAuthenticated, isGuest, user } = useAuth();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
-
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
 
@@ -146,6 +146,49 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const [contextPanelView, setContextPanelView] = useState<
     'details' | 'reviews' | 'directions' | null
   >(null);
+
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   const recommendationsRunningRef = useRef(false);
   const recommendationsAppliedForRef = useRef<unknown>(null);
@@ -653,14 +696,23 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const handleLovePress = useCallback(
     (opportunity: Opportunity, isLoved: boolean) => {
       if (!isAuthenticated) {
-        Alert.alert(
-          '🔒 Join Munolink',
-          'Create a free account to save opportunities.',
-          [
-            { text: 'Continue Browsing', style: 'cancel' },
-            { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-          ]
-        );
+        showStyledAlert({
+          title: '🔒 Join Munolink',
+          message: 'Create a free account to save opportunities.',
+          icon: 'lock-closed',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
         return;
       }
       if (user?.id && isLoved) {
@@ -678,20 +730,29 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           .catch(() => {});
       }
     },
-    [isAuthenticated, navigation, user?.id]
+    [isAuthenticated, navigation, user?.id, showStyledAlert, hideStyledAlert]
   );
 
   const handleSavePress = useCallback(
     (opportunity: Opportunity) => {
       if (!isAuthenticated) {
-        Alert.alert(
-          '🔒 Join Munolink',
-          'Create a free account to save items.',
-          [
-            { text: 'Continue Browsing', style: 'cancel' },
-            { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-          ]
-        );
+        showStyledAlert({
+          title: '🔒 Join Munolink',
+          message: 'Create a free account to save items.',
+          icon: 'lock-closed',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
         return;
       }
 
@@ -716,21 +777,30 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           .catch(() => {});
       }
     },
-    [isAuthenticated, navigation, user?.id, savedItemsMap]
+    [isAuthenticated, navigation, user?.id, savedItemsMap, showStyledAlert, hideStyledAlert]
   );
 
   // ✅ TOGGLE LIKE — mirrors the follow/unfollow pattern
   const handleLikePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!isAuthenticated || !user?.id) {
-        Alert.alert(
-          '🔒 Join Munolink',
-          'Create a free account to like posts.',
-          [
-            { text: 'Continue Browsing', style: 'cancel' },
-            { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-          ]
-        );
+        showStyledAlert({
+          title: '🔒 Join Munolink',
+          message: 'Create a free account to like posts.',
+          icon: 'lock-closed',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
         return;
       }
 
@@ -778,7 +848,14 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         });
       }
     },
-    [isAuthenticated, user?.id, likedItemsMap, navigation]
+    [
+      isAuthenticated,
+      user?.id,
+      likedItemsMap,
+      navigation,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
   );
 
   const handleFollowPress = useCallback(
@@ -801,14 +878,23 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (!isAuthenticated) {
-      Alert.alert(
-        '🔒 Join Munolink',
-        'Create a free account to message sellers and providers.',
-        [
-          { text: 'Continue Browsing', style: 'cancel' },
-          { text: 'Join Now', onPress: () => navigation.navigate('Join') },
-        ]
-      );
+      showStyledAlert({
+        title: '🔒 Join Munolink',
+        message: 'Create a free account to message sellers and providers.',
+        icon: 'lock-closed',
+        iconColor: '#4A7DFF',
+        buttons: [
+          { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+          {
+            text: 'Join Now',
+            style: 'primary',
+            onPress: () => {
+              hideStyledAlert();
+              navigation.navigate('Join');
+            },
+          },
+        ],
+      });
       return;
     }
 
@@ -819,7 +905,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       userId: targetUserId,
       userName: targetUserName,
     });
-  }, [currentOpportunity, isAuthenticated, navigation]);
+  }, [currentOpportunity, isAuthenticated, navigation, showStyledAlert, hideStyledAlert]);
 
   const scrollToIndex = useCallback(
     (index: number) => {
@@ -907,6 +993,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       const isLiked = likedItemsMap[item.id] || false;
       const isVisible = isFocused && index === currentIndex;
       const isItemLoading = loadingItemsMap[item.id] === true;
+      const specs = (item as any).specifications || {};
 
       let price = item.price || 0;
       let priceType:
@@ -1000,6 +1087,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             media={mediaItems}
             title={item.title}
             price={price}
+            filter={specs.filter ?? null}
+            textOverlays={specs.text_overlays ?? null}
             priceType={priceType}
             currency={item.currency || 'UGX'}
             userName={item.userFullName || 'User'}
@@ -1025,17 +1114,27 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             onInboxPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               if (!isAuthenticated) {
-                Alert.alert(
-                  '🔒 Join Munolink',
-                  'Create a free account to message sellers and providers.',
-                  [
-                    { text: 'Continue Browsing', style: 'cancel' },
+                showStyledAlert({
+                  title: '🔒 Join Munolink',
+                  message: 'Create a free account to message sellers and providers.',
+                  icon: 'lock-closed',
+                  iconColor: '#4A7DFF',
+                  buttons: [
+                    {
+                      text: 'Continue Browsing',
+                      style: 'cancel',
+                      onPress: hideStyledAlert,
+                    },
                     {
                       text: 'Join Now',
-                      onPress: () => navigation.navigate('Join'),
+                      style: 'primary',
+                      onPress: () => {
+                        hideStyledAlert();
+                        navigation.navigate('Join');
+                      },
                     },
-                  ]
-                );
+                  ],
+                });
                 return;
               }
               navigation.navigate('Inbox', {
@@ -1067,6 +1166,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             <FloatingActionRail
               key={`rail-${item.id}`}
               opportunity={item}
+              bottomInset={80}       // ← pushes the rail up so the AI button clears the tab bar
+              rightShift={-6}
               // ✅ Likes
               isLiked={isLiked}
               likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
@@ -1118,6 +1219,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       handleAIPress,
       handleReviewsPress,
       handleMediaLoadStateChange,
+      showStyledAlert,
+      hideStyledAlert,
     ]
   );
 
@@ -1199,15 +1302,18 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             {!isDesktop && (
               <LinearGradient
                 colors={[
-                  'rgba(31, 47, 95, 0.92)',
-                  'rgba(31, 47, 95, 0.7)',
-                  'rgba(31, 47, 95, 0.4)',
-                  'rgba(31, 47, 95, 0)',
+                  'rgba(0, 0, 0, 0.92)',
+                  'rgba(0, 0, 0, 0.7)',
+                  'rgba(0, 0, 0, 0.4)',
+                  'rgba(0, 0, 0, 0)',
                 ]}
                 locations={[0, 0.25, 0.5, 1]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
-                style={[styles.topBarGradient, { paddingTop: 20 }]}
+                style={[
+                  styles.topBarGradient,
+                  { paddingTop: insets.top + 12 }, // ✅ sits below the status bar
+                ]}
               >
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
@@ -1334,6 +1440,17 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
                 />
               </View>
             )}
+
+            {/* ✅ StyledAlert for cross‑platform alerts */}
+            <StyledAlert
+              visible={styledAlertConfig.visible}
+              title={styledAlertConfig.title}
+              message={styledAlertConfig.message}
+              icon={styledAlertConfig.icon}
+              iconColor={styledAlertConfig.iconColor}
+              buttons={styledAlertConfig.buttons}
+              onClose={hideStyledAlert}
+            />
           </SafeAreaView>
         </BottomSheetModalProvider>
       </GestureHandlerRootView>

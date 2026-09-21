@@ -5,8 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/favicon.png",
+    "scheme": "munolink",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.munolink.app"
@@ -37,16 +40,14 @@
           "photosPermission": "Allow Munolink to access your photos to upload products and services."
         }
       ],
-       [
-      "expo-video"
-    ],
+      "expo-video",
       [
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Munolink to access your location to find nearby businesses."
         }
       ],
-       [
+      [
         "expo-splash-screen",
         {
           "image": "./assets/favicon.png",
@@ -59,9 +60,9 @@
             "backgroundColor": "#ffffff"
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
-    
     "updates": {
       "url": "https://u.expo.dev/66c0b4ea-66a4-4ad2-ac43-656091693882",
       "fallbackToCacheTimeout": 0,

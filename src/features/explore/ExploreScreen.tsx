@@ -39,6 +39,7 @@ import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
+import { StyledAlert } from '../feed/components/StyledAlert';
 import {
   feedService,
   Opportunity,
@@ -359,7 +360,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   const displayName = item.user_full_name || 'User';
   const cardWidth = isDesktop ? 420 : winWidth;
   const cardHeight = isDesktop ? winHeight : winHeight;
-
+  const specs = (item as any).specifications || {};
   const isVisible = isFocused && index === fullscreenIndex;
 
   return (
@@ -391,6 +392,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         height={cardHeight}
         onShowMore={() => onShowMore(item)}
         onShare={onShare}
+          filter={specs.filter ?? null}
+  textOverlays={specs.text_overlays ?? null}
         onSave={() => onSave(item)}
         onPrimaryAction={() => onInbox(item)}
         onInboxPress={() => onInbox(item)}
@@ -417,6 +420,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
           key={`rail-${item.id}`}
           opportunity={opportunity}
           isLiked={isLiked}
+          bottomInset={80}       // ← pushes the rail up so the AI button clears the tab bar
+    rightShift={-6}
           likeCount={likeCount}
           onLikePress={() => onLike(item)}
           onUserPress={() => onUserPress(item)}
@@ -476,6 +481,49 @@ const ExploreContent = ({ navigation }: any) => {
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
+
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   const flatListRef = useRef<FlatList>(null);
   const searchInputRef = useRef<TextInput>(null);
@@ -545,10 +593,10 @@ const ExploreContent = ({ navigation }: any) => {
           saveCount: opp.saveCount || 0,
           isSaved: opp.isSaved || false,
           specifications: opp.specifications || {},
-                price_type:
-        (opp as any).price_type ??
-        (opp.specifications && (opp.specifications as any).price_type) ??
-        null,
+          price_type:
+            (opp as any).price_type ??
+            (opp.specifications && (opp.specifications as any).price_type) ??
+            null,
         };
       });
 
@@ -770,7 +818,23 @@ const ExploreContent = ({ navigation }: any) => {
   const handleLikePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!user?.id) {
-        navigation.navigate('Join');
+        showStyledAlert({
+          title: '🔒 Join Munolink',
+          message: 'Create a free account to like posts.',
+          icon: 'lock-closed',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
         return;
       }
 
@@ -818,7 +882,7 @@ const ExploreContent = ({ navigation }: any) => {
         });
       }
     },
-    [user?.id, likedItemsMap, navigation]
+    [user?.id, likedItemsMap, navigation, showStyledAlert, hideStyledAlert]
   );
 
   const renderSortModal = () => (
@@ -985,7 +1049,30 @@ const ExploreContent = ({ navigation }: any) => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                     }
                     onSave={(p) => {
-                      if (!user?.id) return;
+                      if (!user?.id) {
+                        showStyledAlert({
+                          title: '🔒 Join Munolink',
+                          message: 'Create a free account to save items.',
+                          icon: 'lock-closed',
+                          iconColor: '#4A7DFF',
+                          buttons: [
+                            {
+                              text: 'Continue Browsing',
+                              style: 'cancel',
+                              onPress: hideStyledAlert,
+                            },
+                            {
+                              text: 'Join Now',
+                              style: 'primary',
+                              onPress: () => {
+                                hideStyledAlert();
+                                navigation.navigate('Join');
+                              },
+                            },
+                          ],
+                        });
+                        return;
+                      }
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       setSavedItemsMap((prev) => ({
                         ...prev,
@@ -999,7 +1086,28 @@ const ExploreContent = ({ navigation }: any) => {
                     onInbox={(p) => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       if (!user?.id) {
-                        navigation.navigate('Join');
+                        showStyledAlert({
+                          title: '🔒 Join Munolink',
+                          message:
+                            'Create a free account to message sellers and providers.',
+                          icon: 'lock-closed',
+                          iconColor: '#4A7DFF',
+                          buttons: [
+                            {
+                              text: 'Continue Browsing',
+                              style: 'cancel',
+                              onPress: hideStyledAlert,
+                            },
+                            {
+                              text: 'Join Now',
+                              style: 'primary',
+                              onPress: () => {
+                                hideStyledAlert();
+                                navigation.navigate('Join');
+                              },
+                            },
+                          ],
+                        });
                         return;
                       }
                       navigation.navigate('Inbox', {
@@ -1084,6 +1192,17 @@ const ExploreContent = ({ navigation }: any) => {
               opportunity={selectedOpportunity}
               onClose={handleCloseDirections}
               isDesktopView={isDesktop}
+            />
+
+            {/* ✅ StyledAlert */}
+            <StyledAlert
+              visible={styledAlertConfig.visible}
+              title={styledAlertConfig.title}
+              message={styledAlertConfig.message}
+              icon={styledAlertConfig.icon}
+              iconColor={styledAlertConfig.iconColor}
+              buttons={styledAlertConfig.buttons}
+              onClose={hideStyledAlert}
             />
           </View>
         </BottomSheetModalProvider>
@@ -1178,6 +1297,17 @@ const ExploreContent = ({ navigation }: any) => {
       />
 
       {renderSortModal()}
+
+      {/* ✅ StyledAlert (grid view) */}
+      <StyledAlert
+        visible={styledAlertConfig.visible}
+        title={styledAlertConfig.title}
+        message={styledAlertConfig.message}
+        icon={styledAlertConfig.icon}
+        iconColor={styledAlertConfig.iconColor}
+        buttons={styledAlertConfig.buttons}
+        onClose={hideStyledAlert}
+      />
     </SafeAreaView>
   );
 };

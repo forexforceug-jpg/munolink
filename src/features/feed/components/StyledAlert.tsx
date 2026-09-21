@@ -10,7 +10,6 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
@@ -32,7 +31,7 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
   visible,
   title,
   message,
-  icon = 'information-circle',
+  icon = 'information-circle-outline',
   iconColor = '#4A7DFF',
   buttons,
   onClose,
@@ -72,9 +71,9 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
     >
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Icon */}
-          <View style={[styles.iconContainer, { backgroundColor: iconColor + '15' }]}>
-            <Ionicons name={icon as any} size={40} color={iconColor} />
+          {/* Icon — subtle, minimal */}
+          <View style={styles.iconWrapper}>
+            <Ionicons name={icon as any} size={22} color={iconColor} />
           </View>
 
           {/* Title */}
@@ -83,7 +82,10 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
           {/* Message */}
           <Text style={styles.message}>{message}</Text>
 
-          {/* Buttons */}
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* Buttons — thin, side-by-side */}
           <View style={styles.buttonContainer}>
             {buttons.map((button, index) => (
               <TouchableOpacity
@@ -91,12 +93,14 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
                 style={[
                   styles.button,
                   getButtonStyle(button.style),
-                  index > 0 && styles.buttonMargin,
+                  index > 0 && styles.buttonDivider,
                 ]}
                 onPress={button.onPress}
-                activeOpacity={0.7}
+                activeOpacity={0.6}
               >
-                <Text style={[styles.buttonText, getButtonTextStyle(button.style)]}>
+                <Text
+                  style={[styles.buttonText, getButtonTextStyle(button.style)]}
+                >
                   {button.text}
                 </Text>
               </TouchableOpacity>
@@ -111,88 +115,105 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
   container: {
-    backgroundColor: '#1A2A4F',
-    borderRadius: 20,
-    padding: 24,
-    width: width * 0.85,
-    maxWidth: 400,
+    backgroundColor: '#141B2E',
+    borderRadius: 12,
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 0,
+    width: width * 0.82,
+    maxWidth: 340,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.06)',
+    // subtle shadow for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    elevation: 12,
   },
-  iconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  iconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(74,125,255,0.08)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(74,125,255,0.12)',
   },
   title: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '600',
     color: '#FFFFFF',
-    marginBottom: 8,
+    marginBottom: 6,
     textAlign: 'center',
+    letterSpacing: 0.1,
   },
   message: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#8A8AAE',
     textAlign: 'center',
     marginBottom: 20,
-    lineHeight: 20,
+    lineHeight: 18,
+    letterSpacing: 0.1,
+  },
+  divider: {
+    height: 1,
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   buttonContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     width: '100%',
-    gap: 8,
   },
   button: {
     flex: 1,
-    minWidth: 80,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonMargin: {
-    marginLeft: 8,
+  buttonDivider: {
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(255,255,255,0.06)',
   },
   defaultButton: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'transparent',
   },
   primaryButton: {
-    backgroundColor: '#4A7DFF',
+    backgroundColor: 'transparent',
   },
   cancelButton: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'transparent',
   },
   destructiveButton: {
-    backgroundColor: '#E74C3C',
+    backgroundColor: 'transparent',
   },
   buttonText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   defaultButtonText: {
     color: '#FFFFFF',
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: '#4A7DFF',
+    fontWeight: '600',
   },
   cancelButtonText: {
     color: '#8A8AAE',
   },
   destructiveButtonText: {
-    color: '#FFFFFF',
+    color: '#E74C3C',
+    fontWeight: '600',
   },
 });
 

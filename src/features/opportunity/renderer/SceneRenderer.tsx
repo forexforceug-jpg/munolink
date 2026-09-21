@@ -1,6 +1,6 @@
 // src/features/opportunity/renderer/SceneRenderer.tsx
 
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,20 +13,18 @@ import {
   FlatList,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  PanResponder,
+  GestureResponderEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// Height of the app's floating tab bar. Kept in sync with TabNavigator.tsx.
 export const BASE_TAB_HEIGHT = 60;
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-// Real-world fallback for the system nav bar height when insets
-// report 0 (non-edge-to-edge Android builds). 48dp on Android,
-// 34pt on iOS home indicator.
 const SYSTEM_NAV_FALLBACK = Platform.select({
   ios: 34,
   android: 48,
@@ -36,7 +34,6 @@ const SYSTEM_NAV_FALLBACK = Platform.select({
 // ============================================================
 // TYPES
 // ============================================================
-
 export type NavigationSource = 'autoplay' | 'swipe' | 'tap' | 'arrow';
 
 export interface SceneViewEvent {
@@ -67,6 +64,18 @@ export interface MediaItem {
   thumbnail?: string;
 }
 
+export interface TextOverlayData {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  color: string;
+  fontSize: number;
+  fontFamily?: string;
+  backgroundColor?: string | null;
+  scale?: number;
+}
+
 type PriceType = 'fixed' | 'negotiable' | 'starting_from' | 'free';
 
 interface Props {
@@ -77,16 +86,8 @@ interface Props {
   onShare?: () => void;
   onSave?: () => void;
   onShowMore?: () => void;
-  /** Optional translucent "Inbox" button rendered inline in the
-   *  userRow, right after the username + time ago. */
   onInboxPress?: () => void;
-  /** Show the Inbox button. Defaults to true when onInboxPress is set. */
   showInboxButton?: boolean;
-  /**
-   * ✅ Reports whether the CURRENTLY VISIBLE media item is still loading.
-   *    true  = spinner should be shown by the parent.
-   *    false = media is ready.
-   */
   onMediaLoadStateChange?: (isLoading: boolean) => void;
   width?: number;
   height?: number;
@@ -97,8 +98,6 @@ interface Props {
   bottomOffset?: number;
   title?: string;
   price?: number;
-  /** ✅ Accepts any string / null / undefined so callers don't have to
-   *  narrow before passing. Value is validated internally. */
   priceType?: PriceType | string | null;
   currency?: string;
   userName?: string;
@@ -112,12 +111,25 @@ interface Props {
   providerId?: string;
   providerType?: 'individual' | 'institution';
   createdAt?: string;
-  /** When false, all video playback is force-paused. */
   isVisible?: boolean;
+  filter?: string | null;
+  textOverlays?: TextOverlayData[] | null;
 }
 
 // ============================================================
-// HELPER: Format time ago
+// FILTER PRESET TINTS
+// ============================================================
+const FILTER_TINTS: Record<string, string | null> = {
+  none: null,
+  warm: 'rgba(255,150,80,0.18)',
+  cool: 'rgba(80,150,255,0.18)',
+  vintage: 'rgba(200,150,80,0.22)',
+  mono: 'rgba(120,120,120,0.25)',
+  vivid: 'rgba(255,80,120,0.15)',
+};
+
+// ============================================================
+// HELPERS
 // ============================================================
 function formatTimeAgo(dateString?: string): string {
   if (!dateString) return '';
@@ -133,16 +145,6 @@ function formatTimeAgo(dateString?: string): string {
   return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 }
 
-// ============================================================
-// ✅ HELPER: Resolve the effective price type
-//
-//    Priority:
-//      1. Explicit valid priceType from props
-//      2. 'free' if price is 0 / undefined / null
-//      3. 'fixed' as the safe default
-//
-//    Anything that isn't one of the 4 known values is ignored.
-// ============================================================
 function resolveEffectivePriceType(
   rawPriceType: PriceType | string | null | undefined,
   rawPrice: number | undefined
@@ -153,7 +155,6 @@ function resolveEffectivePriceType(
     typeof rawPriceType === 'string' &&
     (valid as string[]).includes(rawPriceType)
   ) {
-    // But if the caller says "fixed" and price is 0, treat as free.
     if (rawPriceType === 'fixed' && (!rawPrice || rawPrice <= 0)) {
       return 'free';
     }
@@ -164,35 +165,102 @@ function resolveEffectivePriceType(
   return 'fixed';
 }
 
-// ============================================================
-// TIKTOK-STYLE BOTTOM VIDEO PROGRESS BAR
-// ============================================================
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
+// ============================================================
+// VIDEO PROGRESS BAR — SCRUBBABLE, THIN BY DEFAULT
+//
+//  ✅ Thin by default: 2px bar, 8px thumb.
+//  ✅ Grows on touch:  4px bar, 16px thumb — smooth 150ms animation.
+//  ✅ Drag the thumb to seek forward or backward.
+//  ✅ Tap anywhere on the track to jump.
+// ============================================================
 interface VideoProgressBarProps {
   player: any;
   isPlaying: boolean;
-  bottomOffset: number;
-  accentColor?: string;
 }
 
-function VideoProgressBar({
-  player,
-  isPlaying,
-  bottomOffset,
-  accentColor = '#A8C5FF',
-}: VideoProgressBarProps) {
+function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
   const [progress, setProgress] = useState(0);
-  const progressAnim = useRef(new Animated.Value(0)).current;
+  const [duration, setDuration] = useState(0);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [barWidth, setBarWidth] = useState(0);
 
+  const barWidthRef = useRef(0);
+  barWidthRef.current = barWidth;
+  const durationRef = useRef(0);
+  durationRef.current = duration;
+  const playerRef = useRef<any>(null);
+  playerRef.current = player;
+
+  const wasPlayingRef = useRef(false);
+
+  // ---- Smooth "active" animation ----
+  const activeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(activeAnim, {
+      toValue: isScrubbing ? 1 : 0,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  }, [isScrubbing, activeAnim]);
+
+  // Bar height: 2 → 4
+  const barHeight = activeAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [2, 4],
+  });
+
+  // Thumb size: 8 → 16
+  const thumbSize = activeAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [5, 10],
+  });
+
+  // Thumb radius: 4 → 8
+  const thumbRadius = activeAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [2, 6],
+  });
+
+  // Within a 20px-tall container:
+  // - bar top: (20 - 2) / 2 = 9 at rest, (20 - 4) / 2 = 8 active
+  const barTop = activeAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [9, 8],
+  });
+
+  // Thumb top: (20 - 8) / 2 = 6 at rest, (20 - 16) / 2 = 2 active
+  const thumbTop = activeAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [7.5, 5],
+  });
+
+  // Margin to keep the thumb horizontally centered over the playhead
+  const thumbMarginLeft = activeAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [2.5, -5],
+  });
+
+  // ---- Poll playback progress ----
   useEffect(() => {
     if (!player) return;
 
     const updateProgress = () => {
+      if (isScrubbing) return;
+
       try {
         const current = player.currentTime ?? 0;
-        const duration = player.duration ?? 0;
-        if (duration > 0) {
-          setProgress(Math.max(0, Math.min(1, current / duration)));
+        const d = player.duration ?? 0;
+        setDuration(d);
+        if (d > 0) {
+          setProgress(Math.max(0, Math.min(1, current / d)));
         } else {
           setProgress(0);
         }
@@ -202,18 +270,21 @@ function VideoProgressBar({
     };
 
     const subs: any[] = [];
-
     try {
       subs.push(player.addListener('timeUpdate', updateProgress));
     } catch {}
     try {
       subs.push(
-        player.addListener('playingChange', () => setTimeout(updateProgress, 60))
+        player.addListener('playingChange', () =>
+          setTimeout(updateProgress, 60)
+        )
       );
     } catch {}
     try {
       subs.push(
-        player.addListener('statusChange', () => setTimeout(updateProgress, 60))
+        player.addListener('statusChange', () =>
+          setTimeout(updateProgress, 60)
+        )
       );
     } catch {}
 
@@ -228,58 +299,146 @@ function VideoProgressBar({
       });
       clearInterval(poll);
     };
-  }, [player]);
+  }, [player, isScrubbing]);
 
-  useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: progress,
-      duration: 200,
-      useNativeDriver: false,
-    }).start();
-  }, [progress, progressAnim]);
+  // ---- Scrubbing ----
+  const seekFromX = useCallback((x: number) => {
+    const w = barWidthRef.current;
+    const d = durationRef.current;
+    if (w <= 0 || d <= 0) return;
 
-  if (!isPlaying && progress === 0) return null;
+    const ratio = Math.max(0, Math.min(1, x / w));
+    const targetTime = ratio * d;
 
-  const safeBottom = Math.max(bottomOffset, SYSTEM_NAV_FALLBACK);
+    setProgress(ratio);
+
+    try {
+      playerRef.current.currentTime = targetTime;
+    } catch {}
+  }, []);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onPanResponderTerminationRequest: () => false,
+
+        onPanResponderGrant: (evt: GestureResponderEvent) => {
+          setIsScrubbing(true);
+          try {
+            wasPlayingRef.current = !!playerRef.current?.playing;
+            playerRef.current?.pause?.();
+          } catch {}
+
+          const x = evt.nativeEvent.locationX;
+          seekFromX(x);
+        },
+
+        onPanResponderMove: (evt) => {
+          const x = evt.nativeEvent.locationX;
+          seekFromX(x);
+        },
+
+        onPanResponderRelease: (evt) => {
+          const x = evt.nativeEvent.locationX;
+          seekFromX(x);
+          setIsScrubbing(false);
+
+          if (wasPlayingRef.current) {
+            try {
+              playerRef.current?.play?.();
+            } catch {}
+          }
+        },
+
+        onPanResponderTerminate: () => {
+          setIsScrubbing(false);
+          if (wasPlayingRef.current) {
+            try {
+              playerRef.current?.play?.();
+            } catch {}
+          }
+        },
+      }),
+    [seekFromX]
+  );
+
+  if (!isPlaying && progress === 0 && !isScrubbing) return null;
+
+  const currentSeconds = progress * duration;
 
   return (
-    <View
-      style={[styles.videoProgressBarContainer, { bottom: safeBottom }]}
-      pointerEvents="none"
-    >
-      <View style={styles.videoProgressBarTrack} />
-      <Animated.View
-        style={[
-          styles.videoProgressBarFill,
-          {
-            backgroundColor: accentColor,
-            width: progressAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: ['0%', '100%'],
-            }),
-          },
-        ]}
+    <View style={styles.videoProgressBarWrapper}>
+      {/* Time indicators */}
+      <View style={styles.videoProgressTimeRow}>
+        <Text style={styles.videoProgressTimeText}>
+          {formatTime(currentSeconds)}
+        </Text>
+        <Text style={styles.videoProgressTimeText}>
+          {formatTime(duration)}
+        </Text>
+      </View>
+
+      {/* Interactive bar */}
+      <View
+        style={styles.videoProgressBarContainer}
+        onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+        {...panResponder.panHandlers}
       >
-        <View style={styles.videoProgressBarHead} />
-      </Animated.View>
+        {/* Track */}
+        <Animated.View
+          style={[
+            styles.videoProgressBarTrack,
+            { top: barTop, height: barHeight },
+          ]}
+        />
+
+        {/* Fill */}
+        <Animated.View
+          style={[
+            styles.videoProgressBarFill,
+            {
+              top: barTop,
+              height: barHeight,
+              width: `${progress * 100}%`,
+            },
+          ]}
+        />
+
+        {/* Thumb */}
+        <Animated.View
+          style={[
+            styles.videoProgressBarThumb,
+            {
+              top: thumbTop,
+              width: thumbSize,
+              height: thumbSize,
+              borderRadius: thumbRadius,
+              marginLeft: thumbMarginLeft,
+              left: `${progress * 100}%`,
+            },
+          ]}
+        />
+      </View>
     </View>
   );
 }
 
 // ============================================================
-// VIDEO ITEM COMPONENT (expo-video)
+// VIDEO ITEM COMPONENT
 // ============================================================
-
 interface VideoItemProps {
   url: string;
   width: number;
   height: number;
   isCurrent: boolean;
   isVisible: boolean;
-  autoPlay: boolean;
-  bottomOffset: number;
   onPlayingChange: (playing: boolean) => void;
   onReadyChange: (isLoading: boolean) => void;
+  onPlayerReady: (player: any) => void;
 }
 
 const VideoItem = memo(
@@ -289,10 +448,9 @@ const VideoItem = memo(
     height,
     isCurrent,
     isVisible,
-    autoPlay,
-    bottomOffset,
     onPlayingChange,
     onReadyChange,
+    onPlayerReady,
   }: VideoItemProps) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [hasEnded, setHasEnded] = useState(false);
@@ -302,6 +460,11 @@ const VideoItem = memo(
       p.loop = false;
       p.muted = false;
     });
+
+    useEffect(() => {
+      if (player && onPlayerReady) onPlayerReady(player);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [player]);
 
     useEffect(() => {
       onReadyChange(true);
@@ -375,7 +538,7 @@ const VideoItem = memo(
     useEffect(() => {
       if (!player) return;
 
-      const shouldPlay = isCurrent && isVisible && autoPlay;
+      const shouldPlay = isCurrent && isVisible;
 
       const applyPlayState = () => {
         try {
@@ -397,7 +560,7 @@ const VideoItem = memo(
       };
 
       applyPlayState();
-    }, [isCurrent, isVisible, autoPlay, player, onPlayingChange]);
+    }, [isCurrent, isVisible, player, onPlayingChange]);
 
     const handleToggle = useCallback(
       (e?: any) => {
@@ -438,7 +601,6 @@ const VideoItem = memo(
     }
 
     const showReplayButton = hasEnded && !isPlaying;
-    const showPlayingPill = isPlaying;
 
     return (
       <View style={[styles.mediaItem, { width, height }]}>
@@ -477,20 +639,6 @@ const VideoItem = memo(
             </View>
           </View>
         )}
-
-        {showPlayingPill && (
-          <View style={styles.videoPlayingIndicator} pointerEvents="none">
-            <View style={styles.videoPlayingDot} />
-            <Text style={styles.videoPlayingText}>Playing</Text>
-          </View>
-        )}
-
-        <VideoProgressBar
-          player={player}
-          isPlaying={isPlaying}
-          bottomOffset={bottomOffset}
-          accentColor="#A8C5FF"
-        />
       </View>
     );
   },
@@ -498,16 +646,94 @@ const VideoItem = memo(
     prev.url === next.url &&
     prev.isCurrent === next.isCurrent &&
     prev.isVisible === next.isVisible &&
-    prev.autoPlay === next.autoPlay &&
     prev.width === next.width &&
-    prev.height === next.height &&
-    prev.bottomOffset === next.bottomOffset
+    prev.height === next.height
 );
+
+// ============================================================
+// MEDIA OVERLAYS
+// ============================================================
+interface MediaOverlaysProps {
+  width: number;
+  height: number;
+  filter?: string | null;
+  textOverlays?: TextOverlayData[] | null;
+}
+
+const MediaOverlays: React.FC<MediaOverlaysProps> = ({
+  width,
+  height,
+  filter,
+  textOverlays,
+}) => {
+  const tint = filter ? FILTER_TINTS[filter] ?? null : null;
+
+  const hasTextOverlays =
+    Array.isArray(textOverlays) && textOverlays.length > 0;
+
+  if (!tint && !hasTextOverlays) return null;
+
+  return (
+    <View
+      style={[StyleSheet.absoluteFill, styles.overlayLayer]}
+      pointerEvents="none"
+    >
+      {tint && (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: tint }]}
+        />
+      )}
+
+      {hasTextOverlays &&
+        textOverlays!.map((overlay) => {
+          const isDarkText = overlay.color === '#000000';
+          const scale = overlay.scale ?? 1;
+
+          return (
+            <View
+              key={overlay.id}
+              style={[
+                styles.savedOverlayWrapper,
+                {
+                  left: overlay.x * width,
+                  top: overlay.y * height,
+                  transform: [{ scale }],
+                  backgroundColor:
+                    overlay.backgroundColor || 'transparent',
+                  borderRadius: overlay.backgroundColor ? 8 : 0,
+                  paddingHorizontal: overlay.backgroundColor ? 8 : 6,
+                  paddingVertical: 4,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.savedOverlayText,
+                  {
+                    color: overlay.color,
+                    fontSize: overlay.fontSize,
+                    fontFamily: overlay.fontFamily || 'System',
+                    textShadowColor: overlay.backgroundColor
+                      ? 'transparent'
+                      : isDarkText
+                      ? 'rgba(255,255,255,0.7)'
+                      : 'rgba(0,0,0,0.65)',
+                    textShadowRadius: overlay.backgroundColor ? 0 : 6,
+                  },
+                ]}
+              >
+                {overlay.text}
+              </Text>
+            </View>
+          );
+        })}
+    </View>
+  );
+};
 
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
-
 export function SceneRenderer({
   media,
   onSceneChange,
@@ -521,8 +747,8 @@ export function SceneRenderer({
   onMediaLoadStateChange,
   width = screenWidth,
   height = 600,
-  autoPlay = true,
-  autoPlayInterval = 6000,
+  autoPlay: _autoPlay,
+  autoPlayInterval: _autoPlayInterval,
   resetKey,
   isDesktop = false,
   bottomOffset = 0,
@@ -542,22 +768,27 @@ export function SceneRenderer({
   providerType = 'individual',
   createdAt,
   isVisible = true,
+  filter = null,
+  textOverlays = null,
 }: Props) {
   const insets = useSafeAreaInsets();
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [progressAnim] = useState(new Animated.Value(0));
+  const [dotPulse] = useState(new Animated.Value(0));
   const [isExpanded, setIsExpanded] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+
+  const [activeVideoPlayer, setActiveVideoPlayer] = useState<any>(null);
 
   const [mediaLoadingMap, setMediaLoadingMap] = useState<
     Record<number, boolean>
   >({});
 
   const flatListRef = useRef<FlatList<MediaItem>>(null);
-  const autoPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sceneStartTimeRef = useRef<number>(Date.now());
   const lastReportedIndexRef = useRef(0);
+  const lastScrollIndexRef = useRef(0);
+  const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const safeMedia =
     media && media.length > 0
@@ -573,14 +804,6 @@ export function SceneRenderer({
   const currentMedia = safeMedia[currentIndex];
   const currentIsVideo = currentMedia?.type === 'video';
 
-  // ============================================================
-  // ✅ Resolve the effective price type
-  //
-  //    1. Use the explicit prop if it's one of the four known values.
-  //    2. If the prop says 'fixed' but price is 0/undefined → 'free'.
-  //    3. If the prop is invalid and price is 0 → 'free'.
-  //    4. Otherwise 'fixed'.
-  // ============================================================
   const effectivePriceType = resolveEffectivePriceType(priceType, price);
 
   const getPriceBadge = (): { label: string; color: string } => {
@@ -601,18 +824,12 @@ export function SceneRenderer({
   const timeAgo = formatTimeAgo(createdAt);
   const displayName = userName || 'User';
 
-  // ============================================================
-  // SINGLE SOURCE OF TRUTH for bottom clearance
-  // ============================================================
   const progressBarBottomOffset =
     Math.max(insets.bottom, SYSTEM_NAV_FALLBACK) +
     (isDesktop ? 0 : BASE_TAB_HEIGHT) +
-    6;
+    8;
 
-  const PROGRESS_BAR_HEIGHT = 5;
-  const INFO_PANEL_GAP = 10;
-  const infoPanelBottomOffset =
-    progressBarBottomOffset + PROGRESS_BAR_HEIGHT + INFO_PANEL_GAP;
+  const infoPanelBottomOffset = progressBarBottomOffset;
 
   // ============================================================
   // IMAGE PREFETCH
@@ -667,10 +884,16 @@ export function SceneRenderer({
     []
   );
 
+  useEffect(() => {
+    if (!currentIsVideo) {
+      setActiveVideoPlayer(null);
+      setIsVideoPlaying(false);
+    }
+  }, [currentIsVideo]);
+
   // ============================================================
   // BEHAVIORAL EVENT EMITTER
   // ============================================================
-
   const emitBehavioralEvent = useCallback(
     (event: BehavioralEvent) => {
       if (onBehavioralEvent) onBehavioralEvent(event);
@@ -680,7 +903,7 @@ export function SceneRenderer({
   );
 
   const trackSceneView = useCallback(
-    (index: number, source: NavigationSource = 'autoplay') => {
+    (index: number, source: NavigationSource = 'swipe') => {
       const timeSpent = Date.now() - sceneStartTimeRef.current;
       emitBehavioralEvent({
         type: 'scene_view',
@@ -697,19 +920,19 @@ export function SceneRenderer({
   // ============================================================
   // NAVIGATION FUNCTIONS
   // ============================================================
-
   const goToNextMedia = useCallback(
-    (source: NavigationSource = 'autoplay') => {
+    (source: NavigationSource = 'tap') => {
       if (totalItems <= 1) return;
       trackSceneView(currentIndex, source);
       const nextIndex = (currentIndex + 1) % totalItems;
       setCurrentIndex(nextIndex);
       lastReportedIndexRef.current = nextIndex;
+      lastScrollIndexRef.current = nextIndex;
       onSceneChange?.(nextIndex, source);
-      progressAnim.setValue(0);
+      dotPulse.setValue(0);
       flatListRef.current?.scrollToIndex({ index: nextIndex, animated: true });
     },
-    [currentIndex, totalItems, onSceneChange, trackSceneView, progressAnim]
+    [currentIndex, totalItems, onSceneChange, trackSceneView, dotPulse]
   );
 
   const goToPreviousMedia = useCallback(
@@ -719,11 +942,12 @@ export function SceneRenderer({
       const prevIndex = (currentIndex - 1 + totalItems) % totalItems;
       setCurrentIndex(prevIndex);
       lastReportedIndexRef.current = prevIndex;
+      lastScrollIndexRef.current = prevIndex;
       onSceneChange?.(prevIndex, source);
-      progressAnim.setValue(0);
+      dotPulse.setValue(0);
       flatListRef.current?.scrollToIndex({ index: prevIndex, animated: true });
     },
-    [currentIndex, totalItems, onSceneChange, trackSceneView, progressAnim]
+    [currentIndex, totalItems, onSceneChange, trackSceneView, dotPulse]
   );
 
   const goToMedia = useCallback(
@@ -733,102 +957,107 @@ export function SceneRenderer({
       trackSceneView(currentIndex, source);
       setCurrentIndex(index);
       lastReportedIndexRef.current = index;
+      lastScrollIndexRef.current = index;
       onSceneChange?.(index, source);
-      progressAnim.setValue(0);
+      dotPulse.setValue(0);
       flatListRef.current?.scrollToIndex({ index, animated: true });
     },
-    [currentIndex, totalItems, onSceneChange, trackSceneView, progressAnim]
+    [currentIndex, totalItems, onSceneChange, trackSceneView, dotPulse]
   );
 
-  const handleMomentumScrollEnd = useCallback(
+  // ============================================================
+  // SCROLL HANDLERS
+  // ============================================================
+  const commitScrollIndex = useCallback(
+    (newIndex: number, source: NavigationSource = 'swipe') => {
+      if (newIndex < 0 || newIndex >= totalItems) return;
+      if (newIndex === lastReportedIndexRef.current) return;
+
+      trackSceneView(lastReportedIndexRef.current, source);
+      lastReportedIndexRef.current = newIndex;
+      setCurrentIndex(newIndex);
+      onSceneChange?.(newIndex, source);
+      dotPulse.setValue(0);
+      sceneStartTimeRef.current = Date.now();
+    },
+    [totalItems, onSceneChange, trackSceneView, dotPulse]
+  );
+
+  const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetX = event.nativeEvent.contentOffset.x;
       const newIndex = Math.round(offsetX / width);
 
-      if (newIndex < 0 || newIndex >= totalItems) return;
-      if (newIndex === lastReportedIndexRef.current) return;
+      lastScrollIndexRef.current = newIndex;
 
-      trackSceneView(lastReportedIndexRef.current, 'swipe');
-      lastReportedIndexRef.current = newIndex;
-      setCurrentIndex(newIndex);
-      onSceneChange?.(newIndex, 'swipe');
-      progressAnim.setValue(0);
-      sceneStartTimeRef.current = Date.now();
+      if (scrollEndTimerRef.current) {
+        clearTimeout(scrollEndTimerRef.current);
+      }
+
+      scrollEndTimerRef.current = setTimeout(() => {
+        commitScrollIndex(lastScrollIndexRef.current, 'swipe');
+        scrollEndTimerRef.current = null;
+      }, 80);
     },
-    [width, totalItems, onSceneChange, trackSceneView, progressAnim]
+    [width, commitScrollIndex]
   );
 
-  // ============================================================
-  // AUTOPLAY
-  // ============================================================
-
-  const startAutoplay = useCallback(() => {
-    if (autoPlayTimerRef.current) {
-      clearTimeout(autoPlayTimerRef.current);
-      autoPlayTimerRef.current = null;
-    }
-    if (
-      autoPlay &&
-      isVisible &&
-      totalItems > 1 &&
-      currentMedia?.type !== 'video'
-    ) {
-      autoPlayTimerRef.current = setTimeout(() => {
-        goToNextMedia('autoplay');
-      }, autoPlayInterval);
-    }
-  }, [
-    autoPlay,
-    isVisible,
-    totalItems,
-    autoPlayInterval,
-    goToNextMedia,
-    currentMedia,
-  ]);
-
-  const stopAutoplay = useCallback(() => {
-    if (autoPlayTimerRef.current) {
-      clearTimeout(autoPlayTimerRef.current);
-      autoPlayTimerRef.current = null;
-    }
-  }, []);
+  const handleMomentumScrollEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (scrollEndTimerRef.current) {
+        clearTimeout(scrollEndTimerRef.current);
+        scrollEndTimerRef.current = null;
+      }
+      const offsetX = event.nativeEvent.contentOffset.x;
+      const newIndex = Math.round(offsetX / width);
+      commitScrollIndex(newIndex, 'swipe');
+    },
+    [width, commitScrollIndex]
+  );
 
   useEffect(() => {
-    if (autoPlay && isVisible && totalItems > 1) {
-      startAutoplay();
-    } else {
-      stopAutoplay();
-    }
-    return () => stopAutoplay();
-  }, [
-    autoPlay,
-    isVisible,
-    totalItems,
-    currentIndex,
-    startAutoplay,
-    stopAutoplay,
-  ]);
+    return () => {
+      if (scrollEndTimerRef.current) {
+        clearTimeout(scrollEndTimerRef.current);
+      }
+    };
+  }, []);
 
+  // ============================================================
+  // DOTS PULSE
+  // ============================================================
+  useEffect(() => {
+    dotPulse.setValue(0);
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotPulse, {
+          toValue: 1,
+          duration: 1600,
+          useNativeDriver: false,
+        }),
+        Animated.timing(dotPulse, {
+          toValue: 0,
+          duration: 1600,
+          useNativeDriver: false,
+        }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [currentIndex, dotPulse]);
+
+  // ============================================================
+  // RESET WHEN KEY CHANGES
+  // ============================================================
   useEffect(() => {
     setCurrentIndex(0);
     lastReportedIndexRef.current = 0;
-    progressAnim.setValue(0);
-    stopAutoplay();
+    lastScrollIndexRef.current = 0;
+    dotPulse.setValue(0);
     onSceneChange?.(0, 'tap');
     sceneStartTimeRef.current = Date.now();
-    if (autoPlay && totalItems > 1) {
-      startAutoplay();
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey, totalItems]);
-
-  useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: autoPlayInterval,
-      useNativeDriver: false,
-    }).start(() => progressAnim.setValue(0));
-  }, [currentIndex, autoPlayInterval, progressAnim]);
 
   // ============================================================
   // RENDER MEDIA ITEM
@@ -845,12 +1074,13 @@ export function SceneRenderer({
             height={height}
             isCurrent={isCurrent}
             isVisible={isVisible}
-            autoPlay={autoPlay}
-            bottomOffset={progressBarBottomOffset}
-            onPlayingChange={setIsVideoPlaying}
-            onReadyChange={(isLoading) =>
-              handleVideoReady(index, isLoading)
-            }
+            onPlayingChange={(playing) => {
+              setIsVideoPlaying(playing);
+            }}
+            onReadyChange={(isLoading) => handleVideoReady(index, isLoading)}
+            onPlayerReady={(p) => {
+              if (isCurrent) setActiveVideoPlayer(p);
+            }}
           />
         );
       }
@@ -875,21 +1105,12 @@ export function SceneRenderer({
         </View>
       );
     },
-    [
-      width,
-      height,
-      currentIndex,
-      isVisible,
-      autoPlay,
-      progressBarBottomOffset,
-      handleVideoReady,
-    ]
+    [width, height, currentIndex, isVisible, handleVideoReady]
   );
 
   // ============================================================
   // RENDER
   // ============================================================
-
   const shouldShowSeeDetails = description && description.length > 100;
   const displayDescription = isExpanded
     ? description
@@ -897,9 +1118,6 @@ export function SceneRenderer({
     ? description.slice(0, 100) + (description.length > 100 ? '...' : '')
     : '';
 
-  // ============================================================
-  // ✅ Price display — respects the effective price type
-  // ============================================================
   const displayPrice =
     effectivePriceType === 'free'
       ? 'Free'
@@ -919,6 +1137,8 @@ export function SceneRenderer({
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
+        onScroll={handleScroll}
+        onScrollEndDrag={handleMomentumScrollEnd}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         scrollEventThrottle={16}
         getItemLayout={(data, index) => ({
@@ -931,10 +1151,19 @@ export function SceneRenderer({
         removeClippedSubviews={false}
         decelerationRate="fast"
         directionalLockEnabled
+        nestedScrollEnabled
+        disableIntervalMomentum
         {...(Platform.OS === 'web' ? { pagingEnabled: true } : {})}
       />
 
-      {totalItems > 1 && !currentIsVideo && (
+      <MediaOverlays
+        width={width}
+        height={height}
+        filter={filter}
+        textOverlays={textOverlays}
+      />
+
+      {totalItems > 1 && !currentIsVideo && isDesktop && (
         <View style={styles.tapContainer} pointerEvents="box-none">
           <TouchableOpacity
             style={styles.tapArea}
@@ -972,39 +1201,53 @@ export function SceneRenderer({
       />
 
       <View
-        style={[
-          styles.bottomContainer,
-          { bottom: infoPanelBottomOffset },
-        ]}
+        style={[styles.bottomContainer, { bottom: infoPanelBottomOffset }]}
       >
+        {showInbox && (
+          <TouchableOpacity
+            style={styles.inboxButton}
+            onPress={() => {
+              onInboxPress?.();
+              onPrimaryAction?.();
+            }}
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chatbubble-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        )}
+
         <View style={styles.dotsContainer}>
-          {safeMedia.map((_, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.dotWrapper}
-              onPress={() => {
-                goToMedia(index, 'tap');
-              }}
-              activeOpacity={0.8}
-            >
-              {index === currentIndex ? (
-                <Animated.View
-                  style={[
-                    styles.dot,
-                    styles.dotActive,
-                    {
-                      width: progressAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [8, 24],
-                      }),
-                    },
-                  ]}
-                />
-              ) : (
-                <View style={[styles.dot, styles.dotInactive]} />
-              )}
-            </TouchableOpacity>
-          ))}
+          {safeMedia.map((_, index) => {
+            const isActive = index === currentIndex;
+            return (
+              <TouchableOpacity
+                key={index}
+                style={styles.dotWrapper}
+                onPress={() => {
+                  goToMedia(index, 'tap');
+                }}
+                activeOpacity={0.8}
+              >
+                {isActive ? (
+                  <Animated.View
+                    style={[
+                      styles.dot,
+                      styles.dotActive,
+                      {
+                        width: dotPulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [22, 26],
+                        }),
+                      },
+                    ]}
+                  />
+                ) : (
+                  <View style={[styles.dot, styles.dotInactive]} />
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         <View style={styles.infoPanel}>
@@ -1031,25 +1274,6 @@ export function SceneRenderer({
               {displayName}
             </Text>
             {timeAgo && <Text style={styles.timeAgo}>• {timeAgo}</Text>}
-
-            {showInbox && (
-              <TouchableOpacity
-                style={styles.inlineInboxButton}
-                onPress={() => {
-                  onInboxPress?.();
-                  onPrimaryAction?.();
-                }}
-                activeOpacity={0.75}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              >
-                <Ionicons
-                  name="chatbubble-outline"
-                  size={12}
-                  color="#FFFFFF"
-                />
-                <Text style={styles.inlineInboxText}>Inbox</Text>
-              </TouchableOpacity>
-            )}
           </View>
 
           {description && (
@@ -1072,6 +1296,13 @@ export function SceneRenderer({
               )}
             </View>
           )}
+
+          {currentIsVideo && activeVideoPlayer && (
+            <VideoProgressBar
+              player={activeVideoPlayer}
+              isPlaying={isVideoPlaying}
+            />
+          )}
         </View>
       </View>
 
@@ -1087,7 +1318,6 @@ export function SceneRenderer({
 // ============================================================
 // STYLES
 // ============================================================
-
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#010102',
@@ -1115,67 +1345,77 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  videoPlayingIndicator: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
+
+  // ============================================================
+  // VIDEO PROGRESS BAR — SCRUBBABLE
+  //
+  //  ✅ Bar and thumb sizes are animated in the component.
+  //  ✅ Sits at the bottom of the info panel, below description.
+  // ============================================================
+  videoProgressBarWrapper: {
+    marginTop: 10,
+    width: '100%',
+  },
+  videoProgressTimeRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 6,
+    marginBottom: 4,
   },
-  videoPlayingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#2ECC71',
-  },
-  videoPlayingText: {
-    color: '#FFFFFF',
-    fontSize: 10,
+  videoProgressTimeText: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 11,
     fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
 
+  // Touch target — 20px tall so it's easy to grab even when the
+  // visible bar is only 2px thick.
   videoProgressBarContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 5,
-    zIndex: 30,
+    height: 20,
+    width: '100%',
+    position: 'relative',
   },
   videoProgressBarTrack: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(255,255,255,0.55)',
-    borderRadius: 3,
-  },
-  videoProgressBarFill: {
-    height: '100%',
-    borderRadius: 3,
-    shadowColor: '#A8C5FF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
-    elevation: 6,
     position: 'absolute',
     left: 0,
-    top: 0,
-  },
-  videoProgressBarHead: {
-    position: 'absolute',
     right: 0,
-    top: -1,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    // `top` and `height` are set via Animated values in the component
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 2,
+  },
+  videoProgressBarFill: {
+    position: 'absolute',
+    left: 0,
+    // `top`, `height` and `width` are set via Animated values
     backgroundColor: '#FFFFFF',
-    shadowColor: '#FFFFFF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 4,
-    elevation: 8,
+    borderRadius: 2,
+  },
+  videoProgressBarThumb: {
+    position: 'absolute',
+    // `top`, `width`, `height`, `borderRadius`, `marginLeft` and `left`
+    // are all set via Animated values in the component.
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+
+  // ---- Media overlays (filter + text) ----
+  overlayLayer: {
+    zIndex: 15,
+  },
+  savedOverlayWrapper: {
+    position: 'absolute',
+  },
+  savedOverlayText: {
+    fontWeight: '800',
+    textShadowOffset: { width: 0, height: 2 },
   },
 
   tapContainer: {
@@ -1280,25 +1520,23 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
     flexShrink: 0,
   },
-  inlineInboxButton: {
-    flexDirection: 'row',
+
+  inboxButton: {
+    alignSelf: 'center',
+    marginBottom: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    marginLeft: 10,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
-    flexShrink: 0,
-  },
-  inlineInboxText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    borderColor: 'rgba(255,255,255,0.28)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    elevation: 4,
   },
 
   descriptionContainer: {

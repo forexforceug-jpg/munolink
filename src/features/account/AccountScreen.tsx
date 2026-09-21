@@ -7,11 +7,11 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Image,
   Dimensions,
   StatusBar,
   ActivityIndicator,
-  Alert,
   RefreshControl,
   Modal,
   TextInput,
@@ -34,6 +34,7 @@ import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
+import { StyledAlert } from '../feed/components/StyledAlert';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import * as VideoThumbnails from 'expo-video-thumbnails';
@@ -273,12 +274,11 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
   }
 
   return (
-    <TouchableOpacity
+    <Pressable
       style={styles.gridPostItem}
       onPress={() => onPress(item)}
       onLongPress={() => onLongPress?.(item)}
       delayLongPress={350}
-      activeOpacity={0.8}
     >
       {imageUrl ? (
         <Image source={{ uri: imageUrl }} style={styles.gridPostImage} />
@@ -294,13 +294,13 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
         </View>
       )}
 
-      <TouchableOpacity
+      <Pressable
         style={styles.gridMenuButton}
         onPress={() => onLongPress?.(item)}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         <Ionicons name="ellipsis-horizontal" size={16} color="#FFFFFF" />
-      </TouchableOpacity>
+      </Pressable>
 
       <View style={styles.gridPostOverlay} pointerEvents="none">
         <LinearGradient
@@ -318,7 +318,7 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
           )}
         </View>
       </View>
-    </TouchableOpacity>
+    </Pressable>
   );
 };
 
@@ -533,7 +533,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
     userProfile,
     isSaved
   );
-
+const specs = (item as any).specifications || {};
   const mediaItems: {
     type: 'image' | 'video';
     url: string;
@@ -590,6 +590,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         media={mediaItems}
         title={item.name || 'Post'}
         price={price}
+          filter={specs.filter ?? null}
+  textOverlays={specs.text_overlays ?? null}
         currency="UGX"
         userName={userProfile?.full_name || 'User'}
         userAvatar={userProfile?.avatar_url || null}
@@ -629,6 +631,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
           key={`rail-${item.id}`}
           opportunity={opportunity}
           isLiked={isLiked}
+          bottomInset={80}       // ← pushes the rail up so the AI button clears the tab bar
+    rightShift={-6}
           likeCount={likeCount}
           onLikePress={() => onLike(item)}
           onUserPress={() => onUserPress(item)}
@@ -676,8 +680,9 @@ const AccountContent = ({ navigation }: any) => {
   const [activeTab, setActiveTab] = useState('posts');
   const [showSettings, setShowSettings] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
-  const [showCreatePost, setShowCreatePost] = useState(false);
 
+  // ✅ Edit-post flow still uses the modal — only "create" moved to the
+  //    dedicated UploadCamera → UploadEditor screens.
   const [showEditPost, setShowEditPost] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
 
@@ -705,6 +710,49 @@ const AccountContent = ({ navigation }: any) => {
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
+
   const [editForm, setEditForm] = useState({
     full_name: '',
     phone_number: '',
@@ -717,7 +765,7 @@ const AccountContent = ({ navigation }: any) => {
   const [editCover, setEditCover] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
 
-  // ✅ Post form — now includes `priceType`
+  // ✅ Post form — used by the EDIT modal only
   const [postForm, setPostForm] = useState({
     name: '',
     description: '',
@@ -906,7 +954,6 @@ const AccountContent = ({ navigation }: any) => {
             share_count: item.share_count || 0,
             comment_count: commentCounts[item.id] || 0,
             price: item.price || null,
-            // ✅ Price type from DB
             price_type: (item.price_type as PriceType) || null,
             video: item.video || null,
             video_thumbnail: item.video_thumbnail || null,
@@ -1132,7 +1179,13 @@ const AccountContent = ({ navigation }: any) => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        showStyledAlert({
+          title: 'Permission Required',
+          message: 'Please allow access to your photos.',
+          icon: 'images-outline',
+          iconColor: '#4A7DFF',
+          buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+        });
         return;
       }
 
@@ -1166,25 +1219,53 @@ const AccountContent = ({ navigation }: any) => {
             prev ? { ...prev, avatar_url: avatarUrl } : null
           );
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Alert.alert('Success', 'Avatar updated successfully!');
+          showStyledAlert({
+            title: 'Success',
+            message: 'Avatar updated successfully!',
+            icon: 'checkmark-circle-outline',
+            iconColor: '#2ECC71',
+            buttons: [
+              { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+            ],
+          });
         } catch (error) {
           console.error('Avatar upload error:', error);
-          Alert.alert('Error', 'Failed to upload avatar');
+          showStyledAlert({
+            title: 'Error',
+            message: 'Failed to upload avatar',
+            icon: 'alert-circle-outline',
+            iconColor: '#E74C3C',
+            buttons: [
+              { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+            ],
+          });
         } finally {
           setUploading(false);
         }
       }
     } catch (error) {
       console.error('Avatar pick error:', error);
-      Alert.alert('Error', 'Failed to select image');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to select image',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
-  }, [user?.id, showEditProfile]);
+  }, [user?.id, showEditProfile, showStyledAlert, hideStyledAlert]);
 
   const pickCover = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        showStyledAlert({
+          title: 'Permission Required',
+          message: 'Please allow access to your photos.',
+          icon: 'images-outline',
+          iconColor: '#4A7DFF',
+          buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+        });
         return;
       }
 
@@ -1199,9 +1280,15 @@ const AccountContent = ({ navigation }: any) => {
       }
     } catch (error) {
       console.error('Cover pick error:', error);
-      Alert.alert('Error', 'Failed to select image');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to select image',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
-  }, []);
+  }, [showStyledAlert, hideStyledAlert]);
 
   const updateProfile = async () => {
     if (!user?.id) return;
@@ -1217,7 +1304,15 @@ const AccountContent = ({ navigation }: any) => {
           avatarUrl = await uploadProfileImage(editAvatar, 'avatars');
         } catch (error) {
           console.error('Avatar upload failed:', error);
-          Alert.alert('Error', 'Failed to upload avatar');
+          showStyledAlert({
+            title: 'Error',
+            message: 'Failed to upload avatar',
+            icon: 'alert-circle-outline',
+            iconColor: '#E74C3C',
+            buttons: [
+              { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+            ],
+          });
           setSavingProfile(false);
           return;
         }
@@ -1228,7 +1323,15 @@ const AccountContent = ({ navigation }: any) => {
           coverUrl = await uploadProfileImage(editCover, 'covers');
         } catch (error) {
           console.error('Cover upload failed:', error);
-          Alert.alert('Error', 'Failed to upload cover image');
+          showStyledAlert({
+            title: 'Error',
+            message: 'Failed to upload cover image',
+            icon: 'alert-circle-outline',
+            iconColor: '#E74C3C',
+            buttons: [
+              { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+            ],
+          });
           setSavingProfile(false);
           return;
         }
@@ -1277,12 +1380,24 @@ const AccountContent = ({ navigation }: any) => {
       setEditCover(null);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('✅ Success', 'Profile updated successfully!');
+      showStyledAlert({
+        title: 'Success',
+        message: 'Profile updated successfully!',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#2ECC71',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       setShowEditProfile(false);
       loadAllData();
     } catch (error: any) {
       console.error('Error updating profile:', error);
-      Alert.alert('Error', error.message || 'Failed to update profile');
+      showStyledAlert({
+        title: 'Error',
+        message: error.message || 'Failed to update profile',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } finally {
       setSavingProfile(false);
     }
@@ -1318,15 +1433,18 @@ const AccountContent = ({ navigation }: any) => {
     (item: CatalogItem) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      Alert.alert(
-        'Delete Post',
-        `Are you sure you want to delete "${item.name}"? This cannot be undone.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
+      showStyledAlert({
+        title: 'Delete Post',
+        message: `Are you sure you want to delete "${item.name}"? This cannot be undone.`,
+        icon: 'trash-outline',
+        iconColor: '#E74C3C',
+        buttons: [
+          { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
           {
             text: 'Delete',
             style: 'destructive',
             onPress: async () => {
+              hideStyledAlert();
               try {
                 const filesToRemove: string[] = [
                   ...(item.images || []),
@@ -1358,20 +1476,46 @@ const AccountContent = ({ navigation }: any) => {
                 Haptics.notificationAsync(
                   Haptics.NotificationFeedbackType.Success
                 );
-                Alert.alert('✅ Deleted', 'Post removed successfully.');
+                showStyledAlert({
+                  title: 'Deleted',
+                  message: 'Post removed successfully.',
+                  icon: 'checkmark-circle-outline',
+                  iconColor: '#2ECC71',
+                  buttons: [
+                    {
+                      text: 'OK',
+                      style: 'primary',
+                      onPress: hideStyledAlert,
+                    },
+                  ],
+                });
               } catch (error: any) {
                 console.error('Error deleting post:', error);
-                Alert.alert(
-                  'Error',
-                  error?.message || 'Failed to delete post.'
-                );
+                showStyledAlert({
+                  title: 'Error',
+                  message: error?.message || 'Failed to delete post.',
+                  icon: 'alert-circle-outline',
+                  iconColor: '#E74C3C',
+                  buttons: [
+                    {
+                      text: 'OK',
+                      style: 'primary',
+                      onPress: hideStyledAlert,
+                    },
+                  ],
+                });
               }
             },
           },
-        ]
-      );
+        ],
+      });
     },
-    [user?.id, selectedItem?.id]
+    [
+      user?.id,
+      selectedItem?.id,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
   );
 
   const showPostActions = useCallback(
@@ -1396,28 +1540,53 @@ const AccountContent = ({ navigation }: any) => {
           }
         );
       } else {
-        Alert.alert(item.name || 'Post', 'Choose an action', [
-          {
-            text: 'Edit Post',
-            onPress: () => openEditPost(item),
-          },
-          {
-            text: 'Delete Post',
-            style: 'destructive',
-            onPress: () => confirmDeletePost(item),
-          },
-          { text: 'Cancel', style: 'cancel' },
-        ]);
+        showStyledAlert({
+          title: item.name || 'Post',
+          message: 'Choose an action',
+          icon: 'ellipsis-horizontal',
+          iconColor: '#4A7DFF',
+          buttons: [
+            {
+              text: 'Edit Post',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                openEditPost(item);
+              },
+            },
+            {
+              text: 'Delete Post',
+              style: 'destructive',
+              onPress: () => {
+                hideStyledAlert();
+                confirmDeletePost(item);
+              },
+            },
+            { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
+          ],
+        });
       }
     },
-    [user?.id, openEditPost, confirmDeletePost]
+    [
+      user?.id,
+      openEditPost,
+      confirmDeletePost,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
   );
 
   const pickMedia = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        showStyledAlert({
+          title: 'Permission Required',
+          message: 'Please allow access to your photos.',
+          icon: 'images-outline',
+          iconColor: '#4A7DFF',
+          buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+        });
         return;
       }
 
@@ -1468,16 +1637,26 @@ const AccountContent = ({ navigation }: any) => {
         }));
 
         if (video && !videoThumbnail) {
-          Alert.alert(
-            '📸 Thumbnail Needed',
-            'Please select a thumbnail image for your video.',
-            [{ text: 'OK' }]
-          );
+          showStyledAlert({
+            title: 'Thumbnail Needed',
+            message: 'Please select a thumbnail image for your video.',
+            icon: 'image-outline',
+            iconColor: '#4A7DFF',
+            buttons: [
+              { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+            ],
+          });
         }
       }
     } catch (error) {
       console.error('Media pick error:', error);
-      Alert.alert('Error', 'Failed to select media');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to select media',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
   };
 
@@ -1485,7 +1664,13 @@ const AccountContent = ({ navigation }: any) => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow access to your photos.');
+        showStyledAlert({
+          title: 'Permission Required',
+          message: 'Please allow access to your photos.',
+          icon: 'images-outline',
+          iconColor: '#4A7DFF',
+          buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+        });
         return;
       }
 
@@ -1504,7 +1689,13 @@ const AccountContent = ({ navigation }: any) => {
       }
     } catch (error) {
       console.error('Thumbnail pick error:', error);
-      Alert.alert('Error', 'Failed to select thumbnail');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to select thumbnail',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
   };
 
@@ -1614,207 +1805,46 @@ const AccountContent = ({ navigation }: any) => {
   };
 
   // ============================================================
-  // ✅ CREATE POST — now uses priceType
-  // ============================================================
-  const createPost = async () => {
-    if (!user?.id) {
-      Alert.alert('Error', 'Please sign in');
-      return;
-    }
-
-    if (!postForm.name.trim()) {
-      Alert.alert('Error', 'Please enter a name/title');
-      return;
-    }
-
-    // ✅ Validate price for non-free types
-    if (postForm.priceType !== 'free') {
-      const priceNum = parseFloat(postForm.price);
-      if (!priceNum || priceNum <= 0) {
-        Alert.alert(
-          'Error',
-          postForm.priceType === 'negotiable'
-            ? 'Please enter a starting price'
-            : 'Please enter a valid price'
-        );
-        return;
-      }
-    }
-
-    setSavingPost(true);
-
-    try {
-      const uploadedUrls: string[] = [];
-      let videoUrl: string | null = null;
-      let videoThumbnail: string | null = null;
-      let videoDuration: number | null = null;
-      let videoSize: number | null = null;
-
-      for (const uri of postForm.images) {
-        try {
-          const ext = uri.toLowerCase().endsWith('.png')
-            ? 'png'
-            : uri.toLowerCase().endsWith('.webp')
-            ? 'webp'
-            : 'jpg';
-          const fileName = `posts/${user.id}/${Date.now()}-${Math.random()
-            .toString(36)
-            .slice(2, 10)}.${ext}`;
-          const contentType =
-            ext === 'png'
-              ? 'image/png'
-              : ext === 'webp'
-              ? 'image/webp'
-              : 'image/jpeg';
-
-          const result = await uploadLocalFile(uri, fileName, contentType);
-
-          if (result.publicUrl) {
-            uploadedUrls.push(result.publicUrl);
-          } else {
-            console.warn('⚠️ Image upload failed:', result.error);
-          }
-        } catch (error) {
-          console.error('Failed to upload image:', error);
-        }
-      }
-
-      if (postForm.video) {
-        try {
-          const result = await uploadVideoAndThumbnail(
-            postForm.video,
-            postForm.videoThumbnail
-          );
-          videoUrl = result.videoUrl;
-          videoThumbnail = result.videoThumbnail;
-          videoDuration = result.videoDuration;
-          videoSize = result.videoSize;
-        } catch (error: any) {
-          console.error('Video upload failed:', error);
-          Alert.alert(
-            'Error',
-            error?.message || 'Failed to upload video. Please try again.'
-          );
-          setSavingPost(false);
-          return;
-        }
-      }
-
-      // ✅ Compute final price and price_type
-      const finalPrice =
-        postForm.priceType === 'free' ? 0 : parseFloat(postForm.price) || 0;
-
-      const insertData: any = {
-        name: postForm.name.trim(),
-        description: postForm.description.trim() || null,
-        // The DB requires `category` — default to Uncategorized since
-        // the field is no longer collected from the user.
-        category: 'Uncategorized',
-        images: uploadedUrls.length > 0 ? uploadedUrls : null,
-        // ✅ Price + type
-        price: finalPrice,
-        price_type: postForm.priceType,
-        specifications:
-          postForm.priceType !== 'free'
-            ? { price: finalPrice, price_type: postForm.priceType }
-            : { price_type: 'free' },
-        is_active: true,
-        user_id: user.id,
-      };
-
-      if (videoUrl) insertData.video = videoUrl;
-
-      if (isRemoteUrl(videoThumbnail)) {
-        insertData.video_thumbnail = videoThumbnail;
-      } else if (uploadedUrls.length > 0) {
-        insertData.video_thumbnail = uploadedUrls[0];
-      } else {
-        insertData.video_thumbnail = null;
-      }
-
-      if (videoDuration !== null) {
-        insertData.video_duration = Math.round(videoDuration);
-      }
-      if (videoSize !== null) {
-        insertData.video_size = videoSize;
-      }
-
-      const { data, error } = await supabase
-        .from('catalog')
-        .insert(insertData)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      if (data) {
-        const newItem: CatalogItem = {
-          id: data.id,
-          name: data.name || 'Untitled',
-          category: data.category || 'Uncategorized',
-          subcategory: data.subcategory || null,
-          brand: data.brand || null,
-          description: data.description || null,
-          specifications: data.specifications || {},
-          images: data.images || null,
-          tags: data.tags || null,
-          is_active: data.is_active || null,
-          created_at: data.created_at || null,
-          updated_at: data.updated_at || null,
-          category_id: data.category_id || null,
-          user_id: data.user_id || null,
-          like_count: data.like_count || 0,
-          view_count: data.view_count || 0,
-          share_count: data.share_count || 0,
-          comment_count: 0,
-          price: data.price || null,
-          price_type: (data.price_type as PriceType) || postForm.priceType,
-          video: data.video || null,
-          video_thumbnail: data.video_thumbnail || null,
-          video_duration: data.video_duration || null,
-          video_size: data.video_size || null,
-          distance: undefined,
-          saveCount: 0,
-          isSaved: false,
-        };
-        setCatalogItems((prev) => [newItem, ...prev]);
-      }
-
-      Alert.alert('✅ Success', 'Your post has been published!');
-      setShowCreatePost(false);
-      resetPostForm();
-      loadAllData();
-    } catch (error: any) {
-      console.error('❌ Error creating post:', error);
-      Alert.alert('Error', error.message || 'Failed to create post');
-    } finally {
-      setSavingPost(false);
-    }
-  };
-
-  // ============================================================
-  // ✅ UPDATE POST — now uses priceType
+  // ✅ UPDATE POST — still uses the modal
   // ============================================================
   const updatePost = async () => {
     if (!user?.id || !editingPostId) {
-      Alert.alert('Error', 'Missing post to update');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Missing post to update',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
     if (!postForm.name.trim()) {
-      Alert.alert('Error', 'Please enter a name/title');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Please enter a name/title',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
     if (postForm.priceType !== 'free') {
       const priceNum = parseFloat(postForm.price);
       if (!priceNum || priceNum <= 0) {
-        Alert.alert(
-          'Error',
-          postForm.priceType === 'negotiable'
-            ? 'Please enter a starting price'
-            : 'Please enter a valid price'
-        );
+        showStyledAlert({
+          title: 'Error',
+          message:
+            postForm.priceType === 'negotiable'
+              ? 'Please enter a starting price'
+              : 'Please enter a valid price',
+          icon: 'alert-circle-outline',
+          iconColor: '#E74C3C',
+          buttons: [
+            { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+          ],
+        });
         return;
       }
     }
@@ -1877,10 +1907,15 @@ const AccountContent = ({ navigation }: any) => {
             videoDuration = result.videoDuration;
             videoSize = result.videoSize;
           } catch (err: any) {
-            Alert.alert(
-              'Error',
-              err?.message || 'Failed to upload new video.'
-            );
+            showStyledAlert({
+              title: 'Error',
+              message: err?.message || 'Failed to upload new video.',
+              icon: 'alert-circle-outline',
+              iconColor: '#E74C3C',
+              buttons: [
+                { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+              ],
+            });
             setSavingPost(false);
             return;
           }
@@ -1894,7 +1929,6 @@ const AccountContent = ({ navigation }: any) => {
         name: postForm.name.trim(),
         description: postForm.description.trim() || null,
         images: finalImages.length > 0 ? finalImages : null,
-        // ✅ Price + type
         price: finalPrice,
         price_type: postForm.priceType,
         specifications:
@@ -1955,7 +1989,13 @@ const AccountContent = ({ navigation }: any) => {
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('✅ Success', 'Post updated successfully!');
+      showStyledAlert({
+        title: 'Success',
+        message: 'Post updated successfully!',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#2ECC71',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
 
       setShowEditPost(false);
       setEditingPostId(null);
@@ -1963,7 +2003,13 @@ const AccountContent = ({ navigation }: any) => {
       loadAllData();
     } catch (error: any) {
       console.error('❌ Error updating post:', error);
-      Alert.alert('Error', error.message || 'Failed to update post');
+      showStyledAlert({
+        title: 'Error',
+        message: error.message || 'Failed to update post',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     } finally {
       setSavingPost(false);
     }
@@ -2124,25 +2170,55 @@ const AccountContent = ({ navigation }: any) => {
         navigation.navigate('Pay');
         break;
       case 'logout':
-        Alert.alert('Log Out', 'Are you sure you want to log out?', [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Log Out',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await logout();
-                navigation.replace('Join');
-              } catch (error) {
-                console.error('Logout error:', error);
-                Alert.alert('Error', 'Failed to log out. Please try again.');
-              }
+        showStyledAlert({
+          title: 'Log Out',
+          message: 'Are you sure you want to log out?',
+          icon: 'log-out-outline',
+          iconColor: '#E74C3C',
+          buttons: [
+            { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Log Out',
+              style: 'destructive',
+              onPress: async () => {
+                hideStyledAlert();
+                try {
+                  await logout();
+                  navigation.replace('Join');
+                } catch (error) {
+                  console.error('Logout error:', error);
+                  showStyledAlert({
+                    title: 'Error',
+                    message: 'Failed to log out. Please try again.',
+                    icon: 'alert-circle-outline',
+                    iconColor: '#E74C3C',
+                    buttons: [
+                      {
+                        text: 'OK',
+                        style: 'primary',
+                        onPress: hideStyledAlert,
+                      },
+                    ],
+                  });
+                }
+              },
             },
-          },
-        ]);
+          ],
+        });
         break;
     }
   };
+
+  // ============================================================
+  // ✅ UPLOAD FLOW ENTRY POINT
+  //    Both the FAB and the empty-state "Create Post" button
+  //    route here. The UploadCamera screen handles capture and
+  //    forwards to UploadEditor for the caption/price form.
+  // ============================================================
+  const openUploadCamera = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    navigation.navigate('UploadCamera');
+  }, [navigation]);
 
   const renderEditProfileModal = () => {
     const avatarUrl =
@@ -2340,22 +2416,21 @@ const AccountContent = ({ navigation }: any) => {
   };
 
   // ============================================================
-  // ✅ POST FORM MODAL — with Price Type selector
+  // ✅ EDIT POST MODAL (edit-only — creation uses UploadCamera)
   // ============================================================
-  const renderPostFormModal = (
-    visible: boolean,
-    isEdit: boolean,
-    onClose: () => void,
-    onSubmit: () => void
-  ) => {
+  const renderEditPostModal = () => {
     const isFree = postForm.priceType === 'free';
 
     return (
       <Modal
-        visible={visible}
+        visible={showEditPost}
         transparent
         animationType="slide"
-        onRequestClose={onClose}
+        onRequestClose={() => {
+          setShowEditPost(false);
+          setEditingPostId(null);
+          resetPostForm();
+        }}
       >
         <KeyboardAvoidingView
           style={styles.modalOverlay}
@@ -2364,14 +2439,18 @@ const AccountContent = ({ navigation }: any) => {
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={onClose}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowEditPost(false);
+                  setEditingPostId(null);
+                  resetPostForm();
+                }}
+              >
                 <Text style={styles.modalCancel}>Cancel</Text>
               </TouchableOpacity>
-              <Text style={styles.modalTitle}>
-                {isEdit ? 'Edit Post' : 'Create Post'}
-              </Text>
+              <Text style={styles.modalTitle}>Edit Post</Text>
               <TouchableOpacity
-                onPress={onSubmit}
+                onPress={updatePost}
                 disabled={savingPost || !postForm.name.trim()}
               >
                 <Text
@@ -2381,13 +2460,7 @@ const AccountContent = ({ navigation }: any) => {
                       styles.modalPostDisabled,
                   ]}
                 >
-                  {savingPost
-                    ? isEdit
-                      ? 'Saving...'
-                      : 'Posting...'
-                    : isEdit
-                    ? 'Save'
-                    : 'Post'}
+                  {savingPost ? 'Saving...' : 'Save'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2547,7 +2620,6 @@ const AccountContent = ({ navigation }: any) => {
                           setPostForm((prev) => ({
                             ...prev,
                             priceType: opt.key,
-                            // Free → wipe the price
                             price: opt.key === 'free' ? '' : prev.price,
                           }));
                         }}
@@ -2856,6 +2928,17 @@ const AccountContent = ({ navigation }: any) => {
               onClose={handleCloseDirections}
               isDesktopView={isDesktop}
             />
+
+            {/* ✅ StyledAlert */}
+            <StyledAlert
+              visible={styledAlertConfig.visible}
+              title={styledAlertConfig.title}
+              message={styledAlertConfig.message}
+              icon={styledAlertConfig.icon}
+              iconColor={styledAlertConfig.iconColor}
+              buttons={styledAlertConfig.buttons}
+              onClose={hideStyledAlert}
+            />
           </View>
         </BottomSheetModalProvider>
       </GestureHandlerRootView>
@@ -2977,12 +3060,10 @@ const AccountContent = ({ navigation }: any) => {
             <Text style={styles.emptyPostsSubtext}>
               Share your first post with the community
             </Text>
+            {/* ✅ Routes to UploadCamera now */}
             <TouchableOpacity
               style={styles.createPostButton}
-              onPress={() => {
-                resetPostForm();
-                setShowCreatePost(true);
-              }}
+              onPress={openUploadCamera}
             >
               <Text style={styles.createPostButtonText}>Create Post</Text>
             </TouchableOpacity>
@@ -3007,12 +3088,10 @@ const AccountContent = ({ navigation }: any) => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
+      {/* ✅ FAB routes to UploadCamera now */}
       <TouchableOpacity
         style={[styles.fab, { bottom: 90 }]}
-        onPress={() => {
-          resetPostForm();
-          setShowCreatePost(true);
-        }}
+        onPress={openUploadCamera}
         activeOpacity={0.8}
       >
         <LinearGradient
@@ -3025,29 +3104,22 @@ const AccountContent = ({ navigation }: any) => {
         </LinearGradient>
       </TouchableOpacity>
 
-      {renderPostFormModal(
-        showCreatePost,
-        false,
-        () => {
-          setShowCreatePost(false);
-          resetPostForm();
-        },
-        createPost
-      )}
-
-      {renderPostFormModal(
-        showEditPost,
-        true,
-        () => {
-          setShowEditPost(false);
-          setEditingPostId(null);
-          resetPostForm();
-        },
-        updatePost
-      )}
+      {/* ✅ Only the edit modal remains in AccountScreen */}
+      {renderEditPostModal()}
 
       {renderEditProfileModal()}
       {renderSettingsModal()}
+
+      {/* ✅ StyledAlert (grid view) */}
+      <StyledAlert
+        visible={styledAlertConfig.visible}
+        title={styledAlertConfig.title}
+        message={styledAlertConfig.message}
+        icon={styledAlertConfig.icon}
+        iconColor={styledAlertConfig.iconColor}
+        buttons={styledAlertConfig.buttons}
+        onClose={hideStyledAlert}
+      />
     </SafeAreaView>
   );
 };

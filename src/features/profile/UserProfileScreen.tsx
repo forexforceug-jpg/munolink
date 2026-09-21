@@ -18,7 +18,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   FlatList,
-  Alert,
   ViewToken,
   ViewabilityConfig,
 } from 'react-native';
@@ -34,6 +33,7 @@ import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
 import { AIBottomSheet } from '../feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../feed/components/DirectionsBottomSheet';
+import { StyledAlert } from '../feed/components/StyledAlert';
 import * as Haptics from 'expo-haptics';
 import { Opportunity, calculateDistance } from '../../services/feed.service';
 import { locationService } from '../../services/location.service';
@@ -42,7 +42,6 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { useIsFocused } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
-
 // ============================================================
 // MODULE-LEVEL VIEWABILITY CONFIG
 // ============================================================
@@ -97,8 +96,6 @@ interface UserPost {
   distance?: number;
   saveCount?: number;
   isSaved?: boolean;
-  // ✅ NEW — carried from catalog row so SceneRenderer shows the
-  //    correct badge (Fixed / Negotiable / Starting From / Free).
   price_type?: string | null;
 }
 
@@ -132,7 +129,6 @@ function extractPriceFromSpecifications(post: any): number {
   return price;
 }
 
-// ✅ Extract the price_type from the row, falling back to specifications.
 function extractPriceType(post: any): string | null {
   if (typeof post?.price_type === 'string' && post.price_type.length > 0) {
     return post.price_type;
@@ -286,7 +282,6 @@ function buildOpportunityFromPost(
     isSaved,
     distance: item.distance,
     specifications: item.specifications || {},
-    // ✅ NEW — pass through so any rail / consumer sees the right type.
     price_type: item.price_type ?? null,
   } as any;
 }
@@ -303,10 +298,7 @@ const ItemMediaLoadingSpinner: React.FC = () => {
 };
 
 // ============================================================
-// ✅ GRID POSTS LOADING SPINNER
-//
-// Shown in place of the posts grid while `fetchUserPosts()` is
-// still running. Distinct from the per-item media spinner above.
+// GRID POSTS LOADING SPINNER
 // ============================================================
 const PostsLoadingSpinner: React.FC = () => {
   return (
@@ -407,13 +399,13 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   }
 
   const price = extractPriceFromSpecifications(item);
-  // ✅ Effective price type for SceneRenderer
   const priceType = extractPriceType(item);
 
   const cardWidth = isDesktop ? 420 : winWidth;
   const cardHeight = isDesktop ? winHeight : winHeight;
 
   const isVisible = isFocused && index === fullscreenIndex;
+  const specs = (item as any).specifications || {};
 
   return (
     <View
@@ -430,7 +422,6 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         media={mediaItems}
         title={item.name || 'Post'}
         price={price}
-        // ✅ NEW — pass through so the correct badge is shown.
         priceType={priceType as any}
         currency="UGX"
         userName={userProfile?.full_name || 'User'}
@@ -439,6 +430,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         rating={null}
         area={userProfile?.location_city || null}
         inStock={true}
+        filter={specs.filter ?? null}
+        textOverlays={specs.text_overlays ?? null}
         type="product"
         createdAt={item.created_at || undefined}
         isDesktop={isDesktop}
@@ -538,16 +531,71 @@ const UserProfileContent = ({
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
+
   // ============================================================
   // INBOX
   // ============================================================
   const handleInboxPress = useCallback(() => {
     if (!currentUser) {
-      Alert.alert('Sign in required', 'Please sign in to message this user.');
+      showStyledAlert({
+        title: 'Sign in required',
+        message: 'Please sign in to message this user.',
+        icon: 'lock-closed-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
     if (isOwnProfile) {
-      Alert.alert('Info', 'You cannot message yourself.');
+      showStyledAlert({
+        title: 'Info',
+        message: 'You cannot message yourself.',
+        icon: 'information-circle-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
@@ -555,7 +603,15 @@ const UserProfileContent = ({
       userId: userId,
       userName: userProfile?.full_name || 'User',
     });
-  }, [currentUser, userId, userProfile, isOwnProfile, navigation]);
+  }, [
+    currentUser,
+    userId,
+    userProfile,
+    isOwnProfile,
+    navigation,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   // ============================================================
   // FETCH PROFILE
@@ -614,7 +670,6 @@ const UserProfileContent = ({
         } catch {}
       }
 
-      // Total likes — count rows in `likes` for this user's posts
       try {
         const { data: myPostIds } = await supabase
           .from('catalog')
@@ -668,12 +723,18 @@ const UserProfileContent = ({
       setLikesCount(totalLikes);
     } catch (error) {
       console.error('Error fetching user profile:', error);
-      Alert.alert('Error', 'Failed to load user profile');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to load user profile',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
-  }, [userId, currentUser]);
+  }, [userId, currentUser, showStyledAlert, hideStyledAlert]);
 
   // ============================================================
-  // FETCH POSTS — now toggles `postsLoading` and carries price_type
+  // FETCH POSTS
   // ============================================================
   const fetchUserPosts = useCallback(async () => {
     if (!userId || !userProfile) return;
@@ -765,7 +826,6 @@ const UserProfileContent = ({
           distance,
           saveCount: saveCounts[item.id] || 0,
           isSaved: false,
-          // ✅ NEW — carry the price_type through
           price_type: extractPriceType(item),
         };
       });
@@ -867,11 +927,23 @@ const UserProfileContent = ({
   // ============================================================
   const handleFollowPress = useCallback(async () => {
     if (!currentUser) {
-      Alert.alert('Sign in required', 'Please sign in to follow this user.');
+      showStyledAlert({
+        title: 'Sign in required',
+        message: 'Please sign in to follow this user.',
+        icon: 'lock-closed-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
     if (isOwnProfile) {
-      Alert.alert('Info', 'You cannot follow yourself.');
+      showStyledAlert({
+        title: 'Info',
+        message: 'You cannot follow yourself.',
+        icon: 'information-circle-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
@@ -897,9 +969,22 @@ const UserProfileContent = ({
       }
     } catch (error) {
       console.error('Follow error:', error);
-      Alert.alert('Error', 'Failed to update follow status');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to update follow status',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
-  }, [currentUser, userId, isFollowing, isOwnProfile]);
+  }, [
+    currentUser,
+    userId,
+    isFollowing,
+    isOwnProfile,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   // ============================================================
   // TOGGLE LIKE
@@ -907,7 +992,15 @@ const UserProfileContent = ({
   const handleLikePress = useCallback(
     async (item: UserPost) => {
       if (!currentUser?.id) {
-        Alert.alert('Sign in required', 'Please sign in to like posts.');
+        showStyledAlert({
+          title: 'Sign in required',
+          message: 'Please sign in to like posts.',
+          icon: 'lock-closed-outline',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+          ],
+        });
         return;
       }
 
@@ -954,7 +1047,12 @@ const UserProfileContent = ({
         );
       }
     },
-    [currentUser?.id, likedItemsMap]
+    [
+      currentUser?.id,
+      likedItemsMap,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
   );
 
   // ============================================================
@@ -981,23 +1079,33 @@ const UserProfileContent = ({
     (type: string) => {
       let count = 0;
       let label = '';
+      let icon = 'information-circle-outline';
       switch (type) {
         case 'likes':
           count = likesCount;
           label = 'Likes';
+          icon = 'heart-outline';
           break;
         case 'followers':
           count = followersCount;
           label = 'Followers';
+          icon = 'people-outline';
           break;
         case 'following':
           count = followingCount;
           label = 'Following';
+          icon = 'person-add-outline';
           break;
       }
-      Alert.alert(label, `${count} ${label}`);
+      showStyledAlert({
+        title: label,
+        message: `${count} ${label.toLowerCase()}`,
+        icon,
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     },
-    [likesCount, followersCount, followingCount]
+    [likesCount, followersCount, followingCount, showStyledAlert, hideStyledAlert]
   );
 
   const handleCloseAI = useCallback(() => {
@@ -1213,6 +1321,17 @@ const UserProfileContent = ({
               onClose={handleCloseDirections}
               isDesktopView={isDesktop}
             />
+
+            {/* ✅ StyledAlert */}
+            <StyledAlert
+              visible={styledAlertConfig.visible}
+              title={styledAlertConfig.title}
+              message={styledAlertConfig.message}
+              icon={styledAlertConfig.icon}
+              iconColor={styledAlertConfig.iconColor}
+              buttons={styledAlertConfig.buttons}
+              onClose={hideStyledAlert}
+            />
           </View>
         </BottomSheetModalProvider>
       </GestureHandlerRootView>
@@ -1394,6 +1513,17 @@ const UserProfileContent = ({
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* ✅ StyledAlert (grid view) */}
+      <StyledAlert
+        visible={styledAlertConfig.visible}
+        title={styledAlertConfig.title}
+        message={styledAlertConfig.message}
+        icon={styledAlertConfig.icon}
+        iconColor={styledAlertConfig.iconColor}
+        buttons={styledAlertConfig.buttons}
+        onClose={hideStyledAlert}
+      />
     </SafeAreaView>
   );
 };
@@ -1619,8 +1749,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
     marginTop: 1,
   },
-  // ✅ "Free" label uses the same treatment as `gridPrice` but a
-  //    green accent so it matches the SceneRenderer's Free badge.
   gridPriceFree: {
     color: '#2ECC71',
     fontSize: 10,

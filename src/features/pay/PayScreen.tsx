@@ -12,7 +12,6 @@ import {
   StatusBar,
   FlatList,
   Dimensions,
-  Alert,
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
@@ -23,6 +22,7 @@ import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { supabase } from '../../lib/supabase';
+import { StyledAlert } from '../feed/components/StyledAlert';
 import { useFocusEffect } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
@@ -76,11 +76,9 @@ interface Transaction {
   dispute_reason?: string;
   released_at?: string;
   admin_confirmed_at?: string;
-  // Payment-request-derived fields
   payment_request_id?: string;
   is_request?: boolean;
   reason?: string;
-  // ✅ For accurate timer + role detection
   locked_at?: string | null;
   is_me_seller?: boolean;
   is_me_buyer?: boolean;
@@ -197,12 +195,10 @@ const PendingTransactionCard = ({
   const isPending = transaction.status === 'pending';
   const isDisputed = transaction.status === 'disputed';
 
-  // ✅ Buyer confirms; seller activates only after 24h without confirmation
   const canConfirm = isLocked && isBuyer;
   const canActivate = isLocked && isSeller && timeRemaining <= 0;
   const canDispute = isLocked && isBuyer && !isDisputed;
 
-  // ✅ New: Show a status line to BOTH parties even when no button is shown
   const showSellerWaiting = isLocked && isSeller && timeRemaining > 0;
   const showBuyerPendingConfirm = isLocked && isBuyer;
 
@@ -388,6 +384,49 @@ const PayContent = ({ navigation }: any) => {
   const [disputeReason, setDisputeReason] = useState('');
   const [timeRemainingMap, setTimeRemainingMap] = useState<Record<string, number>>({});
 
+  // ✅ StyledAlert state
+  const [styledAlertConfig, setStyledAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    icon?: string;
+    iconColor?: string;
+    buttons: {
+      text: string;
+      onPress: () => void;
+      style?: 'default' | 'cancel' | 'destructive' | 'primary';
+    }[];
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    buttons: [],
+  });
+
+  const showStyledAlert = useCallback(
+    (config: {
+      title: string;
+      message: string;
+      icon?: string;
+      iconColor?: string;
+      buttons: {
+        text: string;
+        onPress: () => void;
+        style?: 'default' | 'cancel' | 'destructive' | 'primary';
+      }[];
+    }) => {
+      setStyledAlertConfig({
+        visible: true,
+        ...config,
+      });
+    },
+    []
+  );
+
+  const hideStyledAlert = useCallback(() => {
+    setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
+
   const transactionFilters = ['All', 'Payments', 'Top Ups', 'Refunds', 'Withdrawals'];
 
   // ============================================================
@@ -409,11 +448,6 @@ const PayContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  /**
-   * ✅ FIX: Fetch ONLY non-payment transactions.
-   * Payments are owned by `payment_requests` (single source of truth).
-   * Top-ups, withdrawals, refunds live only in `transactions`.
-   */
   const fetchNonPaymentTransactions = useCallback(async () => {
     if (!user?.id) return [];
 
@@ -422,7 +456,7 @@ const PayContent = ({ navigation }: any) => {
         .from('transactions')
         .select('*')
         .or(`user_id.eq.${user.id},buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
-        .neq('type', 'payment')                // ✅ exclude payment rows
+        .neq('type', 'payment')
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -604,27 +638,22 @@ const PayContent = ({ navigation }: any) => {
       const completed: Transaction[] = [];
       const disputed: Transaction[] = [];
 
-      // ✅ Single source of truth: transform each payment_request into a card
       paymentRequestsData.forEach((pr: PaymentRequest) => {
         const isFromMe = pr.from_user_id === user.id;
         const isToMe = pr.to_user_id === user.id;
 
-        // Merchant = the OTHER party
         const merchant = isFromMe
           ? pr.to_user?.full_name || 'User'
           : pr.from_user?.full_name || 'User';
 
-        // ✅ Correct buyer/seller assignment
-        //   - Pay Now  (is_request === false): sender = buyer, receiver = seller
-        //   - Request  (is_request === true):  sender = seller, receiver = buyer
         let buyerId: string;
         let sellerId: string;
         if (pr.is_request) {
-          buyerId = pr.to_user_id;    // receiver is the buyer
-          sellerId = pr.from_user_id; // sender is the seller
+          buyerId = pr.to_user_id;
+          sellerId = pr.from_user_id;
         } else {
-          buyerId = pr.from_user_id;  // sender is the buyer (paid)
-          sellerId = pr.to_user_id;   // receiver is the seller
+          buyerId = pr.from_user_id;
+          sellerId = pr.to_user_id;
         }
 
         const isMeBuyer = buyerId === user.id;
@@ -649,7 +678,7 @@ const PayContent = ({ navigation }: any) => {
           payment_request_id: pr.id,
           is_request: pr.is_request,
           reason: pr.reason || undefined,
-          locked_at: pr.locked_at || pr.accepted_at || null,  // ✅ timer basis
+          locked_at: pr.locked_at || pr.accepted_at || null,
           is_me_buyer: isMeBuyer,
           is_me_seller: isMeSeller,
         };
@@ -673,7 +702,6 @@ const PayContent = ({ navigation }: any) => {
         }
       });
 
-      // Add non-payment transactions (topups, withdrawals, refunds, transfers)
       nonPaymentTxs.forEach((t) => {
         switch (t.status) {
           case 'pending':
@@ -737,7 +765,6 @@ const PayContent = ({ navigation }: any) => {
     setRefreshing(false);
   }, [loadAllData]);
 
-  // ✅ Timer uses locked_at, not created_at
   useEffect(() => {
     const computeRemaining = () => {
       const newMap: Record<string, number> = {};
@@ -762,17 +789,21 @@ const PayContent = ({ navigation }: any) => {
 
   const handleConfirmPayment = useCallback(
     async (transaction: Transaction) => {
-      Alert.alert(
-        '✅ Confirm Payment',
-        `You are about to confirm payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+      showStyledAlert({
+        title: 'Confirm Payment',
+        message:
+          `You are about to confirm payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
           `To: ${transaction.merchant || 'Seller'}\n\n` +
-          `⚠️ This action is irreversible. Only confirm if you have received the product/service.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
+          `This action is irreversible. Only confirm if you have received the product/service.`,
+        icon: 'checkmark-circle-outline',
+        iconColor: '#2ECC71',
+        buttons: [
+          { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
           {
             text: 'Confirm',
-            style: 'default',
+            style: 'primary',
             onPress: async () => {
+              hideStyledAlert();
               try {
                 const { data: paymentRequest } = await supabaseAny
                   .from('payment_requests')
@@ -796,7 +827,6 @@ const PayContent = ({ navigation }: any) => {
                       .eq('id', paymentRequest.transaction_id);
                   }
 
-                  // Credit seller's wallet
                   const sellerId = paymentRequest.is_request
                     ? paymentRequest.from_user_id
                     : paymentRequest.to_user_id;
@@ -811,7 +841,8 @@ const PayContent = ({ navigation }: any) => {
                     await supabaseAny
                       .from('users')
                       .update({
-                        wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
+                        wallet_balance:
+                          (sellerData.wallet_balance || 0) + paymentRequest.amount,
                       })
                       .eq('id', sellerId);
                   }
@@ -836,39 +867,60 @@ const PayContent = ({ navigation }: any) => {
                     await supabaseAny
                       .from('users')
                       .update({
-                        wallet_balance: (sellerData.wallet_balance || 0) + transaction.amount,
+                        wallet_balance:
+                          (sellerData.wallet_balance || 0) + transaction.amount,
                       })
                       .eq('id', sellerId);
                   }
                 }
 
-                Alert.alert('✅ Success', 'Payment confirmed successfully!');
+                showStyledAlert({
+                  title: 'Success',
+                  message: 'Payment confirmed successfully!',
+                  icon: 'checkmark-circle-outline',
+                  iconColor: '#2ECC71',
+                  buttons: [
+                    { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                  ],
+                });
                 loadAllData();
               } catch (error) {
                 console.error('Error confirming payment:', error);
-                Alert.alert('❌ Error', 'Failed to confirm payment. Please try again.');
+                showStyledAlert({
+                  title: 'Error',
+                  message: 'Failed to confirm payment. Please try again.',
+                  icon: 'alert-circle-outline',
+                  iconColor: '#E74C3C',
+                  buttons: [
+                    { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                  ],
+                });
               }
             },
           },
-        ]
-      );
+        ],
+      });
     },
-    [loadAllData]
+    [loadAllData, showStyledAlert, hideStyledAlert]
   );
 
   const handleActivatePayment = useCallback(
     async (transaction: Transaction) => {
-      Alert.alert(
-        '🚀 Activate Payment',
-        `You are about to activate payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+      showStyledAlert({
+        title: 'Activate Payment',
+        message:
+          `You are about to activate payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
           `From: ${transaction.merchant || 'Buyer'}\n\n` +
-          `⚠️ This action will release the locked funds to your wallet. Only do this if the buyer has not confirmed within 24 hours.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
+          `This action will release the locked funds to your wallet. Only do this if the buyer has not confirmed within 24 hours.`,
+        icon: 'rocket-outline',
+        iconColor: '#F39C12',
+        buttons: [
+          { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
           {
             text: 'Activate',
-            style: 'default',
+            style: 'primary',
             onPress: async () => {
+              hideStyledAlert();
               try {
                 const { data: paymentRequest } = await supabaseAny
                   .from('payment_requests')
@@ -909,7 +961,8 @@ const PayContent = ({ navigation }: any) => {
                     await supabaseAny
                       .from('users')
                       .update({
-                        wallet_balance: (sellerData.wallet_balance || 0) + paymentRequest.amount,
+                        wallet_balance:
+                          (sellerData.wallet_balance || 0) + paymentRequest.amount,
                       })
                       .eq('id', sellerId);
                   }
@@ -924,18 +977,34 @@ const PayContent = ({ navigation }: any) => {
                     .eq('id', transaction.id);
                 }
 
-                Alert.alert('✅ Success', 'Payment activated and funds released to your wallet!');
+                showStyledAlert({
+                  title: 'Success',
+                  message: 'Payment activated and funds released to your wallet!',
+                  icon: 'checkmark-circle-outline',
+                  iconColor: '#2ECC71',
+                  buttons: [
+                    { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                  ],
+                });
                 loadAllData();
               } catch (error) {
                 console.error('Error activating payment:', error);
-                Alert.alert('❌ Error', 'Failed to activate payment. Please try again.');
+                showStyledAlert({
+                  title: 'Error',
+                  message: 'Failed to activate payment. Please try again.',
+                  icon: 'alert-circle-outline',
+                  iconColor: '#E74C3C',
+                  buttons: [
+                    { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                  ],
+                });
               }
             },
           },
-        ]
-      );
+        ],
+      });
     },
-    [loadAllData]
+    [loadAllData, showStyledAlert, hideStyledAlert]
   );
 
   const handleRaiseDispute = useCallback((transaction: Transaction) => {
@@ -946,7 +1015,13 @@ const PayContent = ({ navigation }: any) => {
 
   const submitDispute = useCallback(async () => {
     if (!selectedTransaction || !disputeReason.trim()) {
-      Alert.alert('Error', 'Please provide a reason for the dispute');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Please provide a reason for the dispute',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
@@ -984,47 +1059,85 @@ const PayContent = ({ navigation }: any) => {
           .eq('id', selectedTransaction.id);
       }
 
-      Alert.alert(
-        '⚠️ Dispute Raised',
-        'Your dispute has been submitted. An admin will review it shortly.'
-      );
+      showStyledAlert({
+        title: 'Dispute Raised',
+        message: 'Your dispute has been submitted. An admin will review it shortly.',
+        icon: 'alert-circle-outline',
+        iconColor: '#F39C12',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       setShowDisputeModal(false);
       setSelectedTransaction(null);
       setDisputeReason('');
       loadAllData();
     } catch (error) {
       console.error('Error raising dispute:', error);
-      Alert.alert('❌ Error', 'Failed to raise dispute. Please try again.');
+      showStyledAlert({
+        title: 'Error',
+        message: 'Failed to raise dispute. Please try again.',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
     }
-  }, [selectedTransaction, disputeReason, loadAllData]);
+  }, [
+    selectedTransaction,
+    disputeReason,
+    loadAllData,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   const handleAddMoney = useCallback(async () => {
     if (!user?.id) {
-      Alert.alert('🔒 Login Required', 'Please login to add money');
+      showStyledAlert({
+        title: 'Login Required',
+        message: 'Please login to add money',
+        icon: 'lock-closed-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
     const amountNum = parseInt(amount);
     if (!amountNum || amountNum <= 0) {
-      Alert.alert('❌ Invalid Amount', 'Please enter a valid amount');
+      showStyledAlert({
+        title: 'Invalid Amount',
+        message: 'Please enter a valid amount',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
     if (!selectedMethod) {
-      Alert.alert('💳 Payment Method', 'Please select a payment method');
+      showStyledAlert({
+        title: 'Payment Method',
+        message: 'Please select a payment method',
+        icon: 'card-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
-    Alert.alert(
-      '💰 Confirm Add Money',
-      `Add UGX ${amountNum.toLocaleString()} to your wallet?\n\n` +
-        `💳 From: ${paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown'}\n` +
-        `💰 New Balance: UGX ${(walletBalance + amountNum).toLocaleString()}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showStyledAlert({
+      title: 'Confirm Add Money',
+      message:
+        `Add UGX ${amountNum.toLocaleString()} to your wallet?\n\n` +
+        `From: ${paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown'}\n` +
+        `New Balance: UGX ${(walletBalance + amountNum).toLocaleString()}`,
+      icon: 'wallet-outline',
+      iconColor: '#2ECC71',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
         {
           text: 'Confirm',
+          style: 'primary',
           onPress: async () => {
+            hideStyledAlert();
             try {
               const { error } = await supabaseAny
                 .from('users')
@@ -1039,58 +1152,111 @@ const PayContent = ({ navigation }: any) => {
                 status: 'completed',
                 merchant: 'Munolink Wallet',
                 method:
-                  paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown',
+                  paymentMethods.find((m) => m.id === selectedMethod)?.name ||
+                  'Unknown',
                 reference: `TOP-${Date.now()}`,
               });
 
               setWalletBalance(walletBalance + amountNum);
               setAmount('');
               setShowAddMoney(false);
-              Alert.alert('✅ Success', `UGX ${amountNum.toLocaleString()} added successfully!`);
+              showStyledAlert({
+                title: 'Success',
+                message: `UGX ${amountNum.toLocaleString()} added successfully!`,
+                icon: 'checkmark-circle-outline',
+                iconColor: '#2ECC71',
+                buttons: [
+                  { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                ],
+              });
               loadAllData();
             } catch (error) {
               console.error('Error adding money:', error);
-              Alert.alert('❌ Error', 'Failed to add money. Please try again.');
+              showStyledAlert({
+                title: 'Error',
+                message: 'Failed to add money. Please try again.',
+                icon: 'alert-circle-outline',
+                iconColor: '#E74C3C',
+                buttons: [
+                  { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                ],
+              });
             }
           },
         },
-      ]
-    );
-  }, [amount, selectedMethod, user?.id, walletBalance, paymentMethods, loadAllData]);
+      ],
+    });
+  }, [
+    amount,
+    selectedMethod,
+    user?.id,
+    walletBalance,
+    paymentMethods,
+    loadAllData,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   const handleWithdraw = useCallback(async () => {
     if (!user?.id) {
-      Alert.alert('🔒 Login Required', 'Please login to withdraw');
+      showStyledAlert({
+        title: 'Login Required',
+        message: 'Please login to withdraw',
+        icon: 'lock-closed-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
     const amountNum = parseInt(amount);
     if (!amountNum || amountNum <= 0) {
-      Alert.alert('❌ Invalid Amount', 'Please enter a valid amount');
+      showStyledAlert({
+        title: 'Invalid Amount',
+        message: 'Please enter a valid amount',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
     if (amountNum > walletBalance) {
-      Alert.alert(
-        '❌ Insufficient Balance',
-        `Your balance is UGX ${walletBalance.toLocaleString()}`
-      );
+      showStyledAlert({
+        title: 'Insufficient Balance',
+        message: `Your balance is UGX ${walletBalance.toLocaleString()}`,
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
     if (!selectedMethod) {
-      Alert.alert('💳 Withdrawal Method', 'Please select a withdrawal method');
+      showStyledAlert({
+        title: 'Withdrawal Method',
+        message: 'Please select a withdrawal method',
+        icon: 'card-outline',
+        iconColor: '#4A7DFF',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
       return;
     }
 
-    Alert.alert(
-      '💰 Confirm Withdrawal',
-      `Withdraw UGX ${amountNum.toLocaleString()} to ${
-        paymentMethods.find((m) => m.id === selectedMethod)?.name
-      }?\n\n` + `💰 New Balance: UGX ${(walletBalance - amountNum).toLocaleString()}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showStyledAlert({
+      title: 'Confirm Withdrawal',
+      message:
+        `Withdraw UGX ${amountNum.toLocaleString()} to ${
+          paymentMethods.find((m) => m.id === selectedMethod)?.name
+        }?\n\n` +
+        `New Balance: UGX ${(walletBalance - amountNum).toLocaleString()}`,
+      icon: 'arrow-up-circle-outline',
+      iconColor: '#4A7DFF',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
         {
           text: 'Confirm',
+          style: 'primary',
           onPress: async () => {
+            hideStyledAlert();
             try {
               const { error } = await supabaseAny
                 .from('users')
@@ -1104,26 +1270,53 @@ const PayContent = ({ navigation }: any) => {
                 amount: -amountNum,
                 status: 'pending',
                 merchant:
-                  paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Withdrawal',
+                  paymentMethods.find((m) => m.id === selectedMethod)?.name ||
+                  'Withdrawal',
                 method:
-                  paymentMethods.find((m) => m.id === selectedMethod)?.name || 'Unknown',
+                  paymentMethods.find((m) => m.id === selectedMethod)?.name ||
+                  'Unknown',
                 reference: `WTH-${Date.now()}`,
               });
 
               setWalletBalance(walletBalance - amountNum);
               setAmount('');
               setShowWithdraw(false);
-              Alert.alert('✅ Success', `UGX ${amountNum.toLocaleString()} withdrawal initiated!`);
+              showStyledAlert({
+                title: 'Success',
+                message: `UGX ${amountNum.toLocaleString()} withdrawal initiated!`,
+                icon: 'checkmark-circle-outline',
+                iconColor: '#2ECC71',
+                buttons: [
+                  { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                ],
+              });
               loadAllData();
             } catch (error) {
               console.error('Error withdrawing:', error);
-              Alert.alert('❌ Error', 'Failed to withdraw. Please try again.');
+              showStyledAlert({
+                title: 'Error',
+                message: 'Failed to withdraw. Please try again.',
+                icon: 'alert-circle-outline',
+                iconColor: '#E74C3C',
+                buttons: [
+                  { text: 'OK', style: 'primary', onPress: hideStyledAlert },
+                ],
+              });
             }
           },
         },
-      ]
-    );
-  }, [amount, selectedMethod, walletBalance, paymentMethods, user?.id, loadAllData]);
+      ],
+    });
+  }, [
+    amount,
+    selectedMethod,
+    walletBalance,
+    paymentMethods,
+    user?.id,
+    loadAllData,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   const filteredTransactions = useMemo(() => {
     if (selectedFilter === 'All') return transactions;
@@ -1156,7 +1349,13 @@ const PayContent = ({ navigation }: any) => {
       default:
         return [];
     }
-  }, [activeTab, pendingTransactions, lockedTransactions, completedTransactions, disputedTransactions]);
+  }, [
+    activeTab,
+    pendingTransactions,
+    lockedTransactions,
+    completedTransactions,
+    disputedTransactions,
+  ]);
 
   const currentTabData = getTabData();
 
@@ -1360,7 +1559,9 @@ const PayContent = ({ navigation }: any) => {
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>📭</Text>
                 <Text style={styles.emptyTitle}>No transactions yet</Text>
-                <Text style={styles.emptySubtext}>Your transactions will appear here</Text>
+                <Text style={styles.emptySubtext}>
+                  Your transactions will appear here
+                </Text>
               </View>
             }
           />
@@ -1596,6 +1797,17 @@ const PayContent = ({ navigation }: any) => {
       {renderAddMoneyModal()}
       {renderWithdrawModal()}
       {renderDisputeModal()}
+
+      {/* ✅ StyledAlert */}
+      <StyledAlert
+        visible={styledAlertConfig.visible}
+        title={styledAlertConfig.title}
+        message={styledAlertConfig.message}
+        icon={styledAlertConfig.icon}
+        iconColor={styledAlertConfig.iconColor}
+        buttons={styledAlertConfig.buttons}
+        onClose={hideStyledAlert}
+      />
     </SafeAreaView>
   );
 };

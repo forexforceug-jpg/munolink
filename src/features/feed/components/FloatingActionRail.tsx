@@ -58,6 +58,17 @@ interface FloatingActionRailProps {
   isSaved?: boolean;
   distance?: number;
   userAvatar?: string | null;
+  /**
+   * ✅ Optional bottom padding (in px). Pass the tab bar height + safe
+   *    area inset from the parent so the rail doesn't get hidden behind
+   *    the nav bar. Defaults to 0.
+   */
+  bottomInset?: number;
+  /**
+   * ✅ Optional shift toward the right edge (in px). A negative value
+   *    moves the rail closer to the screen edge. Defaults to 0.
+   */
+  rightShift?: number;
 }
 
 const DESKTOP_POSITION = {
@@ -73,8 +84,8 @@ const DESKTOP_POSITION = {
 const MOBILE_POSITION = {
   BUTTON_SIZE: 58,
   SHOP_BUTTON_SIZE: 52,
-  GAP: 7,
-  AI_GAP: 25,
+  GAP: 3,
+  AI_GAP: 5,
   ICON_SIZE: 32,
   VALUE_FONT_SIZE: 11,
   LABEL_FONT_SIZE: 9,
@@ -120,6 +131,8 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   isSaved = false,
   distance = 0,
   userAvatar = null,
+  bottomInset = 0,
+  rightShift = 0,
 }) => {
   const { isDesktop } = useBreakpoint();
 
@@ -251,7 +264,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
       if (price) message += `\n💰 ${price}`;
       if (user) message += `\n👤 ${user}`;
       if (distanceText) message += `\n📍 ${distanceText}`;
-      message += `\n\n📱 Check it out on Munolink: https://munolink.com/post/${opportunity.id}`;
+      message += `\n\n📱 Check it out on Munolink: https://munolink.expo.app/post/${opportunity.id}`;
 
       await Share.share({ message });
     } catch (error) {
@@ -336,7 +349,16 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const hasValidAvatar = avatarUrl && avatarUrl.startsWith('http');
 
   return (
-    <View style={[styles.container, { gap }]}>
+    <View
+      style={[
+        styles.container,
+        {
+          gap,
+          paddingBottom: bottomInset,
+          marginRight: rightShift,
+        },
+      ]}
+    >
       {/* User Button */}
       <TouchableOpacity
         style={[
@@ -521,20 +543,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
             </View>
           </View>
         </TouchableOpacity>
-
-        <Text
-          style={[
-            styles.labelText,
-            {
-              fontSize: labelFontSize,
-              marginTop: 3,
-              color: '#4A7DFF',
-              textAlign: 'center',
-            },
-          ]}
-        >
-          AI
-        </Text>
       </View>
     </View>
   );
@@ -558,7 +566,9 @@ export const FloatingActionRail = memo(
       prevProps.shareCount !== nextProps.shareCount ||
       prevProps.reviewCount !== nextProps.reviewCount ||
       prevProps.distance !== nextProps.distance ||
-      prevProps.userAvatar !== nextProps.userAvatar;
+      prevProps.userAvatar !== nextProps.userAvatar ||
+      prevProps.bottomInset !== nextProps.bottomInset ||
+      prevProps.rightShift !== nextProps.rightShift;
 
     const opportunityDataChanged =
       prevProps.opportunity.distance !== nextProps.opportunity.distance ||
@@ -586,6 +596,9 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     zIndex: 9999,
+    // The rail is anchored by its parent wrapper. Nothing here forces
+    // vertical centering, so paddingBottom pushed by the parent will
+    // shift the whole rail upward cleanly.
   },
   userButton: {
     backgroundColor: 'transparent',
