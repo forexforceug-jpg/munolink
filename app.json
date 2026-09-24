@@ -2,14 +2,13 @@
   "expo": {
     "name": "Munolink",
     "slug": "munolink",
+    "platforms": ["ios", "android", "web"],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/favicon1.png",
     "scheme": "munolink",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.munolink.app"
@@ -31,7 +30,8 @@
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon1.png",
+      "bundler": "metro"
     },
     "plugins": [
       [
@@ -50,13 +50,13 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/favicon1.png",
+          "image": "./assets/favicon.png",
           "imageWidth": 76,
           "imageHeight": 76,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
-            "image": "./assets/favicon1.png",
+            "image": "./assets/favicon.png",
             "backgroundColor": "#ffffff"
           }
         }
