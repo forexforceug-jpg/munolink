@@ -15,6 +15,7 @@ import { Alert } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as Crypto from 'expo-crypto';
+import { Platform } from 'react-native'; // Ensure this is imported
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -433,16 +434,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const signInWithGoogle = async () => {
-    try {
-      rawNonceRef.current = generateNonce();
-      await promptAsync();
-    } catch (error: any) {
-      console.error('Google sign-in error:', error);
-      Alert.alert('Error', 'Failed to sign in with Google. Please try again.');
+const signInWithGoogle = async () => {
+  if (Platform.OS === 'web') {
+    // ✅ Web: Use Supabase's OAuth redirect flow
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin, // This will be https://www.munolink.com
+      },
+    });
+    if (error) {
+      Alert.alert('Error', error.message || 'Failed to sign in with Google.');
     }
-  };
+    return;
+  }
 
+  // ✅ Native (iOS/Android): Keep your existing nonce-based flow
+  try {
+    rawNonceRef.current = generateNonce();
+    await promptAsync();
+  } catch (error: any) {
+    console.error('Google sign-in error:', error);
+    Alert.alert('Error', 'Failed to sign in with Google. Please try again.');
+  }
+};
   // ============================================================
   // PHONE
   // ============================================================

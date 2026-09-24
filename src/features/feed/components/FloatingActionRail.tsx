@@ -264,7 +264,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
       if (price) message += `\n💰 ${price}`;
       if (user) message += `\n👤 ${user}`;
       if (distanceText) message += `\n📍 ${distanceText}`;
-      message += `\n\n📱 Check it out on Munolink: https://munolink.expo.app/post/${opportunity.id}`;
+      message += `\n\n📱 Check it out on Munolink: https://munolink.com/post/${opportunity.id}`;
 
       await Share.share({ message });
     } catch (error) {

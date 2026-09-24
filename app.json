@@ -31,7 +31,7 @@
       ]
     },
     "web": {
-      "favicon": "./assets/favicon1.png"
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       [
@@ -50,13 +50,13 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/favicon.png",
+          "image": "./assets/favicon1.png",
           "imageWidth": 76,
           "imageHeight": 76,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
-            "image": "./assets/favicon.png",
+            "image": "./assets/favicon1.png",
             "backgroundColor": "#ffffff"
           }
         }

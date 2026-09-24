@@ -60,7 +60,7 @@ function LoadingScreen() {
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
-        duration: 500,
+        duration: 1000,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
@@ -81,8 +81,8 @@ function LoadingScreen() {
             useNativeDriver: true,
           }),
           Animated.timing(pulseScale, {
-            toValue: 1,
-            duration: 900,
+            toValue: 0.7,
+            duration: 1600,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
