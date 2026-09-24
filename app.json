@@ -4,7 +4,7 @@
     "slug": "munolink",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/favicon.png",
+    "icon": "./assets/favicon1.png",
     "scheme": "munolink",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -16,9 +16,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/favicon.png",
+        "foregroundImage": "./assets/favicon1.png",
         "backgroundColor": "#ffffff",
-        "monochromeImage": "./assets/favicon.png"
+        "monochromeImage": "./assets/favicon1.png"
       },
       "package": "com.munolink.app",
       "permissions": [
@@ -31,7 +31,7 @@
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon1.png"
     },
     "plugins": [
       [
