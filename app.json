@@ -2,14 +2,13 @@
   "expo": {
     "name": "Munolink",
     "slug": "munolink",
+    "platforms": ["ios", "android", "web"],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/favicon1.png",
     "scheme": "munolink",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.munolink.app"
