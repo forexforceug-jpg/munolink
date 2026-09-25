@@ -818,7 +818,7 @@ const AccountContent = ({ navigation }: any) => {
         const userData = data as any;
         return {
           id: userData.id,
-          full_name: userData.full_name || user.full_name || 'User',
+          full_name: userData.full_name || 'User',
           phone_number: userData.phone_number || user.phone || '',
           avatar_url: userData.avatar_url || null,
           cover_url: userData.cover_url || null,
@@ -838,7 +838,7 @@ const AccountContent = ({ navigation }: any) => {
 
       return {
         id: user.id,
-        full_name: user.full_name || 'User',
+        full_name: 'User',
         phone_number: user.phone || '',
         avatar_url: null,
         cover_url: null,
@@ -1206,12 +1206,14 @@ const AccountContent = ({ navigation }: any) => {
 
         setUploading(true);
         try {
+          if (!user?.id) throw new Error('User is not authenticated');
+
           const avatarUrl = await uploadProfileImage(asset.uri, 'avatars');
 
           const { error: updateError } = await supabase
             .from('users')
             .update({ avatar_url: avatarUrl })
-            .eq('id', user?.id);
+            .eq('id', user.id);
 
           if (updateError) throw updateError;
 
@@ -1446,6 +1448,10 @@ const AccountContent = ({ navigation }: any) => {
             onPress: async () => {
               hideStyledAlert();
               try {
+                if (!user?.id) {
+                  throw new Error('Unable to delete post: user is not signed in.');
+                }
+
                 const filesToRemove: string[] = [
                   ...(item.images || []),
                   item.video || null,
@@ -1460,7 +1466,7 @@ const AccountContent = ({ navigation }: any) => {
                   .from('catalog')
                   .delete()
                   .eq('id', item.id)
-                  .eq('user_id', user?.id);
+                  .eq('user_id', user.id);
 
                 if (error) throw error;
 
