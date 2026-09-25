@@ -92,7 +92,7 @@ export const TermsOfServiceScreen = ({ navigation }: any) => {
 
         <Text style={styles.subheading}>8. Contact Us</Text>
         <Text style={styles.body}>
-          For questions about these terms, contact us at aijukasti@gmail.com.
+          For questions about these terms, contact us at support@munolink.com.
         </Text>
 
         <View style={{ height: 40 }} />
