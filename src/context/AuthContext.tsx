@@ -11,11 +11,12 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as Crypto from 'expo-crypto';
-import { Platform } from 'react-native'; // Ensure this is imported
+import * as Linking from 'expo-linking';
+import * as QueryParams from 'expo-auth-session/build/QueryParams';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -65,13 +66,67 @@ function normalizeEmail(email: string): string {
 }
 
 function generateNonce(length = 32): string {
-  // ✅ Cast to any, then back to Uint8Array so TS accepts it across
-  //    all platforms (native returns Uint8Array, web may return a
-  //    different typed array in some SDK versions).
   const bytes: any = Crypto.getRandomBytes(length);
   return Array.from(bytes as Uint8Array)
     .map((b: number) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * Writes both the Supabase session (handled automatically) and our own
+ * lightweight mirror of the user data + a presence marker. The presence
+ * marker is what `checkAuth` uses on cold start to decide whether to trust
+ * the AsyncStorage copy for phone/email sign-ins.
+ */
+async function persistUser(userData: any) {
+  try {
+    await AsyncStorage.setItem('userData', JSON.stringify(userData));
+    await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
+    if (Platform.OS === 'web') {
+      try {
+        window.localStorage.setItem('userData', JSON.stringify(userData));
+        window.localStorage.setItem('authToken', `token_${Date.now()}`);
+      } catch {
+        // ignore
+      }
+    }
+  } catch (e) {
+    console.warn('persistUser failed:', e);
+  }
+}
+
+async function clearPersistedUser() {
+  try {
+    await AsyncStorage.removeItem('authToken');
+    await AsyncStorage.removeItem('userData');
+    if (Platform.OS === 'web') {
+      try {
+        window.localStorage.removeItem('authToken');
+        window.localStorage.removeItem('userData');
+      } catch {
+        // ignore
+      }
+    }
+  } catch (e) {
+    console.warn('clearPersistedUser failed:', e);
+  }
+}
+
+async function readPersistedUser(): Promise<any | null> {
+  try {
+    let raw = await AsyncStorage.getItem('userData');
+    if (!raw && Platform.OS === 'web') {
+      try {
+        raw = window.localStorage.getItem('userData');
+      } catch {
+        raw = null;
+      }
+    }
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================
@@ -89,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const rawNonceRef = React.useRef<string | null>(null);
 
   // ============================================================
-  // GOOGLE OAUTH REQUEST
+  // GOOGLE OAUTH REQUEST (native only)
   // ============================================================
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
@@ -99,14 +154,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   });
 
   // ============================================================
+  // DEEP LINK HANDLER — for OAuth redirects coming back into the app
+  //
+  // When Supabase completes the OAuth exchange, it redirects the user
+  // back to our app via the registered scheme. The URL contains
+  // `access_token` and `refresh_token` in the fragment or query string.
+  // We extract them and hand them to Supabase to establish a session.
+  // ============================================================
+  useEffect(() => {
+    const handleDeepLink = async (event: { url: string }) => {
+      console.log('🔗 Deep link received:', event.url);
+
+      try {
+        const { params, errorCode } = QueryParams.getQueryParams(event.url);
+
+        if (errorCode) {
+          console.error('OAuth error from deep link:', errorCode);
+          Alert.alert('Error', 'Authentication failed. Please try again.');
+          return;
+        }
+
+        const { access_token, refresh_token } = params;
+
+        if (access_token && refresh_token) {
+          console.log('✅ Tokens found in deep link. Setting session...');
+
+          const { data, error } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+
+          if (error) {
+            console.error('❌ setSession error:', error.message);
+            Alert.alert('Error', 'Failed to establish session.');
+            return;
+          }
+
+          if (data.session) {
+            console.log('✅ Session established from deep link');
+            // onAuthStateChange will handle the rest
+          }
+        }
+      } catch (err) {
+        console.warn('Deep link handling error:', err);
+      }
+    };
+
+    // Handle the URL that opened the app (cold start)
+    Linking.getInitialURL().then((url) => {
+      if (url) handleDeepLink({ url });
+    });
+
+    // Handle URLs received while the app is running (warm start)
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  // ============================================================
   // ✅ CHECK AUTH ON START
   //
   // Priority:
-  //   1. Supabase's own session (from signInWithIdToken)
-  //   2. AsyncStorage token + userData (from phone/email/legacy sign-in)
+  //   1. Supabase's own persisted session (survives refresh via
+  //      AsyncStorage on native / localStorage on web)
+  //   2. Our AsyncStorage mirror (used by phone/email sign-ins that
+  //      don't create a Supabase session)
   //   3. Fall back to guest
-  //
-  // This ordering is what keeps users signed in across refreshes.
   // ============================================================
   useEffect(() => {
     let cancelled = false;
@@ -126,15 +241,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
             setSession(data.session);
 
-            // Look up the full profile from the users table
             const { data: dbUser } = await supabase
               .from('users')
               .select('*')
               .eq('id', data.session.user.id)
               .maybeSingle();
 
-            // ✅ Cast to any so TS doesn't complain about columns
-            //    that aren't in the generated types (e.g. `email`).
             const db: any = dbUser || {};
 
             const mergedUser = {
@@ -169,27 +281,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             setIsAuthenticated(true);
             setIsGuest(false);
 
-            // Also persist to AsyncStorage so other screens can read it fast
-            await AsyncStorage.setItem(
-              'authToken',
-              data.session.access_token
-            );
-            await AsyncStorage.setItem(
-              'userData',
-              JSON.stringify(mergedUser)
-            );
+            await persistUser(mergedUser);
 
-            return; // ✅ We're done — no need to check AsyncStorage
+            return; // ✅ Done — no need to check AsyncStorage
           }
         } catch (supabaseErr) {
           console.warn('⚠️ Supabase session check failed:', supabaseErr);
         }
 
-        // 2️⃣ Fall back to AsyncStorage (phone/email/legacy)
-        const token = await AsyncStorage.getItem('authToken');
-        const userDataStr = await AsyncStorage.getItem('userData');
+        // 2️⃣ Fall back to our own persisted user (phone/email sign-ins)
+        const parsedUser = await readPersistedUser();
 
-        if (!token || !userDataStr) {
+        if (!parsedUser?.id) {
           console.log('ℹ️ No stored auth data found');
           if (!cancelled) {
             setIsAuthenticated(false);
@@ -198,34 +301,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           return;
         }
 
-        let parsedUser: any;
-        try {
-          parsedUser = JSON.parse(userDataStr);
-        } catch (parseError) {
-          console.error('Error parsing user data:', parseError);
-          await AsyncStorage.removeItem('authToken');
-          await AsyncStorage.removeItem('userData');
-          if (!cancelled) {
-            setIsAuthenticated(false);
-            setIsGuest(true);
-          }
-          return;
-        }
+        console.log('✅ Found stored user:', parsedUser.id);
 
-        if (!parsedUser?.id) {
-          console.log('⚠️ Invalid user data, clearing session');
-          await AsyncStorage.removeItem('authToken');
-          await AsyncStorage.removeItem('userData');
-          if (!cancelled) {
-            setIsAuthenticated(false);
-            setIsGuest(true);
-          }
-          return;
-        }
-
-        console.log('✅ Found stored user in AsyncStorage:', parsedUser.id);
-
-        // Fail-safe DB check
+        // Optional DB check — but even if it fails, trust the cached
+        // copy so the user isn't logged out on refresh.
         try {
           const { data: dbUser, error: dbError } = await supabase
             .from('users')
@@ -252,18 +331,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             });
             setIsAuthenticated(true);
             setIsGuest(false);
-          } else if (dbError && !cancelled) {
+          } else if (dbError) {
+            // Trust the cached session
             console.warn('⚠️ DB check failed, using cached session');
-            setUser(parsedUser);
-            setIsAuthenticated(true);
-            setIsGuest(false);
-          } else if (!cancelled) {
+            if (!cancelled) {
+              setUser(parsedUser);
+              setIsAuthenticated(true);
+              setIsGuest(false);
+            }
+          } else {
+            // User truly not in DB — sign them out
             console.log('⚠️ User not found in DB, clearing session');
-            await AsyncStorage.removeItem('authToken');
-            await AsyncStorage.removeItem('userData');
-            setIsAuthenticated(false);
-            setIsGuest(true);
-            setUser(null);
+            await clearPersistedUser();
+            if (!cancelled) {
+              setIsAuthenticated(false);
+              setIsGuest(true);
+              setUser(null);
+            }
           }
         } catch (networkErr) {
           console.warn(
@@ -295,6 +379,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // ============================================================
   // ✅ LISTEN TO SUPABASE AUTH EVENTS
+  //
+  // This fires on SIGNED_IN after OAuth, on SIGNED_OUT, and on
+  // TOKEN_REFRESHED. It also ensures AsyncStorage stays in sync.
   // ============================================================
   useEffect(() => {
     const {
@@ -306,14 +393,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         setSession(newSession);
         setIsAuthenticated(true);
         setIsGuest(false);
+
+        // Mirror the user data into our own storage
+        const u = newSession.user;
+        const merged = {
+          id: u.id,
+          email: u.email,
+          full_name:
+            u.user_metadata?.full_name ||
+            u.user_metadata?.name ||
+            'Munolink Member',
+          name:
+            u.user_metadata?.full_name ||
+            u.user_metadata?.name ||
+            'Munolink Member',
+          phone: u.phone || '',
+          phone_number: u.phone || '',
+          avatar_url:
+            u.user_metadata?.avatar_url ||
+            u.user_metadata?.picture ||
+            null,
+        };
+        setUser((prev: any) => {
+          const combined = { ...(prev || {}), ...merged };
+          persistUser(combined);
+          return combined;
+        });
       } else if (event === 'SIGNED_OUT') {
         setSession(null);
         setUser(null);
         setIsAuthenticated(false);
         setIsGuest(true);
+        await clearPersistedUser();
       } else if (event === 'TOKEN_REFRESHED' && newSession) {
         setSession(newSession);
-        await AsyncStorage.setItem('authToken', newSession.access_token);
+        try {
+          await AsyncStorage.setItem(
+            'authToken',
+            newSession.access_token
+          );
+        } catch {
+          // ignore
+        }
       }
     });
 
@@ -321,7 +442,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   // ============================================================
-  // GOOGLE OAUTH RESPONSE
+  // GOOGLE OAUTH RESPONSE (native path)
   // ============================================================
   useEffect(() => {
     if (response?.type === 'success') {
@@ -410,11 +531,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           longitude: existingAny.longitude ?? null,
         };
 
-        await AsyncStorage.setItem(
-          'authToken',
-          data.session?.access_token || `token_${Date.now()}`
-        );
-        await AsyncStorage.setItem('userData', JSON.stringify(userData));
+        await persistUser(userData);
 
         setUser(userData);
         setIsAuthenticated(true);
@@ -434,30 +551,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-const signInWithGoogle = async () => {
-  if (Platform.OS === 'web') {
-    // ✅ Web: Use Supabase's OAuth redirect flow
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin, // This will be https://www.munolink.com
-      },
-    });
-    if (error) {
-      Alert.alert('Error', error.message || 'Failed to sign in with Google.');
-    }
-    return;
-  }
+  // ============================================================
+  // GOOGLE SIGN-IN (platform-aware entry point)
+  //
+  // Web: use Supabase's OAuth redirect (popup blockers + user
+  //      activation issues make expo-auth-session unreliable here).
+  // Native: keep the nonce + id_token flow.
+  // ============================================================
+  const signInWithGoogle = async () => {
+    if (Platform.OS === 'web') {
+      const origin =
+        typeof window !== 'undefined' && window.location
+          ? window.location.origin
+          : undefined;
 
-  // ✅ Native (iOS/Android): Keep your existing nonce-based flow
-  try {
-    rawNonceRef.current = generateNonce();
-    await promptAsync();
-  } catch (error: any) {
-    console.error('Google sign-in error:', error);
-    Alert.alert('Error', 'Failed to sign in with Google. Please try again.');
-  }
-};
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: origin,
+        },
+      });
+
+      if (error) {
+        console.error('Web Google sign-in error:', error);
+        Alert.alert(
+          'Error',
+          error.message || 'Failed to sign in with Google.'
+        );
+      }
+      return;
+    }
+
+    // Native path
+    try {
+      rawNonceRef.current = generateNonce();
+      await promptAsync();
+    } catch (error: any) {
+      console.error('Google sign-in error:', error);
+      Alert.alert('Error', 'Failed to sign in with Google. Please try again.');
+    }
+  };
+
   // ============================================================
   // PHONE
   // ============================================================
@@ -527,8 +661,7 @@ const signInWithGoogle = async () => {
         lifetime_savings: 0,
       };
 
-      await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      await persistUser(userData);
 
       setUser(userData);
       setIsAuthenticated(true);
@@ -602,8 +735,7 @@ const signInWithGoogle = async () => {
         lifetime_savings: 0,
       };
 
-      await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      await persistUser(userData);
 
       setUser(userData);
       setIsAuthenticated(true);
@@ -664,8 +796,7 @@ const signInWithGoogle = async () => {
         lifetime_savings: existing.lifetime_savings || 0,
       };
 
-      await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      await persistUser(userData);
 
       setUser(userData);
       setIsAuthenticated(true);
@@ -685,8 +816,7 @@ const signInWithGoogle = async () => {
     console.warn('⚠️ signIn() is legacy — prefer dedicated methods');
     if (!userData?.id) userData.id = generateUUID();
 
-    await AsyncStorage.setItem('authToken', `token_${Date.now()}`);
-    await AsyncStorage.setItem('userData', JSON.stringify(userData));
+    await persistUser(userData);
 
     setUser(userData);
     setIsAuthenticated(true);
@@ -705,8 +835,7 @@ const signInWithGoogle = async () => {
         console.warn('Supabase signOut failed:', e);
       }
 
-      await AsyncStorage.removeItem('authToken');
-      await AsyncStorage.removeItem('userData');
+      await clearPersistedUser();
 
       setUser(null);
       setSession(null);
@@ -738,9 +867,9 @@ const signInWithGoogle = async () => {
         return;
       }
 
-      const userDataStr = await AsyncStorage.getItem('userData');
-      if (userDataStr) {
-        setUser(JSON.parse(userDataStr));
+      const parsedUser = await readPersistedUser();
+      if (parsedUser) {
+        setUser(parsedUser);
         setIsAuthenticated(true);
         setIsGuest(false);
       }

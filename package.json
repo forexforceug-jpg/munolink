@@ -18,7 +18,7 @@
     "base64-arraybuffer": "^1.0.2",
     "date-fns": "^4.4.0",
     "expo": "57.0.15",
-    "expo-auth-session": "~57.0.12",
+    "expo-auth-session": "~57.0.13",
     "expo-blur": "~57.0.2",
     "expo-camera": "~57.0.5",
     "expo-crypto": "~57.0.3",
@@ -31,7 +31,7 @@
     "expo-image-manipulator": "^57.0.16",
     "expo-image-picker": "~57.0.19",
     "expo-linear-gradient": "~57.0.1",
-    "expo-linking": "~57.0.10",
+    "expo-linking": "~57.0.11",
     "expo-location": "~57.0.16",
     "expo-secure-store": "~57.0.3",
     "expo-splash-screen": "~57.0.8",
@@ -64,12 +64,12 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-  "start": "expo start",
-  "android": "expo start --android",
-  "ios": "expo start --ios",
-  "web": "expo start --web",
-  "build:web": "expo export --platform web",
-  "vercel-build": "expo export --platform web"
-},
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "build:web": "expo export --platform web",
+    "vercel-build": "expo export --platform web"
+  },
   "private": true
 }
