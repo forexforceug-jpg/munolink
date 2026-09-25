@@ -488,11 +488,22 @@ const JoinContent = ({ navigation }: any) => {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.termsText}>
-        By continuing, you agree to our{' '}
-        <Text style={styles.termsLink}>Terms of Service</Text> and{' '}
-        <Text style={styles.termsLink}>Privacy Policy</Text>
-      </Text>
+    <Text style={styles.termsText}>
+  By continuing, you agree to our{' '}
+  <Text
+    style={styles.termsLink}
+    onPress={() => navigation.navigate('TermsOfService')}
+  >
+    Terms of Service
+  </Text>{' '}
+  and{' '}
+  <Text
+    style={styles.termsLink}
+    onPress={() => navigation.navigate('PrivacyPolicy')}
+  >
+    Privacy Policy
+  </Text>
+</Text>
     </ScrollView>
   );
 

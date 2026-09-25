@@ -15,7 +15,8 @@ import { InboxScreen } from '../features/inbox/InboxScreen';
 import { PayScreen } from '../features/pay/PayScreen';
 import { UploadCameraScreen } from '../features/upload/UploadCameraScreen';
 import { UploadEditorScreen } from '../features/upload/UploadEditorScreen';
-
+import { PrivacyPolicyScreen } from '../features/legal/PrivacyPolicyScreen';
+import { TermsOfServiceScreen } from '../features/legal/TermsOfServiceScreen';
 import type { RootStackParamList } from './types';
 
 // Re-export so existing imports of RootStackParamList from
@@ -38,7 +39,8 @@ export const RootNavigator = () => {
       {/* Auth */}
       <Stack.Screen name="Join" component={JoinScreen} />
       <Stack.Screen name="SignIn" component={SignInScreen} />
-
+<Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
+<Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} />
       {/* Pay */}
       <Stack.Screen name="PayScreen" component={PayScreen} />
 

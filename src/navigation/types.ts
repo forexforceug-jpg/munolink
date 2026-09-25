@@ -8,6 +8,8 @@ export type RootStackParamList = {
   SignIn: undefined;
   ShopProfile: { shopId: string; shopName?: string };
   Search: undefined;
+  PrivacyPolicy: undefined;
+TermsOfService: undefined;
   SearchResults: {
     results: any[];
     query: string;
