@@ -30,13 +30,12 @@ const COLORS = {
   textMuted: '#6A7A9E',
   accent: '#4A7DFF',
   accentSoft: 'rgba(74,125,255,0.15)',
-  error: '#E74C3C',
 };
 
 type SignInMethod = 'phone' | 'email';
 
 const SignInContent = ({ navigation }: any) => {
-  const { signInWithPhone, signInWithEmail } = useAuth();
+  const { signInWithEmail, signInWithPhonePassword } = useAuth();
   const { isDesktop } = useBreakpoint();
 
   const [method, setMethod] = useState<SignInMethod>('phone');
@@ -52,9 +51,15 @@ const SignInContent = ({ navigation }: any) => {
         Alert.alert('Invalid Phone', 'Please enter a valid phone number.');
         return;
       }
+      if (!password) {
+        Alert.alert('Password required', 'Please enter your password.');
+        return;
+      }
+
       setIsLoading(true);
       try {
-        await signInWithPhone(`+256${phoneNumber}`);
+        const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
+        await signInWithPhonePassword(fullPhone, password);
         navigation.replace('MainTabs');
       } catch (e: any) {
         Alert.alert('Error', e.message || 'Failed to sign in.');
@@ -64,13 +69,14 @@ const SignInContent = ({ navigation }: any) => {
       return;
     }
 
+    // Email
     if (!email.trim() || !password) {
       Alert.alert('Error', 'Please enter your email and password.');
       return;
     }
     setIsLoading(true);
     try {
-      await signInWithEmail(email, password);
+      await signInWithEmail(email.trim().toLowerCase(), password);
       navigation.replace('MainTabs');
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to sign in.');
@@ -135,10 +141,15 @@ const SignInContent = ({ navigation }: any) => {
               <Ionicons
                 name="call-outline"
                 size={16}
-                color={method === 'phone' ? COLORS.textPrimary : COLORS.textSecondary}
+                color={
+                  method === 'phone' ? COLORS.textPrimary : COLORS.textSecondary
+                }
               />
               <Text
-                style={[styles.methodText, method === 'phone' && styles.methodTextActive]}
+                style={[
+                  styles.methodText,
+                  method === 'phone' && styles.methodTextActive,
+                ]}
               >
                 Phone
               </Text>
@@ -153,10 +164,15 @@ const SignInContent = ({ navigation }: any) => {
               <Ionicons
                 name="mail-outline"
                 size={16}
-                color={method === 'email' ? COLORS.textPrimary : COLORS.textSecondary}
+                color={
+                  method === 'email' ? COLORS.textPrimary : COLORS.textSecondary
+                }
               />
               <Text
-                style={[styles.methodText, method === 'email' && styles.methodTextActive]}
+                style={[
+                  styles.methodText,
+                  method === 'email' && styles.methodTextActive,
+                ]}
               >
                 Email
               </Text>
@@ -178,55 +194,55 @@ const SignInContent = ({ navigation }: any) => {
                   value={phoneNumber}
                   onChangeText={setPhoneNumber}
                   maxLength={9}
-                  autoFocus={!isDesktop}
                 />
               </View>
             </View>
           ) : (
-            <>
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Email</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="your@email.com"
-                  placeholderTextColor={COLORS.textMuted}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={email}
-                  onChangeText={setEmail}
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Password</Text>
-                <View style={styles.passwordInput}>
-                  <TextInput
-                    style={styles.passwordField}
-                    placeholder="Your password"
-                    placeholderTextColor={COLORS.textMuted}
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                    value={password}
-                    onChangeText={setPassword}
-                  />
-                  <TouchableOpacity
-                    onPress={() => setShowPassword((v) => !v)}
-                    style={styles.eyeButton}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons
-                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                      size={20}
-                      color={COLORS.textSecondary}
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Email</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="your@email.com"
+                placeholderTextColor={COLORS.textMuted}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+              />
+            </View>
           )}
 
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Password</Text>
+            <View style={styles.passwordInput}>
+              <TextInput
+                style={styles.passwordField}
+                placeholder="Your password"
+                placeholderTextColor={COLORS.textMuted}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                value={password}
+                onChangeText={setPassword}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword((v) => !v)}
+                style={styles.eyeButton}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={COLORS.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <TouchableOpacity
-            style={[styles.signInButton, isLoading && styles.signInButtonDisabled]}
+            style={[
+              styles.signInButton,
+              isLoading && styles.signInButtonDisabled,
+            ]}
             onPress={handleSignIn}
             disabled={isLoading}
             activeOpacity={0.85}

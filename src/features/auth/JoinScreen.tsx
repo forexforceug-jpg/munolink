@@ -1,7 +1,6 @@
 // src/features/auth/JoinScreen.tsx
 
 import React, { useState, useRef, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -14,7 +13,6 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
-  Animated,
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,14 +21,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { supabase } from '../../lib/supabase';
-import { locationService, UserLocation } from '../../services/location.service';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 const COLORS = {
   bg: '#0D0D1A',
-  bgElevated: '#1A1A2E',
   bgInput: 'rgba(255,255,255,0.05)',
   border: 'rgba(255,255,255,0.08)',
   textPrimary: '#FFFFFF',
@@ -39,7 +34,6 @@ const COLORS = {
   accent: '#4A7DFF',
   accentSoft: 'rgba(74,125,255,0.15)',
   error: '#E74C3C',
-  success: '#2ECC71',
   google: '#FFFFFF',
   googleText: '#1F1F1F',
 };
@@ -62,7 +56,13 @@ const StepIndicator = ({ currentStep, totalSteps }: any) => (
 );
 
 const JoinContent = ({ navigation }: any) => {
-  const { signInWithPhone, signInWithGoogle, signUpWithEmail } = useAuth();
+  const {
+    signInWithGoogle,
+    signUpWithEmail,
+    verifyEmailOtp,
+    signUpWithPhone,
+    verifyPhoneOtp,
+  } = useAuth();
   const { isDesktop } = useBreakpoint();
 
   const [step, setStep] = useState(1);
@@ -79,12 +79,8 @@ const JoinContent = ({ navigation }: any) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
-  const [locationStatus, setLocationStatus] = useState<
-    'idle' | 'capturing' | 'saved' | 'skipped'
-  >('idle');
 
   const otpInputs = useRef<Array<TextInput | null>>([]);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (step === 2) {
@@ -106,55 +102,20 @@ const JoinContent = ({ navigation }: any) => {
   const canSubmit =
     isNameValid &&
     (method === 'phone'
-      ? phoneNumber.length >= 7
+      ? phoneNumber.length >= 7 && isPasswordValid
       : isEmailValid && isPasswordValid && passwordsMatch);
 
   // ============================================================
-  // LOCATION
-  // ============================================================
-  const captureAndSaveLocation = async () => {
-    setLocationStatus('capturing');
-    try {
-      const userDataStr = await AsyncStorage.getItem('userData');
-      const userId = userDataStr ? JSON.parse(userDataStr)?.id : null;
-
-      if (!userId) {
-        setLocationStatus('skipped');
-        return;
-      }
-
-      const location: UserLocation | null =
-        await locationService.getCurrentLocation();
-
-      if (!location || location.latitude == null || location.longitude == null) {
-        setLocationStatus('skipped');
-        return;
-      }
-
-      const { error } = await supabase
-        .from('users')
-        .update({
-          latitude: location.latitude,
-          longitude: location.longitude,
-          location_city: location.city || null,
-          location_region: location.region || null,
-          location_country: location.country || null,
-          location_data: location as any,
-        })
-        .eq('id', userId);
-
-      setLocationStatus(error ? 'skipped' : 'saved');
-    } catch {
-      setLocationStatus('skipped');
-    }
-  };
-
-  // ============================================================
-  // STEP 1: SEND OTP / SUBMIT EMAIL
+  // STEP 1: CREATE ACCOUNT (sends OTP via Supabase)
   // ============================================================
   const handleContinue = async () => {
     if (!isNameValid) {
       Alert.alert('Error', 'Please enter your full name');
+      return;
+    }
+
+    if (!isPasswordValid) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
       return;
     }
 
@@ -163,11 +124,21 @@ const JoinContent = ({ navigation }: any) => {
         Alert.alert('Error', 'Please enter a valid phone number');
         return;
       }
+
       setIsLoading(true);
       try {
-        await new Promise((r) => setTimeout(r, 800));
+        // Supabase handles OTP generation + storage.
+        // The Send SMS Hook forwards the OTP to Yoola.
+        const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
+        await signUpWithPhone(fullPhone, password);
         setStep(2);
-        setResendTimer(30);
+        setResendTimer(60);
+      } catch (error: any) {
+        console.error('Phone signup error:', error);
+        Alert.alert(
+          'Error',
+          error.message || 'Failed to create account. Please try again.'
+        );
       } finally {
         setIsLoading(false);
       }
@@ -179,10 +150,6 @@ const JoinContent = ({ navigation }: any) => {
       Alert.alert('Error', 'Please enter a valid email');
       return;
     }
-    if (!isPasswordValid) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
     if (!passwordsMatch) {
       Alert.alert('Error', 'Passwords do not match');
       return;
@@ -190,13 +157,15 @@ const JoinContent = ({ navigation }: any) => {
 
     setIsLoading(true);
     try {
-      await signUpWithEmail(fullName, email, password);
-      await captureAndSaveLocation();
-      Alert.alert('✅ Account Created', 'Welcome to Munolink!');
-      navigation.replace('MainTabs');
+      await signUpWithEmail(email.trim().toLowerCase(), password);
+      setStep(2);
+      setResendTimer(60);
     } catch (error: any) {
-      console.error('Signup error:', error);
-      Alert.alert('Error', error.message || 'Failed to create account');
+      console.error('Email signup error:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to create account. Please try again.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -206,27 +175,50 @@ const JoinContent = ({ navigation }: any) => {
   // STEP 2: VERIFY OTP
   // ============================================================
   const handleVerifyOTP = async () => {
-    if (otp.join('').length < 6) {
+    const code = otp.join('');
+    if (code.length < 6) {
       Alert.alert('Invalid OTP', 'Please enter the 6-digit code.');
       return;
     }
+
     setIsLoading(true);
     try {
-      const fullPhone = `+256${phoneNumber}`;
-      await signInWithPhone(fullPhone, fullName);
-      await captureAndSaveLocation();
+      if (method === 'phone') {
+        const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
+        await verifyPhoneOtp(fullPhone, code);
+      } else {
+        await verifyEmailOtp(email.trim().toLowerCase(), code);
+      }
+
+      // onAuthStateChange in AuthContext takes over from here
       navigation.replace('MainTabs');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to verify.');
+      console.error('OTP verification error:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'Invalid or expired code. Please try again.'
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleResendOTP = () => {
+  const handleResendOTP = async () => {
     if (resendTimer > 0) return;
-    setResendTimer(30);
-    Alert.alert('Code Sent', 'A new verification code has been sent');
+    setResendTimer(60);
+
+    try {
+      if (method === 'phone') {
+        const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
+        // Re-trigger signup which resends the OTP
+        await signUpWithPhone(fullPhone, password);
+      } else {
+        await signUpWithEmail(email.trim().toLowerCase(), password);
+      }
+      Alert.alert('Code Sent', 'A new verification code has been sent.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to resend code.');
+    }
   };
 
   const handleOtpChange = (text: string, index: number) => {
@@ -253,15 +245,8 @@ const JoinContent = ({ navigation }: any) => {
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
-      // The AuthContext handles the rest; navigation is triggered below
-      // via the auth state change. Wait briefly.
-      setTimeout(async () => {
-        const userDataStr = await AsyncStorage.getItem('userData');
-        if (userDataStr) {
-          await captureAndSaveLocation();
-          navigation.replace('MainTabs');
-        }
-      }, 1500);
+      // Auth state change handles navigation on native.
+      // On web, the redirect happens and the user comes back signed in.
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to sign in with Google.');
     } finally {
@@ -316,10 +301,15 @@ const JoinContent = ({ navigation }: any) => {
           <Ionicons
             name="call-outline"
             size={16}
-            color={method === 'phone' ? COLORS.textPrimary : COLORS.textSecondary}
+            color={
+              method === 'phone' ? COLORS.textPrimary : COLORS.textSecondary
+            }
           />
           <Text
-            style={[styles.methodText, method === 'phone' && styles.methodTextActive]}
+            style={[
+              styles.methodText,
+              method === 'phone' && styles.methodTextActive,
+            ]}
           >
             Phone
           </Text>
@@ -334,10 +324,15 @@ const JoinContent = ({ navigation }: any) => {
           <Ionicons
             name="mail-outline"
             size={16}
-            color={method === 'email' ? COLORS.textPrimary : COLORS.textSecondary}
+            color={
+              method === 'email' ? COLORS.textPrimary : COLORS.textSecondary
+            }
           />
           <Text
-            style={[styles.methodText, method === 'email' && styles.methodTextActive]}
+            style={[
+              styles.methodText,
+              method === 'email' && styles.methodTextActive,
+            ]}
           >
             Email
           </Text>
@@ -367,75 +362,80 @@ const JoinContent = ({ navigation }: any) => {
 
       {/* EMAIL */}
       {method === 'email' && (
-        <>
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Email</Text>
-            <TextInput
-              style={[styles.input, isEmailValid && email && styles.inputFilled]}
-              placeholder="your@email.com"
-              placeholderTextColor={COLORS.textMuted}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Email</Text>
+          <TextInput
+            style={[
+              styles.input,
+              isEmailValid && email && styles.inputFilled,
+            ]}
+            placeholder="your@email.com"
+            placeholderTextColor={COLORS.textMuted}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={email}
+            onChangeText={setEmail}
+          />
+        </View>
+      )}
+
+      {/* PASSWORD (shown for both methods) */}
+      <View style={styles.inputContainer}>
+        <Text style={styles.inputLabel}>Password</Text>
+        <View style={styles.passwordInput}>
+          <TextInput
+            style={styles.passwordField}
+            placeholder="At least 6 characters"
+            placeholderTextColor={COLORS.textMuted}
+            secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            value={password}
+            onChangeText={setPassword}
+          />
+          <TouchableOpacity
+            onPress={() => setShowPassword((v) => !v)}
+            style={styles.eyeButton}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color={COLORS.textSecondary}
             />
-          </View>
+          </TouchableOpacity>
+        </View>
+      </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Password</Text>
-            <View style={styles.passwordInput}>
-              <TextInput
-                style={styles.passwordField}
-                placeholder="At least 6 characters"
-                placeholderTextColor={COLORS.textMuted}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                value={password}
-                onChangeText={setPassword}
+      {/* CONFIRM PASSWORD (only for email) */}
+      {method === 'email' && (
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Confirm Password</Text>
+          <View style={styles.passwordInput}>
+            <TextInput
+              style={styles.passwordField}
+              placeholder="Re-enter password"
+              placeholderTextColor={COLORS.textMuted}
+              secureTextEntry={!showConfirmPassword}
+              autoCapitalize="none"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+            <TouchableOpacity
+              onPress={() => setShowConfirmPassword((v) => !v)}
+              style={styles.eyeButton}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                size={20}
+                color={COLORS.textSecondary}
               />
-              <TouchableOpacity
-                onPress={() => setShowPassword((v) => !v)}
-                style={styles.eyeButton}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={COLORS.textSecondary}
-                />
-              </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.inputLabel}>Confirm Password</Text>
-            <View style={styles.passwordInput}>
-              <TextInput
-                style={styles.passwordField}
-                placeholder="Re-enter password"
-                placeholderTextColor={COLORS.textMuted}
-                secureTextEntry={!showConfirmPassword}
-                autoCapitalize="none"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-              />
-              <TouchableOpacity
-                onPress={() => setShowConfirmPassword((v) => !v)}
-                style={styles.eyeButton}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons
-                  name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={COLORS.textSecondary}
-                />
-              </TouchableOpacity>
-            </View>
-            {confirmPassword.length > 0 && !passwordsMatch && (
-              <Text style={styles.inputError}>Passwords do not match</Text>
-            )}
-          </View>
-        </>
+          {confirmPassword.length > 0 && !passwordsMatch && (
+            <Text style={styles.inputError}>Passwords do not match</Text>
+          )}
+        </View>
       )}
 
       <TouchableOpacity
@@ -462,7 +462,10 @@ const JoinContent = ({ navigation }: any) => {
       </View>
 
       <TouchableOpacity
-        style={[styles.googleButton, isGoogleLoading && styles.googleButtonDisabled]}
+        style={[
+          styles.googleButton,
+          isGoogleLoading && styles.googleButtonDisabled,
+        ]}
         onPress={handleGoogleSignIn}
         disabled={isGoogleLoading}
       >
@@ -507,10 +510,12 @@ const JoinContent = ({ navigation }: any) => {
         </LinearGradient>
       </View>
 
-      <Text style={styles.stepTitle}>Verify your phone</Text>
+      <Text style={styles.stepTitle}>Verify your {method === 'phone' ? 'phone' : 'email'}</Text>
       <Text style={styles.stepSubtitle}>
         We've sent a 6-digit code to{' '}
-        <Text style={styles.highlightText}>{phoneNumber}</Text>
+        <Text style={styles.highlightText}>
+          {method === 'phone' ? `+256 ${phoneNumber}` : email}
+        </Text>
       </Text>
 
       <View style={styles.otpContainer}>
@@ -520,7 +525,10 @@ const JoinContent = ({ navigation }: any) => {
             ref={(ref) => {
               if (ref) otpInputs.current[index] = ref;
             }}
-            style={[styles.otpInput, otpFocused === index && styles.otpInputFocused]}
+            style={[
+              styles.otpInput,
+              otpFocused === index && styles.otpInputFocused,
+            ]}
             keyboardType="number-pad"
             maxLength={1}
             value={digit}
@@ -534,9 +542,7 @@ const JoinContent = ({ navigation }: any) => {
       {isLoading ? (
         <View style={styles.verifyLoading}>
           <ActivityIndicator color={COLORS.accent} />
-          <Text style={styles.verifyLoadingText}>
-            {locationStatus === 'capturing' ? 'Getting your location...' : 'Verifying...'}
-          </Text>
+          <Text style={styles.verifyLoadingText}>Verifying...</Text>
         </View>
       ) : (
         <TouchableOpacity
@@ -556,7 +562,12 @@ const JoinContent = ({ navigation }: any) => {
         onPress={handleResendOTP}
         disabled={resendTimer > 0}
       >
-        <Text style={[styles.resendText, resendTimer > 0 && styles.resendTextDisabled]}>
+        <Text
+          style={[
+            styles.resendText,
+            resendTimer > 0 && styles.resendTextDisabled,
+          ]}
+        >
           {resendTimer > 0 ? `Resend code in ${resendTimer}s` : 'Resend code'}
         </Text>
       </TouchableOpacity>
@@ -639,7 +650,12 @@ const styles = StyleSheet.create({
   stepDotActive: { width: 24, backgroundColor: COLORS.accent },
   stepDotCompleted: { backgroundColor: COLORS.accent },
   content: { flex: 1, paddingHorizontal: 24 },
-  contentDesktop: { maxWidth: 500, width: '100%', alignSelf: 'center', paddingHorizontal: 0 },
+  contentDesktop: {
+    maxWidth: 500,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+  },
   scrollContent: { paddingBottom: 32 },
   stepContainer: { flex: 1, paddingTop: 20 },
   stepIconContainer: { alignItems: 'center', marginBottom: 16 },
@@ -774,7 +790,11 @@ const styles = StyleSheet.create({
     marginVertical: 16,
   },
   divider: { flex: 1, height: 1, backgroundColor: COLORS.border },
-  dividerText: { color: COLORS.textSecondary, fontSize: 13, paddingHorizontal: 16 },
+  dividerText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    paddingHorizontal: 16,
+  },
   googleButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -788,7 +808,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   googleButtonDisabled: { opacity: 0.6 },
-  googleButtonText: { color: COLORS.googleText, fontSize: 16, fontWeight: '500' },
+  googleButtonText: {
+    color: COLORS.googleText,
+    fontSize: 16,
+    fontWeight: '500',
+  },
   signInButton: { alignItems: 'center' },
   signInText: { color: COLORS.textSecondary, fontSize: 15 },
   signInLink: { color: COLORS.accent, fontWeight: '500' },
