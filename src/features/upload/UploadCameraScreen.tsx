@@ -30,43 +30,27 @@ import {
   CameraView,
   CameraType,
   useCameraPermissions,
-  useMicrophonePermissions,
 } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import { StyledAlert } from '../feed/components/StyledAlert';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MAX_VIDEO_SECONDS = 60;
 
 // ============================================================
 // TYPES
 // ============================================================
-type CaptureMode = 'picture' | 'video';
 type FlashMode = 'off' | 'on' | 'auto';
 type ActiveTool =
   | 'text'
   | 'stickers'
   | 'filters'
   | 'sound'
-  | 'trim'
-  | 'cover'
   | null;
-
-type PickedAsset = {
-  uri: string;
-  type: 'image' | 'video';
-  duration?: number | null;
-  fileSize?: number | null;
-  width?: number | null;
-  height?: number | null;
-};
 
 type TextOverlay = {
   id: string;
@@ -78,16 +62,15 @@ type TextOverlay = {
   fontFamily: string;
   backgroundColor: string | null;
   scale: number;
+  rotation: number;
   textAlign?: 'left' | 'center' | 'right';
-  imageIndex?: number;
+  imageIndex: number; // Which image this overlay belongs to
 };
 
 type EditAsset = {
-  uri: string;
-  type: 'image' | 'video';
-  duration: number;
-  fileSize: number | null;
-  extraImages: string[];
+  images: string[]; // All image URIs (first is primary)
+  activeIndex: number; // Currently displayed image index
+  filter: string; // Global filter
 };
 
 // ============================================================
@@ -98,7 +81,6 @@ const TEXT_COLORS = [
   '#2ECC71', '#00D2D3', '#4A7DFF', '#6C5CE7', '#E056FD', '#FD79A8',
 ];
 
-// ✅ Text background colors — matches TikTok's highlight options
 const TEXT_BG_COLORS: Array<{ key: string; value: string | null; label: string }> = [
   { key: 'none', value: null, label: 'None' },
   { key: 'black', value: 'rgba(0,0,0,0.75)', label: 'Black' },
@@ -127,7 +109,7 @@ const FONT_SIZE_PRESETS = [
   { key: 'XL', size: 56 },
 ];
 
-const STICKER_TABS = ['Emoji', 'GIFs', 'Shapes'] as const;
+const STICKER_TABS = ['Emoji', 'Shapes'] as const;
 
 const EMOJI_STICKERS = [
   '😀','😂','🥰','😎','🤩','😭','🔥','✨','💯','👀','🙌','👏',
@@ -152,7 +134,7 @@ const FILTER_PRESETS = [
 const TRASH_ZONE_HEIGHT = 120;
 
 // ============================================================
-// DRAGGABLE TEXT OVERLAY
+// DRAGGABLE TEXT OVERLAY (with rotation support)
 // ============================================================
 interface DraggableTextProps {
   overlay: TextOverlay;
@@ -309,7 +291,7 @@ const DraggableText: React.FC<DraggableTextProps> = ({
         {
           left: overlay.x * layerW,
           top: overlay.y * layerH,
-          transform: [{ scale: overlay.scale }],
+          transform: [{ scale: overlay.scale }, { rotate: `${overlay.rotation}deg` }],
           backgroundColor: overlay.backgroundColor || 'transparent',
           borderRadius: overlay.backgroundColor ? 8 : 0,
           paddingHorizontal: overlay.backgroundColor ? 8 : 6,
@@ -343,254 +325,108 @@ const DraggableText: React.FC<DraggableTextProps> = ({
 };
 
 // ============================================================
-// VIDEO EDIT PREVIEW
+// IMAGE THUMBNAIL STRIP
 // ============================================================
-interface VideoEditPreviewProps {
-  uri: string;
-  onFramePicked: (thumbUri: string) => void;
-  trimStart: number;
-  trimEnd: number;
-  duration: number;
-  onDurationLoaded: (d: number) => void;
-  onTrimChange: (start: number, end: number) => void;
-  showTrimBar: boolean;
+interface ThumbnailStripProps {
+  images: string[];
+  activeIndex: number;
+  onSelect: (idx: number) => void;
+  onRemove: (idx: number) => void;
+  onAdd: () => void;
+  bottomInset: number;
 }
 
-const VideoEditPreview: React.FC<VideoEditPreviewProps> = ({
-  uri,
-  onFramePicked,
-  trimStart,
-  trimEnd,
-  duration,
-  onDurationLoaded,
-  onTrimChange,
-  showTrimBar,
+const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
+  images,
+  activeIndex,
+  onSelect,
+  onRemove,
+  onAdd,
+  bottomInset,
 }) => {
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.muted = false;
-  });
-
-  const [currentTime, setCurrentTime] = useState(0);
-  const [containerW, setContainerW] = useState(SCREEN_WIDTH);
-
-  useEffect(() => {
-    if (!player) return;
-    const iv = setInterval(() => {
-      try {
-        const t = player.currentTime ?? 0;
-        setCurrentTime(t);
-        if (duration > 0 && (t >= trimEnd || t < trimStart)) {
-          try {
-            player.currentTime = trimStart;
-          } catch {}
-        }
-      } catch {}
-    }, 100);
-    return () => clearInterval(iv);
-  }, [player, trimStart, trimEnd, duration]);
-
-  useEffect(() => {
-    if (!player) return;
-    const iv = setInterval(() => {
-      const d = player.duration ?? 0;
-      if (d > 0) {
-        onDurationLoaded(d);
-        clearInterval(iv);
-      }
-    }, 200);
-    return () => clearInterval(iv);
-  }, [player, onDurationLoaded]);
-
-  useEffect(() => {
-    if (!player || duration <= 0) return;
-    try {
-      player.currentTime = trimStart;
-      player.play();
-    } catch {}
-  }, [duration]);
-
-  const pickFrameAt = useCallback(
-    async (seconds: number) => {
-      try {
-        const res = await VideoThumbnails.getThumbnailAsync(uri, {
-          time: Math.max(0, Math.floor(seconds * 1000)),
-          quality: 0.85,
-        });
-        if (res?.uri) onFramePicked(res.uri);
-      } catch (err) {
-        console.warn('Frame pick failed:', err);
-      }
-    },
-    [uri, onFramePicked]
-  );
-
-  const pxPerSec = duration > 0 ? containerW / duration : 0;
-  const trimStartPx = trimStart * pxPerSec;
-  const trimEndPx = trimEnd * pxPerSec;
-  const playheadPx = currentTime * pxPerSec;
-
-  const makeHandleResponder = (side: 'left' | 'right') =>
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        try {
-          player.pause();
-        } catch {}
-      },
-      onPanResponderMove: (_, g) => {
-        if (duration <= 0 || pxPerSec <= 0) return;
-        const delta = g.dx / pxPerSec;
-        if (side === 'left') {
-          const nextStart = Math.max(
-            0,
-            Math.min(trimEnd - 0.5, trimStart + delta)
-          );
-          onTrimChange(nextStart, trimEnd);
-          try {
-            player.currentTime = nextStart;
-          } catch {}
-        } else {
-          const nextEnd = Math.max(
-            trimStart + 0.5,
-            Math.min(duration, trimEnd + delta)
-          );
-          onTrimChange(trimStart, nextEnd);
-        }
-      },
-      onPanResponderRelease: () => {
-        try {
-          player.currentTime = trimStart;
-          player.play();
-        } catch {}
-      },
-    });
-
-  const leftHandleResponder = useMemo(
-    () => makeHandleResponder('left'),
-    [trimStart, trimEnd, duration, pxPerSec]
-  );
-  const rightHandleResponder = useMemo(
-    () => makeHandleResponder('right'),
-    [trimStart, trimEnd, duration, pxPerSec]
-  );
-
-  const handleTrackTap = useCallback(
-    (evt: GestureResponderEvent) => {
-      if (duration <= 0) return;
-      const x = evt.nativeEvent.locationX;
-      const pct = Math.max(0, Math.min(1, x / containerW));
-      const clamped = Math.max(trimStart, Math.min(trimEnd, pct * duration));
-      setCurrentTime(clamped);
-      try {
-        player.currentTime = clamped;
-      } catch {}
-    },
-    [duration, containerW, trimStart, trimEnd, player]
-  );
-
   return (
-    <View style={styles.editPreviewContainer}>
-      <VideoView
-        player={player}
-        style={styles.editVideo}
-        contentFit="contain"
-        nativeControls={false}
-      />
-
-      <TouchableOpacity
-        style={styles.pickCoverBtn}
-        onPress={() => pickFrameAt(currentTime)}
+    <View style={[styles.thumbnailStripWrap, { bottom: bottomInset + 16 }]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.thumbnailStripContent}
       >
-        <Ionicons name="image-outline" size={16} color="#FFFFFF" />
-        <Text style={styles.pickCoverText}>Set cover</Text>
-      </TouchableOpacity>
-
-      {showTrimBar && duration > 0 && (
-        <View
-          style={styles.trimBarWrapper}
-          onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
-        >
+        {images.map((uri, idx) => (
           <TouchableOpacity
-            style={styles.trimTrack}
-            activeOpacity={1}
-            onPress={handleTrackTap}
+            key={`${uri}-${idx}`}
+            style={[
+              styles.thumbnailItem,
+              idx === activeIndex && styles.thumbnailItemActive,
+            ]}
+            onPress={() => {
+              Haptics.selectionAsync();
+              onSelect(idx);
+            }}
+            onLongPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              onRemove(idx);
+            }}
+            delayLongPress={400}
+            activeOpacity={0.8}
           >
-            <View
-              style={[
-                styles.trimDim,
-                { left: 0, width: Math.max(0, trimStartPx) },
-              ]}
-            />
-            <View style={[styles.trimDim, { left: trimEndPx, right: 0 }]} />
-            <View
-              style={[
-                styles.trimActive,
-                {
-                  left: trimStartPx,
-                  width: Math.max(0, trimEndPx - trimStartPx),
-                },
-              ]}
-            />
-            <View
-              style={[styles.trimPlayhead, { left: Math.max(0, playheadPx) }]}
-            />
+            <Image source={{ uri }} style={styles.thumbnailImage} resizeMode="cover" />
+            {idx === activeIndex && (
+              <View style={styles.thumbnailActiveBadge}>
+                <Ionicons name="eye" size={10} color="#FFFFFF" />
+              </View>
+            )}
           </TouchableOpacity>
-          <View
-            style={[styles.trimHandle, { left: Math.max(0, trimStartPx - 8) }]}
-            {...leftHandleResponder.panHandlers}
+        ))}
+
+        {images.length < 10 && (
+          <TouchableOpacity
+            style={styles.thumbnailAdd}
+            onPress={onAdd}
+            activeOpacity={0.8}
           >
-            <View style={styles.trimHandleBar} />
-          </View>
-          <View
-            style={[styles.trimHandle, { left: Math.max(0, trimEndPx - 8) }]}
-            {...rightHandleResponder.panHandlers}
-          >
-            <View style={styles.trimHandleBar} />
-          </View>
-        </View>
-      )}
+            <Ionicons name="add" size={22} color="#FFFFFF" />
+            <Text style={styles.thumbnailAddText}>
+              {images.length}/10
+            </Text>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
     </View>
   );
 };
 
 // ============================================================
-// RIGHT-SIDE TOOL RAIL
+// TOOL RAIL
 // ============================================================
 const ToolRail: React.FC<{
   activeTool: ActiveTool;
   onSelect: (t: ActiveTool) => void;
-  isVideo: boolean;
-}> = ({ activeTool, onSelect, isVideo }) => {
+}> = ({ activeTool, onSelect }) => {
   const tools = [
     { key: 'text' as const, icon: 'text' as const, label: 'Text' },
     { key: 'stickers' as const, icon: 'happy-outline' as const, label: 'Stickers' },
     { key: 'filters' as const, icon: 'color-filter-outline' as const, label: 'Filters' },
     { key: 'sound' as const, icon: 'musical-notes-outline' as const, label: 'Sound' },
-    { key: 'trim' as const, icon: 'cut-outline' as const, label: 'Trim', hidden: !isVideo },
-    { key: 'cover' as const, icon: 'image-outline' as const, label: 'Cover', hidden: !isVideo },
   ];
 
   return (
     <View style={styles.toolRail} pointerEvents="box-none">
-      {tools
-        .filter((t) => !t.hidden)
-        .map((t) => {
-          const isActive = activeTool === t.key;
-          return (
-            <TouchableOpacity
-              key={t.key}
-              style={[styles.toolRailItem, isActive && styles.toolRailItemActive]}
-              onPress={() => onSelect(isActive ? null : t.key)}
-            >
-              <Ionicons name={t.icon} size={22} color={isActive ? '#4A7DFF' : '#FFFFFF'} />
-              <Text style={[styles.toolRailLabel, isActive && styles.toolRailLabelActive]}>
-                {t.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+      {tools.map((t) => {
+        const isActive = activeTool === t.key;
+        return (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.toolRailItem, isActive && styles.toolRailItemActive]}
+            onPress={() => onSelect(isActive ? null : t.key)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name={t.icon} size={22} color={isActive ? '#4A7DFF' : '#FFFFFF'} />
+            <Text style={[styles.toolRailLabel, isActive && styles.toolRailLabelActive]}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 };
@@ -604,24 +440,15 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   const cameraRef = useRef<CameraView | null>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [micPermission, requestMicPermission] = useMicrophonePermissions();
 
   const [facing, setFacing] = useState<CameraType>('back');
-  const [mode, setMode] = useState<CaptureMode>('video');
   const [flash, setFlash] = useState<FlashMode>('off');
-  const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
 
-  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const [editAsset, setEditAsset] = useState<EditAsset | null>(null);
-  const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
-
+  // Edit state — image-only
+  const [editImages, setEditImages] = useState<string[]>([]);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [activeTool, setActiveTool] = useState<ActiveTool>(null);
   const [activeFilter, setActiveFilter] = useState<string>('none');
 
@@ -633,11 +460,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
 
   const [showTextInput, setShowTextInput] = useState(false);
   const [draftText, setDraftText] = useState('');
+  const [editingOverlayId, setEditingOverlayId] = useState<string | null>(null);
 
   const [activeStickerTab, setActiveStickerTab] =
     useState<typeof STICKER_TABS[number]>('Emoji');
-
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   const [layerW, setLayerW] = useState(SCREEN_WIDTH);
   const [layerH, setLayerH] = useState(SCREEN_HEIGHT);
@@ -676,29 +502,25 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
   }, []);
 
-  const allImages = useMemo(() => {
-    if (!editAsset) return [];
-    if (editAsset.type === 'image') {
-      return [editAsset.uri, ...editAsset.extraImages];
-    }
-    return [];
-  }, [editAsset]);
-
-  const activeImageUri = allImages[activeImageIndex] || editAsset?.uri || '';
-
-  const visibleOverlays = useMemo(() => {
-    if (!editAsset) return [];
-    if (editAsset.type === 'video') return textOverlays;
-    return textOverlays.filter(
-      (o) => o.imageIndex === undefined || o.imageIndex === activeImageIndex
-    );
-  }, [textOverlays, editAsset, activeImageIndex]);
+  // Overlays visible on the currently-active image
+  const visibleOverlays = useMemo(
+    () => textOverlays.filter((o) => o.imageIndex === activeImageIndex),
+    [textOverlays, activeImageIndex]
+  );
 
   const selectedOverlay = useMemo(
     () => textOverlays.find((o) => o.id === selectedOverlayId) || null,
     [textOverlays, selectedOverlayId]
   );
 
+  const activeFilterObj = useMemo(
+    () => FILTER_PRESETS.find((f) => f.key === activeFilter),
+    [activeFilter]
+  );
+
+  const isInEditMode = editImages.length > 0;
+
+  // Trash pulse animation
   const trashPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isOverTrash) {
@@ -715,44 +537,26 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   useEffect(() => {
     (async () => {
       if (!cameraPermission?.granted) await requestCameraPermission();
-      if (!micPermission?.granted) await requestMicPermission();
     })();
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-    };
   }, []);
 
   const handleCameraReady = useCallback(() => setCameraReady(true), []);
 
-  const startEditForAsset = useCallback(
-    (asset: PickedAsset, extras: string[] = []) => {
-      const durationSeconds =
-        asset.type === 'video' && asset.duration && asset.duration > 0
-          ? asset.duration / 1000
-          : 0;
+  // ============================================================
+  // START EDIT MODE
+  // ============================================================
+  const startEditForImages = useCallback((uris: string[]) => {
+    setEditImages(uris);
+    setActiveImageIndex(0);
+    setTextOverlays([]);
+    setSelectedOverlayId(null);
+    setActiveTool(null);
+    setActiveFilter('none');
+  }, []);
 
-      setEditAsset({
-        uri: asset.uri,
-        type: asset.type,
-        duration: durationSeconds,
-        fileSize: asset.fileSize ?? null,
-        extraImages: asset.type === 'image' ? extras : [],
-      });
-      setTrimStart(0);
-      setTrimEnd(durationSeconds);
-      setTextOverlays([]);
-      setSelectedOverlayId(null);
-      setVideoThumbnail(null);
-      setActiveTool(null);
-      setActiveFilter('none');
-      setActiveImageIndex(0);
-    },
-    []
-  );
-
+  // ============================================================
+  // CAPTURE PHOTO
+  // ============================================================
   const takePhoto = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
     try {
@@ -763,12 +567,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         skipProcessing: false,
       });
       if (!photo?.uri) return;
-      startEditForAsset({
-        uri: photo.uri,
-        type: 'image',
-        width: photo.width ?? null,
-        height: photo.height ?? null,
-      });
+      startEditForImages([photo.uri]);
     } catch (err: any) {
       showStyledAlert({
         title: 'Capture failed',
@@ -780,140 +579,25 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     } finally {
       setIsCapturing(false);
     }
-  }, [isCapturing, startEditForAsset, showStyledAlert, hideStyledAlert]);
+  }, [isCapturing, startEditForImages, showStyledAlert, hideStyledAlert]);
 
-  const startRecording = useCallback(async () => {
-    if (!cameraRef.current || isRecording) return;
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      setIsRecording(true);
-      setIsPaused(false);
-      setRecordSeconds(0);
-
-      recordTimerRef.current = setInterval(() => {
-        setRecordSeconds((s) => {
-          if (s + 1 >= MAX_VIDEO_SECONDS) {
-            cameraRef.current?.stopRecording();
-            return MAX_VIDEO_SECONDS;
-          }
-          return s + 1;
-        });
-      }, 1000);
-
-      const video = await cameraRef.current.recordAsync({
-        maxDuration: MAX_VIDEO_SECONDS,
-      });
-
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current);
-        recordTimerRef.current = null;
-      }
-      setIsRecording(false);
-      setIsPaused(false);
-
-      if (!video?.uri) return;
-      startEditForAsset({
-        uri: video.uri,
-        type: 'video',
-        duration: recordSeconds * 1000,
-      });
-    } catch (err: any) {
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current);
-        recordTimerRef.current = null;
-      }
-      setIsRecording(false);
-      setIsPaused(false);
-      showStyledAlert({
-        title: 'Recording failed',
-        message: err?.message || 'Please try again.',
-        icon: 'alert-circle-outline',
-        iconColor: '#E74C3C',
-        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
-      });
-    }
-  }, [isRecording, recordSeconds, startEditForAsset, showStyledAlert, hideStyledAlert]);
-
-  const stopRecording = useCallback(() => {
-    if (!isRecording) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    cameraRef.current?.stopRecording();
-  }, [isRecording]);
-
-  const pauseRecording = useCallback(() => {
-    if (!isRecording || isPaused) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      (cameraRef.current as any)?.pauseRecording?.();
-    } catch {}
-    setIsPaused(true);
-    if (recordTimerRef.current) {
-      clearInterval(recordTimerRef.current);
-      recordTimerRef.current = null;
-    }
-  }, [isRecording, isPaused]);
-
-  const resumeRecording = useCallback(() => {
-    if (!isRecording || !isPaused) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    try {
-      (cameraRef.current as any)?.resumeRecording?.();
-    } catch {}
-    setIsPaused(false);
-    recordTimerRef.current = setInterval(() => {
-      setRecordSeconds((s) => {
-        if (s + 1 >= MAX_VIDEO_SECONDS) {
-          cameraRef.current?.stopRecording();
-          return MAX_VIDEO_SECONDS;
-        }
-        return s + 1;
-      });
-    }, 1000);
-  }, [isRecording, isPaused]);
-
-  const handleShutterPress = useCallback(() => {
-    if (mode === 'picture') takePhoto();
-    else {
-      if (isRecording) stopRecording();
-      else startRecording();
-    }
-  }, [mode, isRecording, takePhoto, startRecording, stopRecording]);
-
+  // ============================================================
+  // PICK FROM GALLERY
+  // ============================================================
   const handleGalleryPress = useCallback(async () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
         selectionLimit: 10,
         quality: 0.9,
-        videoMaxDuration: MAX_VIDEO_SECONDS,
       });
 
       if (result.canceled || !result.assets?.length) return;
 
-      const firstVideo = result.assets.find((a) => a.type === 'video');
-      const primary = firstVideo ?? result.assets[0];
-
-      const extras =
-        primary.type !== 'video'
-          ? result.assets
-              .filter((a) => a.type !== 'video')
-              .filter((a) => a.uri !== primary.uri)
-              .map((a) => a.uri)
-          : [];
-
-      startEditForAsset(
-        {
-          uri: primary.uri,
-          type: primary.type === 'video' ? 'video' : 'image',
-          duration: primary.duration ?? null,
-          fileSize: primary.fileSize ?? null,
-          width: primary.width ?? null,
-          height: primary.height ?? null,
-        },
-        extras
-      );
+      const uris = result.assets.map((a) => a.uri);
+      startEditForImages(uris);
     } catch (err: any) {
       showStyledAlert({
         title: 'Upload failed',
@@ -923,26 +607,27 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
       });
     }
-  }, [startEditForAsset, showStyledAlert, hideStyledAlert]);
+  }, [startEditForImages, showStyledAlert, hideStyledAlert]);
 
+  // ============================================================
+  // ADD MORE IMAGES
+  // ============================================================
   const handleAddMoreImages = useCallback(async () => {
-    if (!editAsset || editAsset.type !== 'image') return;
+    if (editImages.length >= 10) return;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
-        selectionLimit: 10 - (1 + editAsset.extraImages.length),
+        selectionLimit: 10 - editImages.length,
         quality: 0.9,
       });
       if (result.canceled || !result.assets?.length) return;
 
       const newUris = result.assets.map((a) => a.uri);
-      setEditAsset((prev) =>
-        prev ? { ...prev, extraImages: [...prev.extraImages, ...newUris] } : prev
-      );
-
-      setActiveImageIndex(1 + editAsset.extraImages.length);
+      const nextIndex = editImages.length;
+      setEditImages((prev) => [...prev, ...newUris]);
+      setActiveImageIndex(nextIndex);
       setSelectedOverlayId(null);
     } catch (err: any) {
       showStyledAlert({
@@ -953,14 +638,23 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
       });
     }
-  }, [editAsset, showStyledAlert, hideStyledAlert]);
+  }, [editImages.length, showStyledAlert, hideStyledAlert]);
 
+  // ============================================================
+  // REMOVE IMAGE
+  // ============================================================
   const handleRemoveImage = useCallback(
     (index: number) => {
-      if (!editAsset) return;
-      if (editAsset.type !== 'image') return;
-      const total = 1 + editAsset.extraImages.length;
-      if (total <= 1) return;
+      if (editImages.length <= 1) {
+        showStyledAlert({
+          title: 'Cannot remove',
+          message: 'You need at least one image.',
+          icon: 'alert-circle-outline',
+          iconColor: '#E74C3C',
+          buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+        });
+        return;
+      }
 
       showStyledAlert({
         title: 'Remove image?',
@@ -974,26 +668,32 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             style: 'destructive',
             onPress: () => {
               hideStyledAlert();
-              setEditAsset((prev) => {
-                if (!prev) return prev;
-                const extras = [...prev.extraImages];
-                if (index === 0) {
-                  const newPrimary = extras.shift()!;
-                  return { ...prev, uri: newPrimary, extraImages: extras };
-                }
-                extras.splice(index - 1, 1);
-                return { ...prev, extraImages: extras };
+              setEditImages((prev) => prev.filter((_, i) => i !== index));
+              setTextOverlays((prev) => {
+                const updated = prev
+                  .filter((o) => o.imageIndex !== index)
+                  .map((o) =>
+                    o.imageIndex > index ? { ...o, imageIndex: o.imageIndex - 1 } : o
+                  );
+                return updated;
               });
-              setActiveImageIndex((idx) => Math.max(0, idx - 1));
+              setActiveImageIndex((idx) => {
+                if (index < idx) return idx - 1;
+                if (index === idx) return Math.max(0, idx - 1);
+                return idx;
+              });
               setSelectedOverlayId(null);
             },
           },
         ],
       });
     },
-    [editAsset, showStyledAlert, hideStyledAlert]
+    [editImages.length, showStyledAlert, hideStyledAlert]
   );
 
+  // ============================================================
+  // CYCLE FLASH
+  // ============================================================
   const cycleFlash = useCallback(() => {
     setFlash((prev: FlashMode): FlashMode => {
       if (prev === 'off') return 'on';
@@ -1002,44 +702,72 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     });
   }, []);
 
+  // ============================================================
+  // ADD TEXT OVERLAY
+  // ============================================================
   const addTextOverlay = useCallback(
     (content: string) => {
       const trimmed = content.trim();
       if (!trimmed) {
         setShowTextInput(false);
         setDraftText('');
+        setEditingOverlayId(null);
         return;
       }
-      const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const isImagePost = editAsset?.type === 'image';
-      setTextOverlays((prev) => [
-        ...prev,
-        {
-          id,
-          text: trimmed.slice(0, 60),
-          x: 0.15,
-          y: 0.4,
-          color: '#FFFFFF',
-          fontSize: 28,
-          fontFamily: 'System',
-          backgroundColor: null,
-          scale: 1,
-          textAlign: 'center',
-          imageIndex: isImagePost ? activeImageIndex : undefined,
-        },
-      ]);
-      setSelectedOverlayId(id);
+
+      if (editingOverlayId) {
+        // Update existing overlay
+        setTextOverlays((prev) =>
+          prev.map((o) =>
+            o.id === editingOverlayId ? { ...o, text: trimmed.slice(0, 60) } : o
+          )
+        );
+        setEditingOverlayId(null);
+      } else {
+        // Create new overlay
+        const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        setTextOverlays((prev) => [
+          ...prev,
+          {
+            id,
+            text: trimmed.slice(0, 60),
+            x: 0.15,
+            y: 0.4,
+            color: '#FFFFFF',
+            fontSize: 28,
+            fontFamily: 'System',
+            backgroundColor: null,
+            scale: 1,
+            rotation: 0,
+            textAlign: 'center',
+            imageIndex: activeImageIndex,
+          },
+        ]);
+        setSelectedOverlayId(id);
+      }
+
       setDraftText('');
       setShowTextInput(false);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     },
-    [editAsset, activeImageIndex]
+    [activeImageIndex, editingOverlayId]
   );
 
+  // ============================================================
+  // EDIT EXISTING TEXT OVERLAY
+  // ============================================================
+  const editOverlayText = useCallback((overlay: TextOverlay) => {
+    setEditingOverlayId(overlay.id);
+    setDraftText(overlay.text);
+    setShowTextInput(true);
+  }, []);
+
+  // ============================================================
+  // ADD STICKER OVERLAY
+  // ============================================================
   const addStickerOverlay = useCallback(
     (emoji: string) => {
       const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const isImagePost = editAsset?.type === 'image';
       setTextOverlays((prev) => [
         ...prev,
         {
@@ -1052,16 +780,20 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           fontFamily: 'System',
           backgroundColor: null,
           scale: 1,
+          rotation: 0,
           textAlign: 'center',
-          imageIndex: isImagePost ? activeImageIndex : undefined,
+          imageIndex: activeImageIndex,
         },
       ]);
       setSelectedOverlayId(id);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     },
-    [editAsset, activeImageIndex]
+    [activeImageIndex]
   );
 
+  // ============================================================
+  // UPDATE SELECTED OVERLAY
+  // ============================================================
   const updateSelectedOverlay = useCallback(
     (patch: Partial<TextOverlay>) => {
       if (!selectedOverlayId) return;
@@ -1072,6 +804,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     [selectedOverlayId]
   );
 
+  // ============================================================
+  // DELETE SELECTED OVERLAY
+  // ============================================================
   const deleteSelectedOverlay = useCallback(() => {
     if (!selectedOverlayId) return;
     setTextOverlays((prev) => prev.filter((o) => o.id !== selectedOverlayId));
@@ -1079,18 +814,43 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [selectedOverlayId]);
 
-  // ✅ Tapping the preview closes any open tool sheet (Text / Stickers / etc.)
+  // ============================================================
+  // COPY SELECTED OVERLAY TO ALL IMAGES
+  // ============================================================
+  const copyOverlayToAll = useCallback(() => {
+    if (!selectedOverlay) return;
+    if (editImages.length <= 1) return;
+
+    const newOverlays: TextOverlay[] = [];
+    for (let i = 0; i < editImages.length; i++) {
+      if (i === selectedOverlay.imageIndex) continue;
+      newOverlays.push({
+        ...selectedOverlay,
+        id: `t_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+        imageIndex: i,
+      });
+    }
+
+    setTextOverlays((prev) => [...prev, ...newOverlays]);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [selectedOverlay, editImages.length]);
+
+  // ============================================================
+  // HANDLE PREVIEW TAP
+  // ============================================================
   const handlePreviewTap = useCallback(() => {
     if (activeTool) {
       Haptics.selectionAsync();
       setActiveTool(null);
     }
-    // Tapping preview also deselects any active text overlay
     if (selectedOverlayId) {
       setSelectedOverlayId(null);
     }
   }, [activeTool, selectedOverlayId]);
 
+  // ============================================================
+  // DISCARD EDIT
+  // ============================================================
   const discardEdit = useCallback(() => {
     showStyledAlert({
       title: 'Discard changes?',
@@ -1104,12 +864,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           style: 'destructive',
           onPress: () => {
             hideStyledAlert();
-            setEditAsset(null);
+            setEditImages([]);
             setTextOverlays([]);
             setSelectedOverlayId(null);
-            setVideoThumbnail(null);
-            setTrimStart(0);
-            setTrimEnd(0);
             setActiveTool(null);
             setActiveFilter('none');
             setActiveImageIndex(0);
@@ -1119,50 +876,31 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     });
   }, [showStyledAlert, hideStyledAlert]);
 
+  // ============================================================
+  // GO TO POST DETAILS
+  // ============================================================
   const goToPostDetails = useCallback(() => {
-    if (!editAsset) return;
-    if (editAsset.type === 'video' && trimEnd - trimStart < 1) {
-      showStyledAlert({
-        title: 'Clip too short',
-        message: 'Keep at least 1 second of video.',
-        icon: 'alert-circle-outline',
-        iconColor: '#E74C3C',
-        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
-      });
-      return;
-    }
+    if (editImages.length === 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    const allImgs =
-      editAsset.type === 'image'
-        ? [editAsset.uri, ...editAsset.extraImages]
-        : [];
 
     navigation.navigate('UploadEditor', {
       editResult: {
-        uri: editAsset.uri,
-        type: editAsset.type,
-        trimStart: editAsset.type === 'video' ? trimStart : 0,
-        trimEnd: editAsset.type === 'video' ? trimEnd : 0,
-        videoThumbnail: videoThumbnail ?? null,
-        fileSize: editAsset.fileSize,
+        uri: editImages[0],
+        type: 'image',
+        trimStart: 0,
+        trimEnd: 0,
+        videoThumbnail: null,
+        fileSize: null,
         textOverlays,
-        extraImages: allImgs.slice(1),
+        extraImages: editImages.slice(1),
         filter: activeFilter,
       },
     });
-  }, [
-    editAsset,
-    trimStart,
-    trimEnd,
-    videoThumbnail,
-    textOverlays,
-    activeFilter,
-    navigation,
-    showStyledAlert,
-    hideStyledAlert,
-  ]);
+  }, [editImages, textOverlays, activeFilter, navigation]);
 
+  // ============================================================
+  // RENDER: PERMISSION LOADING
+  // ============================================================
   if (!cameraPermission) {
     return (
       <View style={styles.centered}>
@@ -1171,7 +909,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     );
   }
 
-  if (!cameraPermission.granted && !editAsset) {
+  // ============================================================
+  // RENDER: PERMISSION DENIED
+  // ============================================================
+  if (!cameraPermission.granted && !isInEditMode) {
     return (
       <View style={styles.centered}>
         <Ionicons name="camera-outline" size={64} color="#8A8AAE" />
@@ -1196,13 +937,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }
 
   // ============================================================
-  // EDIT MODE
+  // RENDER: EDIT MODE
   // ============================================================
-  if (editAsset) {
-    const isVideo = editAsset.type === 'video';
-    const activeFilterObj = FILTER_PRESETS.find((f) => f.key === activeFilter);
-    const totalImages = allImages.length;
-
+  if (isInEditMode) {
     return (
       <KeyboardAvoidingView
         style={styles.container}
@@ -1210,13 +947,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
       >
         <StatusBar barStyle="light-content" translucent />
 
-        {/*
-          ✅ FULL-SCREEN PREVIEW + OVERLAY LAYER
-          Tapping empty space here closes the open tool sheet and
-          deselects any active overlay. DraggableText overlays sit
-          on top and claim their own touches, so tapping them still
-          selects/drags them.
-        */}
+        {/* Full-screen preview + overlay layer */}
         <Pressable
           style={styles.editPreviewWrapper}
           onPress={handlePreviewTap}
@@ -1225,33 +956,11 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             setLayerH(e.nativeEvent.layout.height);
           }}
         >
-          {isVideo ? (
-            <VideoEditPreview
-              uri={editAsset.uri}
-              onFramePicked={(uri) => setVideoThumbnail(uri)}
-              trimStart={trimStart}
-              trimEnd={trimEnd || editAsset.duration}
-              duration={editAsset.duration}
-              showTrimBar={activeTool === 'trim'}
-              onDurationLoaded={(d) => {
-                setEditAsset((prev) => (prev ? { ...prev, duration: d } : prev));
-                if (trimEnd === 0) {
-                  setTrimStart(0);
-                  setTrimEnd(d);
-                }
-              }}
-              onTrimChange={(s, e) => {
-                setTrimStart(s);
-                setTrimEnd(e);
-              }}
-            />
-          ) : (
-            <Image
-              source={{ uri: activeImageUri }}
-              style={styles.editImage}
-              resizeMode="contain"
-            />
-          )}
+          <Image
+            source={{ uri: editImages[activeImageIndex] }}
+            style={styles.editImage}
+            resizeMode="contain"
+          />
 
           {activeFilterObj?.overlay && (
             <View
@@ -1293,48 +1002,25 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           ))}
         </Pressable>
 
-        {!isVideo && (
-          <View
-            style={[styles.thumbnailStripWrap, { bottom: insets.bottom + 16 }]}
-            pointerEvents="box-none"
-          >
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.thumbnailStripContent}
-            >
-              {allImages.map((uri, idx) => (
-                <TouchableOpacity
-                  key={`${uri}-${idx}`}
-                  style={[
-                    styles.thumbnailItem,
-                    idx === activeImageIndex && styles.thumbnailItemActive,
-                  ]}
-                  onPress={() => {
-                    setActiveImageIndex(idx);
-                    setSelectedOverlayId(null);
-                  }}
-                  onLongPress={() => handleRemoveImage(idx)}
-                  delayLongPress={400}
-                >
-                  <Image source={{ uri }} style={styles.thumbnailImage} resizeMode="cover" />
-                  <View style={styles.thumbnailBadge}>
-                    <Text style={styles.thumbnailBadgeText}>{idx + 1}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+        {/* Image thumbnail strip */}
+        <ThumbnailStrip
+          images={editImages}
+          activeIndex={activeImageIndex}
+          onSelect={(idx) => {
+            setActiveImageIndex(idx);
+            setSelectedOverlayId(null);
+          }}
+          onRemove={handleRemoveImage}
+          onAdd={handleAddMoreImages}
+          bottomInset={insets.bottom}
+        />
 
-              {totalImages < 10 && (
-                <TouchableOpacity style={styles.thumbnailAdd} onPress={handleAddMoreImages}>
-                  <Ionicons name="add" size={22} color="#FFFFFF" />
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
-        )}
-
+        {/* Trash zone (shown while dragging) */}
         {isDraggingOverlay && (
-          <View style={[styles.trashZone, { paddingTop: insets.top + 8 }]} pointerEvents="none">
+          <View
+            style={[styles.trashZone, { paddingTop: insets.top + 8 }]}
+            pointerEvents="none"
+          >
             <Animated.View
               style={[
                 styles.trashZoneInner,
@@ -1357,6 +1043,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </View>
         )}
 
+        {/* Top bar */}
         <View style={[styles.editTopBar, { top: insets.top + 8 }]}>
           <TouchableOpacity
             style={styles.iconButton}
@@ -1366,7 +1053,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
           <View style={styles.editTitleRow}>
-            <Text style={styles.editTitle}>Edit</Text>
+            <Text style={styles.editTitle}>
+              Edit {editImages.length > 1 ? `${activeImageIndex + 1}/${editImages.length}` : ''}
+            </Text>
           </View>
           <TouchableOpacity style={styles.nextButton} onPress={goToPostDetails}>
             <Text style={styles.nextButtonText}>Next</Text>
@@ -1374,6 +1063,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </TouchableOpacity>
         </View>
 
+        {/* Tool rail */}
         <View
           style={[
             styles.toolRailWrapper,
@@ -1387,19 +1077,24 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               Haptics.selectionAsync();
               setActiveTool(t);
             }}
-            isVideo={isVideo}
           />
         </View>
 
+        {/* Tool sheet */}
         {activeTool && (
           <View style={[styles.toolSheet, { paddingBottom: insets.bottom + 12 }]}>
+            {/* ================ TEXT ================ */}
             {activeTool === 'text' && (
               <>
                 <View style={styles.toolSheetHeader}>
                   <Text style={styles.toolSheetTitle}>Text</Text>
                   <TouchableOpacity
                     style={styles.toolSheetAddBtn}
-                    onPress={() => setShowTextInput(true)}
+                    onPress={() => {
+                      setEditingOverlayId(null);
+                      setDraftText('');
+                      setShowTextInput(true);
+                    }}
                   >
                     <Ionicons name="add" size={18} color="#FFFFFF" />
                     <Text style={styles.toolSheetAddText}>Add text</Text>
@@ -1408,6 +1103,31 @@ export const UploadCameraScreen = ({ navigation }: any) => {
 
                 {selectedOverlay && (
                   <>
+                    <TouchableOpacity
+                      style={styles.editTextRow}
+                      onPress={() => editOverlayText(selectedOverlay)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="create-outline" size={16} color="#4A7DFF" />
+                      <Text style={styles.editTextRowText} numberOfLines={1}>
+                        Edit: "{selectedOverlay.text}"
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Copy to all images */}
+                    {editImages.length > 1 && (
+                      <TouchableOpacity
+                        style={styles.copyToAllBtn}
+                        onPress={copyOverlayToAll}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="copy-outline" size={16} color="#2ECC71" />
+                        <Text style={styles.copyToAllText}>
+                          Apply to all {editImages.length} images
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
                     <Text style={styles.optionLabel}>Font</Text>
                     <ScrollView
                       horizontal
@@ -1436,7 +1156,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                       ))}
                     </ScrollView>
 
-                    {/* Text color */}
                     <Text style={[styles.optionLabel, { marginTop: 10 }]}>Color</Text>
                     <ScrollView
                       horizontal
@@ -1456,7 +1175,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                       ))}
                     </ScrollView>
 
-                    {/* ✅ Text background color — new row */}
                     <Text style={[styles.optionLabel, { marginTop: 10 }]}>
                       Background
                     </Text>
@@ -1482,11 +1200,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                             }
                           >
                             {bg.value === null && (
-                              <Ionicons
-                                name="close"
-                                size={14}
-                                color="#FFFFFF"
-                              />
+                              <Ionicons name="close" size={14} color="#FFFFFF" />
                             )}
                           </TouchableOpacity>
                         );
@@ -1573,12 +1287,13 @@ export const UploadCameraScreen = ({ navigation }: any) => {
 
                 {!selectedOverlay && (
                   <Text style={styles.toolSheetHint}>
-                    Tap "Add text" to add your first overlay.
+                    Tap "Add text" to add your first overlay. Tap an overlay on the image to select it.
                   </Text>
                 )}
               </>
             )}
 
+            {/* ================ STICKERS ================ */}
             {activeTool === 'stickers' && (
               <>
                 <View style={styles.toolSheetHeader}>
@@ -1602,29 +1317,33 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                     </TouchableOpacity>
                   ))}
                 </View>
-                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.stickerGrid}>
-                  {(activeStickerTab === 'Emoji' ? EMOJI_STICKERS : SHAPE_STICKERS).map((emoji, idx) => (
-                    <TouchableOpacity
-                      key={`${emoji}-${idx}`}
-                      style={styles.stickerCell}
-                      onPress={() => addStickerOverlay(emoji)}
-                    >
-                      <Text style={styles.stickerEmoji}>{emoji}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  {activeStickerTab === 'GIFs' && (
-                    <View style={styles.emptyTab}>
-                      <Text style={styles.emptyTabText}>GIF stickers coming soon</Text>
-                    </View>
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.stickerGrid}
+                >
+                  {(activeStickerTab === 'Emoji' ? EMOJI_STICKERS : SHAPE_STICKERS).map(
+                    (emoji, idx) => (
+                      <TouchableOpacity
+                        key={`${emoji}-${idx}`}
+                        style={styles.stickerCell}
+                        onPress={() => addStickerOverlay(emoji)}
+                      >
+                        <Text style={styles.stickerEmoji}>{emoji}</Text>
+                      </TouchableOpacity>
+                    )
                   )}
                 </ScrollView>
               </>
             )}
 
+            {/* ================ FILTERS ================ */}
             {activeTool === 'filters' && (
               <>
                 <View style={styles.toolSheetHeader}>
                   <Text style={styles.toolSheetTitle}>Filters</Text>
+                  <Text style={styles.toolSheetHintSmall}>
+                    Applied to all images
+                  </Text>
                 </View>
                 <ScrollView
                   horizontal
@@ -1644,7 +1363,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                           activeFilter === f.key && styles.filterSwatchActive,
                         ]}
                       >
-                        {f.overlay === null && <Ionicons name="close" size={14} color="#FFFFFF" />}
+                        {f.overlay === null && (
+                          <Ionicons name="close" size={14} color="#FFFFFF" />
+                        )}
                       </View>
                       <Text
                         style={[
@@ -1660,39 +1381,24 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               </>
             )}
 
+            {/* ================ SOUND ================ */}
             {activeTool === 'sound' && (
               <View style={styles.toolSheetHeader}>
                 <Text style={styles.toolSheetTitle}>Sound</Text>
                 <Text style={styles.toolSheetHint}>Sound library coming soon.</Text>
               </View>
             )}
-
-            {activeTool === 'trim' && isVideo && (
-              <View style={styles.toolSheetHeader}>
-                <Text style={styles.toolSheetTitle}>Trim</Text>
-                <Text style={styles.toolSheetHint}>
-                  Drag the white handles on the timeline to trim your clip.
-                </Text>
-              </View>
-            )}
-
-            {activeTool === 'cover' && isVideo && (
-              <View style={styles.toolSheetHeader}>
-                <Text style={styles.toolSheetTitle}>Cover</Text>
-                <Text style={styles.toolSheetHint}>
-                  Scrub the video, then tap "Set cover" to pick a frame.
-                </Text>
-              </View>
-            )}
           </View>
         )}
 
+        {/* Text input overlay */}
         {showTextInput && (
           <Pressable
             style={styles.textInputOverlay}
             onPress={() => {
               setShowTextInput(false);
               setDraftText('');
+              setEditingOverlayId(null);
             }}
           >
             <Pressable
@@ -1719,6 +1425,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                   onPress={() => {
                     setShowTextInput(false);
                     setDraftText('');
+                    setEditingOverlayId(null);
                   }}
                 >
                   <Text style={styles.textInputCancelTextTransparent}>Cancel</Text>
@@ -1731,7 +1438,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                   disabled={!draftText.trim()}
                   onPress={() => addTextOverlay(draftText)}
                 >
-                  <Text style={styles.textInputAddTextTransparent}>Done</Text>
+                  <Text style={styles.textInputAddTextTransparent}>
+                    {editingOverlayId ? 'Update' : 'Done'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </Pressable>
@@ -1752,7 +1461,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }
 
   // ============================================================
-  // CAMERA MODE
+  // RENDER: CAMERA MODE (image-only)
   // ============================================================
   return (
     <View style={styles.container}>
@@ -1763,9 +1472,8 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           ref={cameraRef}
           style={StyleSheet.absoluteFill}
           facing={facing}
-          flash={mode === 'picture' ? flash : 'off'}
-          mode={mode}
-          videoQuality="1080p"
+          flash={flash}
+          mode="picture"
           onCameraReady={handleCameraReady}
         />
       )}
@@ -1774,55 +1482,27 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         colors={['rgba(0,0,0,0.75)', 'rgba(0,0,0,0)']}
         style={[styles.topBar, { paddingTop: insets.top + 8 }]}
       >
-        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="close" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
-        <View style={styles.modeRow}>
-          <TouchableOpacity onPress={() => setMode('video')}>
-            <Text style={[styles.modeText, mode === 'video' && styles.modeTextActive]}>VIDEO</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setMode('picture')}>
-            <Text style={[styles.modeText, mode === 'picture' && styles.modeTextActive]}>PHOTO</Text>
-          </TouchableOpacity>
-        </View>
         <TouchableOpacity
           style={styles.iconButton}
-          onPress={cycleFlash}
-          disabled={mode === 'video'}
+          onPress={() => navigation.goBack()}
         >
+          <Ionicons name="close" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+
+        <View style={styles.modeRow}>
+          <Text style={styles.modeTextActive}>PHOTO</Text>
+        </View>
+
+        <TouchableOpacity style={styles.iconButton} onPress={cycleFlash}>
           <Ionicons
             name={
               flash === 'on' ? 'flash' : flash === 'auto' ? 'flash-outline' : 'flash-off'
             }
             size={22}
-            color={mode === 'video' ? '#666' : '#FFFFFF'}
+            color="#FFFFFF"
           />
         </TouchableOpacity>
       </LinearGradient>
-
-      {isRecording && (
-        <View style={[styles.recordingBadge, { top: insets.top + 70 }]}>
-          <View style={[styles.recordingDot, isPaused && styles.recordingDotPaused]} />
-          <Text style={styles.recordingText}>
-            {String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:
-            {String(recordSeconds % 60).padStart(2, '0')}
-            {isPaused ? '  (paused)' : ''}
-          </Text>
-        </View>
-      )}
-
-      {isRecording && (
-        <View style={[styles.recordProgressTrack, { top: insets.top + 100 }]}>
-          <View
-            style={[
-              styles.recordProgressFill,
-              {
-                width: `${Math.min(100, (recordSeconds / MAX_VIDEO_SECONDS) * 100)}%`,
-              },
-            ]}
-          />
-        </View>
-      )}
 
       <LinearGradient
         colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.85)']}
@@ -1838,32 +1518,20 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         <View style={styles.shutterArea}>
           <TouchableOpacity
             style={styles.shutterOuter}
-            onPress={handleShutterPress}
+            onPress={takePhoto}
             disabled={isCapturing || !cameraReady}
           >
-            <View
-              style={[
-                styles.shutterInner,
-                mode === 'video' && styles.shutterInnerVideo,
-                isRecording && styles.shutterInnerRecording,
-              ]}
-            />
+            <View style={styles.shutterInner} />
           </TouchableOpacity>
-          {isRecording && mode === 'video' && (
-            <TouchableOpacity
-              style={[styles.pauseButton, { left: SCREEN_WIDTH / 2 - 120 }]}
-              onPress={isPaused ? resumeRecording : pauseRecording}
-            >
-              <Ionicons name={isPaused ? 'play' : 'pause'} size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
         </View>
 
         <TouchableOpacity
           style={styles.flipButton}
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setFacing((prev: CameraType): CameraType => (prev === 'back' ? 'front' : 'back'));
+            setFacing((prev: CameraType): CameraType =>
+              prev === 'back' ? 'front' : 'back'
+            );
           }}
         >
           <Ionicons name="camera-reverse-outline" size={26} color="#FFFFFF" />
@@ -1936,51 +1604,19 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     zIndex: 20,
   },
-  iconButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  iconButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   modeRow: { flexDirection: 'row', gap: 20, alignItems: 'center' },
-  modeText: {
-    color: 'rgba(255,255,255,0.55)',
+  modeTextActive: {
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 1.2,
   },
-  modeTextActive: { color: '#FFFFFF' },
-  recordingBadge: {
-    position: 'absolute',
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    gap: 6,
-    zIndex: 25,
-  },
-  recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#E74C3C',
-  },
-  recordingDotPaused: { backgroundColor: '#F1C40F' },
-  recordingText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  recordProgressTrack: {
-    position: 'absolute',
-    left: 24,
-    right: 24,
-    height: 2,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 1,
-    zIndex: 25,
-    overflow: 'hidden',
-  },
-  recordProgressFill: { height: '100%', backgroundColor: '#E74C3C' },
   bottomBar: {
     position: 'absolute',
     left: 0,
@@ -2004,7 +1640,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.1)',
   },
-  uploadLabel: { color: '#FFFFFF', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
+  uploadLabel: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
   shutterArea: { alignItems: 'center', justifyContent: 'center', position: 'relative' },
   shutterOuter: {
     width: SHUTTER_SIZE,
@@ -2021,25 +1662,6 @@ const styles = StyleSheet.create({
     borderRadius: (SHUTTER_SIZE - 16) / 2,
     backgroundColor: '#FFFFFF',
   },
-  shutterInnerVideo: { backgroundColor: '#E74C3C' },
-  shutterInnerRecording: {
-    width: SHUTTER_SIZE - 32,
-    height: SHUTTER_SIZE - 32,
-    borderRadius: 8,
-    backgroundColor: '#E74C3C',
-  },
-  pauseButton: {
-    position: 'absolute',
-    top: SHUTTER_SIZE / 2 - 22,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   flipButton: { width: 60, alignItems: 'center', gap: 6 },
   flipLabel: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
   captureOverlay: {
@@ -2055,9 +1677,11 @@ const styles = StyleSheet.create({
   },
 
   // Edit
-  editPreviewWrapper: { flex: 1, backgroundColor: '#000', position: 'relative' },
-  editPreviewContainer: { flex: 1, backgroundColor: '#000', position: 'relative' },
-  editVideo: { flex: 1 },
+  editPreviewWrapper: {
+    flex: 1,
+    backgroundColor: '#000',
+    position: 'relative',
+  },
   editImage: { flex: 1, width: '100%' },
   editTopBar: {
     position: 'absolute',
@@ -2082,7 +1706,7 @@ const styles = StyleSheet.create({
   },
   nextButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 
-  // Rail
+  // Tool rail
   toolRailWrapper: {
     position: 'absolute',
     right: 8,
@@ -2107,7 +1731,7 @@ const styles = StyleSheet.create({
   },
   toolRailLabelActive: { color: '#4A7DFF', opacity: 1 },
 
-  // Bottom sheet
+  // Tool sheet
   toolSheet: {
     position: 'absolute',
     left: 0,
@@ -2129,6 +1753,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   toolSheetTitle: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  toolSheetHintSmall: { color: '#6A7A9E', fontSize: 11 },
   toolSheetAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2140,7 +1765,12 @@ const styles = StyleSheet.create({
   },
   toolSheetAddText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   toolSheetHint: { color: '#8A8AAE', fontSize: 12, lineHeight: 16, marginTop: 4 },
-  toolSheetScroll: { alignItems: 'center', gap: 10, paddingVertical: 4, paddingRight: 16 },
+  toolSheetScroll: {
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+    paddingRight: 16,
+  },
   optionLabel: {
     color: '#8A8AAE',
     fontSize: 11,
@@ -2155,8 +1785,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.25)',
   },
-  // ✅ Background color swatch — same size as text color dot but
-  //    has a distinct "none" state with an X icon.
   bgColorDot: {
     width: 32,
     height: 32,
@@ -2234,6 +1862,41 @@ const styles = StyleSheet.create({
   },
   deleteTextBtnText: { color: '#FF4D6D', fontSize: 13, fontWeight: '600' },
 
+  // Edit text row
+  editTextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(74,125,255,0.12)',
+    marginBottom: 10,
+  },
+  editTextRowText: {
+    color: '#4A7DFF',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+
+  // Copy to all
+  copyToAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(46,204,113,0.12)',
+    marginBottom: 10,
+  },
+  copyToAllText: {
+    color: '#2ECC71',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
   // Stickers
   stickerTabs: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   stickerTab: {
@@ -2253,8 +1916,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   stickerEmoji: { fontSize: 28 },
-  emptyTab: { width: '100%', paddingVertical: 30, alignItems: 'center' },
-  emptyTabText: { color: '#8A8AAE', fontSize: 12 },
 
   // Filters
   filterChip: { alignItems: 'center', gap: 6, padding: 4 },
@@ -2271,7 +1932,7 @@ const styles = StyleSheet.create({
   filterChipText: { color: '#8A8AAE', fontSize: 11, fontWeight: '600' },
   filterChipTextActive: { color: '#4A7DFF' },
 
-  // Bottom thumbnail strip
+  // Thumbnail strip
   thumbnailStripWrap: {
     position: 'absolute',
     left: 0,
@@ -2290,19 +1951,17 @@ const styles = StyleSheet.create({
   },
   thumbnailItemActive: { borderColor: '#4A7DFF', borderWidth: 3 },
   thumbnailImage: { width: '100%', height: '100%' },
-  thumbnailBadge: {
+  thumbnailActiveBadge: {
     position: 'absolute',
     bottom: 2,
     right: 2,
-    minWidth: 16,
+    width: 16,
     height: 16,
-    paddingHorizontal: 4,
     borderRadius: 8,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: '#4A7DFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  thumbnailBadgeText: { color: '#FFFFFF', fontSize: 9, fontWeight: '700' },
   thumbnailAdd: {
     width: 56,
     height: 56,
@@ -2313,6 +1972,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
+    gap: 2,
+  },
+  thumbnailAddText: {
+    color: '#8A8AAE',
+    fontSize: 9,
+    fontWeight: '600',
   },
 
   // Text overlay
@@ -2405,64 +2070,4 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-
-  // Trim
-  trimBarWrapper: { position: 'absolute', left: 12, right: 12, bottom: 16, height: 40 },
-  trimTrack: {
-    position: 'absolute',
-    top: 14,
-    left: 0,
-    right: 0,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    overflow: 'hidden',
-  },
-  trimDim: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  trimActive: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(74,125,255,0.25)',
-  },
-  trimPlayhead: {
-    position: 'absolute',
-    top: -2,
-    bottom: -2,
-    width: 2,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 1,
-  },
-  trimHandle: {
-    position: 'absolute',
-    top: 4,
-    width: 16,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  trimHandleBar: {
-    width: 6,
-    height: 20,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 3,
-  },
-  pickCoverBtn: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
-  },
-  pickCoverText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
 });
