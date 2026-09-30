@@ -76,12 +76,6 @@ type TextOverlay = {
   imageIndex: number;
 };
 
-type EditAsset = {
-  images: string[];
-  activeIndex: number;
-  filter: string;
-};
-
 // ============================================================
 // CONSTANTS
 // ============================================================
@@ -554,7 +548,7 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
         </TouchableOpacity>
 
         <Text style={styles.liveEditorTitle} numberOfLines={1}>
-          {overlay.text}
+          {overlay.text || 'New text'}
         </Text>
 
         <TouchableOpacity
@@ -622,7 +616,6 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.liveEditorScroll}
           >
-            {/* Fonts */}
             <Text style={styles.optionLabel}>Font</Text>
             <ScrollView
               horizontal
@@ -651,7 +644,6 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
               ))}
             </ScrollView>
 
-            {/* Size */}
             <Text style={[styles.optionLabel, { marginTop: 12 }]}>Size</Text>
             <View style={styles.chipRow}>
               {FONT_SIZE_PRESETS.map((preset) => (
@@ -675,7 +667,6 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
               ))}
             </View>
 
-            {/* Style toggles */}
             <Text style={[styles.optionLabel, { marginTop: 12 }]}>Style</Text>
             <View style={styles.chipRow}>
               <TouchableOpacity
@@ -1007,8 +998,7 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
               >
                 <Text style={styles.presetChipText}>Headline</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.presetChip}
+              <TouchableOpacity                style={styles.presetChip}
                 onPress={() =>
                   onChange({
                     color: '#FFFFFF',
@@ -1583,101 +1573,113 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             />
           )}
 
-          {visibleOverlays.map((overlay) => (
-            <DraggableText
-              key={overlay.id}
-              overlay={overlay}
-              layerW={layerW}
-              layerH={layerH}
-              isSelected={overlay.id === selectedOverlayId}
-              isEditable={!isEditingText || overlay.id !== editingOverlayId}
-              onSelect={() => setSelectedOverlayId(overlay.id)}
-              onDoubleTap={() => editOverlayText(overlay)}
-              onMove={(x, y) =>
-                setTextOverlays((prev) =>
-                  prev.map((o) => (o.id === overlay.id ? { ...o, x, y } : o))
-                )
-              }
-              onScale={(scale) =>
-                setTextOverlays((prev) =>
-                  prev.map((o) => (o.id === overlay.id ? { ...o, scale } : o))
-                )
-              }
-              onDragToTrash={() => {
-                setTextOverlays((prev) => prev.filter((o) => o.id !== overlay.id));
-                if (selectedOverlayId === overlay.id) setSelectedOverlayId(null);
-                if (editingOverlayId === overlay.id) {
-                  setIsEditingText(false);
-                  setEditingOverlayId(null);
-                }
-              }}
-              onDragStateChange={(dragging, overTrash) => {
-                setIsDraggingOverlay(dragging);
-                setIsOverTrash(overTrash);
-              }}
-            />
-          ))}
+          {/* Render all overlays EXCEPT the one currently being edited.
+              The overlay being edited is replaced by a TextInput rendered
+              at the exact same position with identical styling, so the
+              user sees a single text object transition into edit mode. */}
+          {visibleOverlays.map((overlay) => {
+            if (isEditingText && overlay.id === editingOverlayId) return null;
 
-          {/* LIVE INLINE TEXT INPUT — sits on top of the image */}
-          {isEditingText && (
-            <View style={styles.inlineTextInputWrap} pointerEvents="box-none">
+            return (
+              <DraggableText
+                key={overlay.id}
+                overlay={overlay}
+                layerW={layerW}
+                layerH={layerH}
+                isSelected={overlay.id === selectedOverlayId}
+                isEditable={!isEditingText}
+                onSelect={() => setSelectedOverlayId(overlay.id)}
+                onDoubleTap={() => editOverlayText(overlay)}
+                onMove={(x, y) =>
+                  setTextOverlays((prev) =>
+                    prev.map((o) => (o.id === overlay.id ? { ...o, x, y } : o))
+                  )
+                }
+                onScale={(scale) =>
+                  setTextOverlays((prev) =>
+                    prev.map((o) => (o.id === overlay.id ? { ...o, scale } : o))
+                  )
+                }
+                onDragToTrash={() => {
+                  setTextOverlays((prev) =>
+                    prev.filter((o) => o.id !== overlay.id)
+                  );
+                  if (selectedOverlayId === overlay.id) setSelectedOverlayId(null);
+                  if (editingOverlayId === overlay.id) {
+                    setIsEditingText(false);
+                    setEditingOverlayId(null);
+                  }
+                }}
+                onDragStateChange={(dragging, overTrash) => {
+                  setIsDraggingOverlay(dragging);
+                  setIsOverTrash(overTrash);
+                }}
+              />
+            );
+          })}
+
+          {/* INLINE TEXT INPUT — positioned exactly where the overlay was,
+              with identical styling, so editing feels like it's happening
+              "inside" the text itself. */}
+          {isEditingText && selectedOverlay && (
+            <View
+              style={[
+                styles.inlineTextInputWrap,
+                {
+                  left: selectedOverlay.x * layerW,
+                  top: selectedOverlay.y * layerH,
+                  transform: [
+                    { scale: selectedOverlay.scale },
+                    { rotate: `${selectedOverlay.rotation}deg` },
+                  ],
+                  opacity: selectedOverlay.opacity,
+                },
+              ]}
+              pointerEvents="box-none"
+            >
               <TextInput
                 ref={textInputRef}
                 style={[
                   styles.inlineTextInput,
                   {
-                    color:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.color ??
-                      '#FFFFFF',
-                    fontSize:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.fontSize ??
-                      28,
-                    fontFamily:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.fontFamily ??
-                      'System',
-                    fontWeight:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.fontWeight ??
-                      'bold',
-                    fontStyle:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.fontStyle ??
-                      'normal',
-                    textDecorationLine:
-                      textOverlays.find((o) => o.id === editingOverlayId)
-                        ?.textDecorationLine ?? 'none',
-                    textAlign:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.textAlign ??
-                      'center',
-                    letterSpacing:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.letterSpacing ??
-                      0,
+                    color: selectedOverlay.color,
+                    fontSize: selectedOverlay.fontSize,
+                    fontFamily: selectedOverlay.fontFamily,
+                    fontWeight: selectedOverlay.fontWeight,
+                    fontStyle: selectedOverlay.fontStyle,
+                    textDecorationLine: selectedOverlay.textDecorationLine,
+                    textAlign: selectedOverlay.textAlign,
+                    letterSpacing: selectedOverlay.letterSpacing,
                     lineHeight:
-                      (textOverlays.find((o) => o.id === editingOverlayId)?.fontSize ??
-                        28) *
-                      (textOverlays.find((o) => o.id === editingOverlayId)?.lineHeight ??
-                        1.2),
+                      selectedOverlay.fontSize * selectedOverlay.lineHeight,
                     backgroundColor:
-                      textOverlays.find((o) => o.id === editingOverlayId)
-                        ?.backgroundColor ?? 'transparent',
+                      selectedOverlay.backgroundColor || 'transparent',
+                    borderRadius: selectedOverlay.backgroundColor ? 8 : 0,
+                    paddingHorizontal: selectedOverlay.backgroundColor ? 8 : 6,
+                    paddingVertical: 4,
                     textShadowColor:
-                      textOverlays.find((o) => o.id === editingOverlayId)?.shadow
-                        ? 'rgba(0,0,0,0.65)'
+                      selectedOverlay.shadow &&
+                      !selectedOverlay.backgroundColor
+                        ? selectedOverlay.color === '#000000'
+                          ? 'rgba(255,255,255,0.7)'
+                          : 'rgba(0,0,0,0.65)'
                         : 'transparent',
-                    textShadowRadius: textOverlays.find(
-                      (o) => o.id === editingOverlayId
-                    )?.shadow
-                      ? 6
-                      : 0,
-                    textShadowOffset: textOverlays.find(
-                      (o) => o.id === editingOverlayId
-                    )?.shadow
-                      ? { width: 0, height: 2 }
-                      : { width: 0, height: 0 },
+                    textShadowRadius:
+                      selectedOverlay.shadow &&
+                      !selectedOverlay.backgroundColor
+                        ? 6
+                        : 0,
+                    textShadowOffset:
+                      selectedOverlay.shadow &&
+                      !selectedOverlay.backgroundColor
+                        ? { width: 0, height: 2 }
+                        : { width: 0, height: 0 },
                   },
                 ]}
                 value={draftText}
                 onChangeText={updateDraftText}
                 placeholder="Type something..."
-                placeholderTextColor="rgba(255,255,255,0.5)"
+                placeholderTextColor="rgba(255,255,255,0.4)"
                 multiline
                 autoFocus
                 maxLength={80}
@@ -2525,24 +2527,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
 
-  // Inline text input
+  // Inline text input — positioned at the overlay's x/y, not centered
   inlineTextInputWrap: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
     zIndex: 60,
   },
   inlineTextInput: {
-    minWidth: 100,
-    maxWidth: '95%',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    minWidth: 60,
+    maxWidth: SCREEN_WIDTH - 40,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
 
   // Trash zone

@@ -1,12 +1,11 @@
 // src/features/upload/UploadEditorScreen.tsx
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   TextInput,
   ScrollView,
   Dimensions,
@@ -14,7 +13,6 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
-  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,9 +22,9 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { StyledAlert } from '../feed/components/StyledAlert';
 
-const { height, width: SCREEN_WIDTH } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 
-type PriceType = 'fixed' | 'negotiable' | 'free';
+type PostType = 'fixed' | 'negotiable' | 'free' | 'showcase';
 
 type TextOverlayData = {
   id: string;
@@ -36,8 +34,16 @@ type TextOverlayData = {
   color: string;
   fontSize: number;
   fontFamily?: string;
+  fontWeight?: 'normal' | 'bold';
+  fontStyle?: 'normal' | 'italic';
+  textDecorationLine?: 'none' | 'underline';
   backgroundColor?: string | null;
+  opacity?: number;
+  letterSpacing?: number;
+  lineHeight?: number;
+  shadow?: boolean;
   scale?: number;
+  rotation?: number;
   textAlign?: 'left' | 'center' | 'right';
   imageIndex?: number;
 };
@@ -52,18 +58,6 @@ type EditResult = {
   textOverlays?: TextOverlayData[];
   extraImages?: string[];
   filter?: string;
-};
-
-// ============================================================
-// FILTER PRESET COLOR MAP (must stay in sync with UploadCameraScreen)
-// ============================================================
-const FILTER_TINTS: Record<string, string | null> = {
-  none: null,
-  warm: 'rgba(255,150,80,0.18)',
-  cool: 'rgba(80,150,255,0.18)',
-  vintage: 'rgba(200,150,80,0.22)',
-  mono: 'rgba(120,120,120,0.25)',
-  vivid: 'rgba(255,80,120,0.15)',
 };
 
 // ============================================================
@@ -157,18 +151,10 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
-  const [priceType, setPriceType] = useState<PriceType>('fixed');
+  const [postType, setPostType] = useState<PostType>('fixed');
   const [saving, setSaving] = useState(false);
-  const [carouselIndex, setCarouselIndex] = useState(0);
 
-  // ✅ Preview URL state — initially the local URI, replaced with the
-  //    public URL once the cover/image uploads complete.
-  const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState<string | null>(
-    null
-  );
-
-  // ✅ Cache of already-uploaded URLs so we don't re-upload on Post.
-  //    For video: just the cover. For images: the whole array.
+  // Cache of uploaded URLs so we don't re-upload on Post if already done
   const uploadedImagesRef = useRef<string[] | null>(null);
   const uploadedCoverRef = useRef<string | null>(null);
 
@@ -212,88 +198,9 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
     setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
   }, []);
 
-  const isFree = priceType === 'free';
+  const isFree = postType === 'free';
+  const isShowcase = postType === 'showcase';
   const isVideo = editResult?.type === 'video';
-
-  // Build the list of preview images for the top carousel
-  const previewImages = useMemo<string[]>(() => {
-    if (!editResult) return [];
-
-    if (editResult.type === 'video') {
-      // Prefer the uploaded public URL; fall back to local URI.
-      const uri = uploadedPreviewUrl || editResult.videoThumbnail;
-      return uri ? [uri] : [];
-    }
-
-    // Image posts: show uploaded URLs if available, else local URIs.
-    if (uploadedImagesRef.current && uploadedImagesRef.current.length > 0) {
-      return uploadedImagesRef.current;
-    }
-    return [editResult.uri, ...(editResult.extraImages || [])];
-  }, [editResult, uploadedPreviewUrl]);
-
-  const activeFilterTint = useMemo(() => {
-    if (!editResult?.filter) return null;
-    return FILTER_TINTS[editResult.filter] ?? null;
-  }, [editResult?.filter]);
-
-  // ============================================================
-  // ✅ UPLOAD COVER / IMAGES ON MOUNT so preview shows the real URL
-  // ============================================================
-  useEffect(() => {
-    if (!user?.id || !editResult) return;
-    let cancelled = false;
-
-    (async () => {
-      // ---- Video: upload cover immediately ----
-      if (editResult.type === 'video' && editResult.videoThumbnail) {
-        try {
-          const tName = `videos/${user.id}/${Date.now()}-thumb-${Math.random()
-            .toString(36)
-            .slice(2, 8)}.jpg`;
-          const tRes = await uploadLocalFile(
-            editResult.videoThumbnail,
-            tName,
-            'image/jpeg'
-          );
-          if (!cancelled && tRes.publicUrl) {
-            uploadedCoverRef.current = tRes.publicUrl;
-            setUploadedPreviewUrl(tRes.publicUrl);
-          }
-        } catch (e) {
-          console.warn('Cover upload on mount failed:', e);
-        }
-        return;
-      }
-
-      // ---- Image: upload all images so preview is stable ----
-      if (editResult.type === 'image') {
-        const all = [editResult.uri, ...(editResult.extraImages || [])];
-        const urls: string[] = [];
-        for (const uri of all) {
-          try {
-            const ext = uri.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
-            const contentType = ext === 'png' ? 'image/png' : 'image/jpeg';
-            const fileName = `posts/${user.id}/${Date.now()}-${Math.random()
-              .toString(36)
-              .slice(2, 10)}.${ext}`;
-            const r = await uploadLocalFile(uri, fileName, contentType);
-            if (r.publicUrl) urls.push(r.publicUrl);
-          } catch (e) {
-            console.warn('Image pre-upload failed:', e);
-          }
-        }
-        if (!cancelled && urls.length > 0) {
-          uploadedImagesRef.current = urls;
-          setUploadedPreviewUrl(urls[0]);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, editResult]);
 
   // ============================================================
   // PUBLISH
@@ -329,13 +236,13 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
       });
       return;
     }
-    if (priceType !== 'free') {
+    if (postType === 'fixed' || postType === 'negotiable') {
       const num = parseFloat(price);
       if (!num || num <= 0) {
         showStyledAlert({
           title: 'Price required',
           message:
-            priceType === 'negotiable'
+            postType === 'negotiable'
               ? 'Please enter a starting price.'
               : 'Please enter a valid price.',
           icon: 'alert-circle-outline',
@@ -349,7 +256,7 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
     setSaving(true);
     try {
       // ==========================================================
-      // 1. Cover (video) — reuse if already uploaded on mount
+      // 1. Cover (video) — reuse if already uploaded
       // ==========================================================
       let thumbnailUrl: string | null = uploadedCoverRef.current;
 
@@ -368,12 +275,11 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
         );
         if (tRes.publicUrl) {
           thumbnailUrl = tRes.publicUrl;
-          setUploadedPreviewUrl(tRes.publicUrl);
         }
       }
 
       // ==========================================================
-      // 2. Images — reuse if already uploaded on mount
+      // 2. Images — reuse if already uploaded
       // ==========================================================
       let uploadedImages: string[] = uploadedImagesRef.current || [];
 
@@ -427,14 +333,17 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
       // ==========================================================
       // 4. Specifications
       // ==========================================================
-      const finalPrice = priceType === 'free' ? 0 : parseFloat(price) || 0;
+      const finalPrice =
+        postType === 'free' || postType === 'showcase'
+          ? 0
+          : parseFloat(price) || 0;
 
       const specifications: Record<string, any> = {};
-      if (priceType !== 'free') {
+
+      // Post type / price type
+      specifications.price_type = postType;
+      if (postType === 'fixed' || postType === 'negotiable') {
         specifications.price = finalPrice;
-        specifications.price_type = priceType;
-      } else {
-        specifications.price_type = 'free';
       }
 
       if (
@@ -461,7 +370,7 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
         category: 'Uncategorized',
         images: uploadedImages.length > 0 ? uploadedImages : null,
         price: finalPrice,
-        price_type: priceType,
+        price_type: postType,
         specifications,
         is_active: true,
         user_id: user.id,
@@ -510,7 +419,7 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
     title,
     description,
     price,
-    priceType,
+    postType,
     navigation,
     showStyledAlert,
     hideStyledAlert,
@@ -577,100 +486,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* MEDIA PREVIEW */}
-        <View style={styles.previewBlock}>
-          {isVideo ? (
-            previewImages.length > 0 ? (
-              <>
-                <Image
-                  source={{ uri: previewImages[0] }}
-                  style={styles.previewImage}
-                  resizeMode="cover"
-                />
-                {activeFilterTint && (
-                  <View
-                    style={[
-                      StyleSheet.absoluteFill,
-                      { backgroundColor: activeFilterTint },
-                    ]}
-                    pointerEvents="none"
-                  />
-                )}
-              </>
-            ) : (
-              <View style={styles.previewPlaceholder}>
-                <Ionicons name="videocam" size={48} color="#8A8AAE" />
-                <Text style={styles.previewPlaceholderText}>
-                  Uploading cover…
-                </Text>
-              </View>
-            )
-          ) : previewImages.length > 0 ? (
-            <>
-              <FlatList
-                data={previewImages}
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                keyExtractor={(uri, idx) => `${uri}-${idx}`}
-                onMomentumScrollEnd={(e) => {
-                  const idx = Math.round(
-                    e.nativeEvent.contentOffset.x / SCREEN_WIDTH
-                  );
-                  setCarouselIndex(idx);
-                }}
-                renderItem={({ item }) => (
-                  <Image
-                    source={{ uri: item }}
-                    style={[styles.previewImage, { width: SCREEN_WIDTH }]}
-                    resizeMode="cover"
-                  />
-                )}
-              />
-
-              {activeFilterTint && (
-                <View
-                  style={[
-                    StyleSheet.absoluteFill,
-                    { backgroundColor: activeFilterTint },
-                  ]}
-                  pointerEvents="none"
-                />
-              )}
-
-              {previewImages.length > 1 && (
-                <>
-                  <View style={styles.carouselDots} pointerEvents="none">
-                    {previewImages.map((_, idx) => (
-                      <View
-                        key={idx}
-                        style={[
-                          styles.carouselDot,
-                          idx === carouselIndex && styles.carouselDotActive,
-                        ]}
-                      />
-                    ))}
-                  </View>
-
-                  <View style={styles.carouselCounter} pointerEvents="none">
-                    <Ionicons name="images" size={12} color="#FFFFFF" />
-                    <Text style={styles.carouselCounterText}>
-                      {carouselIndex + 1}/{previewImages.length}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </>
-          ) : (
-            <View style={styles.previewPlaceholder}>
-              <Ionicons name="images-outline" size={48} color="#8A8AAE" />
-              <Text style={styles.previewPlaceholderText}>
-                Uploading images…
-              </Text>
-            </View>
-          )}
-        </View>
-
         {/* TITLE */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Title</Text>
@@ -701,9 +516,9 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
           <Text style={styles.helperText}>{description.length} / 500</Text>
         </View>
 
-        {/* PRICING */}
+        {/* POST TYPE */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Pricing</Text>
+          <Text style={styles.sectionLabel}>Post Type</Text>
           <View style={styles.priceChipRow}>
             {(
               [
@@ -714,9 +529,14 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
                   icon: 'swap-horizontal-outline',
                 },
                 { key: 'free', label: 'Free', icon: 'gift-outline' },
+                {
+                  key: 'showcase',
+                  label: 'Showcase',
+                  icon: 'sparkles-outline',
+                },
               ] as const
             ).map((opt) => {
-              const selected = priceType === opt.key;
+              const selected = postType === opt.key;
               return (
                 <TouchableOpacity
                   key={opt.key}
@@ -726,14 +546,16 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
                   ]}
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setPriceType(opt.key);
-                    if (opt.key === 'free') setPrice('');
+                    setPostType(opt.key);
+                    if (opt.key === 'free' || opt.key === 'showcase') {
+                      setPrice('');
+                    }
                   }}
                   activeOpacity={0.8}
                 >
                   <Ionicons
                     name={opt.icon as any}
-                    size={15}
+                    size={14}
                     color={selected ? '#4A7DFF' : '#8A8AAE'}
                   />
                   <Text
@@ -741,6 +563,7 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
                       styles.priceChipText,
                       selected && styles.priceChipTextActive,
                     ]}
+                    numberOfLines={1}
                   >
                     {opt.label}
                   </Text>
@@ -748,34 +571,60 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
               );
             })}
           </View>
+
+          {/* Hint for showcase */}
+          {isShowcase && (
+            <View style={styles.hintRow}>
+              <Ionicons
+                name="information-circle-outline"
+                size={14}
+                color="#6A7A9E"
+              />
+              <Text style={styles.hintText}>
+                Perfect for sharing ideas, inspiration, or things that aren't for
+                sale.
+              </Text>
+            </View>
+          )}
+          {isFree && (
+            <View style={styles.hintRow}>
+              <Ionicons
+                name="information-circle-outline"
+                size={14}
+                color="#6A7A9E"
+              />
+              <Text style={styles.hintText}>
+                Give it away for free. No price will be shown.
+              </Text>
+            </View>
+          )}
         </View>
 
-        {/* PRICE */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>
-            {priceType === 'negotiable'
-              ? 'Starting Price (UGX)'
-              : 'Price (UGX)'}
-          </Text>
-          <TextInput
-            style={[styles.input, isFree && styles.inputDisabled]}
-            placeholder={
-              isFree
-                ? 'Free — no price needed'
-                : priceType === 'negotiable'
-                ? 'Enter a starting price'
-                : 'Enter your price'
-            }
-            placeholderTextColor="#8A8AAE"
-            keyboardType="numeric"
-            editable={!isFree}
-            value={isFree ? '' : price}
-            onChangeText={(text) => {
-              const digits = text.replace(/[^0-9]/g, '');
-              setPrice(digits);
-            }}
-          />
-        </View>
+        {/* PRICE — only for fixed / negotiable */}
+        {(postType === 'fixed' || postType === 'negotiable') && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>
+              {postType === 'negotiable'
+                ? 'Starting Price (UGX)'
+                : 'Price (UGX)'}
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder={
+                postType === 'negotiable'
+                  ? 'Enter a starting price'
+                  : 'Enter your price'
+              }
+              placeholderTextColor="#8A8AAE"
+              keyboardType="numeric"
+              value={price}
+              onChangeText={(text) => {
+                const digits = text.replace(/[^0-9]/g, '');
+                setPrice(digits);
+              }}
+            />
+          </View>
+        )}
       </ScrollView>
 
       <StyledAlert
@@ -792,7 +641,7 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
 };
 
 // ============================================================
-// STYLES (unchanged from previous)
+// STYLES
 // ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0D0D1A' },
@@ -852,70 +701,7 @@ const styles = StyleSheet.create({
   },
   postButtonDisabled: { backgroundColor: 'rgba(74,125,255,0.4)' },
   postButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  scrollContent: { padding: 16 },
-  previewBlock: {
-    width: '100%',
-    aspectRatio: 9 / 16,
-    maxHeight: height * 0.5,
-    backgroundColor: '#000',
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 20,
-    position: 'relative',
-  },
-  previewImage: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#000',
-  },
-  previewPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#000',
-  },
-  previewPlaceholderText: { color: '#8A8AAE', fontSize: 13 },
-  carouselDots: {
-    position: 'absolute',
-    bottom: 10,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  carouselDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.4)',
-  },
-  carouselDotActive: {
-    backgroundColor: '#FFFFFF',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  carouselCounter: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  carouselCounterText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-  },
+  scrollContent: { padding: 16, paddingTop: 20 },
   section: { marginBottom: 18 },
   sectionLabel: {
     color: '#FFFFFF',
@@ -939,21 +725,21 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     paddingTop: 12,
   },
-  inputDisabled: { opacity: 0.5 },
   helperText: {
     color: '#6A7A9E',
     fontSize: 11,
     marginTop: 6,
     alignSelf: 'flex-end',
   },
-  priceChipRow: { flexDirection: 'row', gap: 8 },
+  priceChipRow: { flexDirection: 'row', gap: 6 },
   priceChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     paddingVertical: 10,
+    paddingHorizontal: 4,
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
@@ -965,11 +751,24 @@ const styles = StyleSheet.create({
   },
   priceChipText: {
     color: '#8A8AAE',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
   },
   priceChipTextActive: {
     color: '#4A7DFF',
     fontWeight: '600',
+  },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 4,
+  },
+  hintText: {
+    color: '#6A7A9E',
+    fontSize: 11,
+    flex: 1,
+    lineHeight: 15,
   },
 });
