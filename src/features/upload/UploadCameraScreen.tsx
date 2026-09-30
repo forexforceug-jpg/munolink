@@ -52,6 +52,8 @@ type ActiveTool =
   | 'sound'
   | null;
 
+type TextAlign = 'left' | 'center' | 'right';
+
 type TextOverlay = {
   id: string;
   text: string;
@@ -60,17 +62,24 @@ type TextOverlay = {
   color: string;
   fontSize: number;
   fontFamily: string;
+  fontWeight: 'normal' | 'bold';
+  fontStyle: 'normal' | 'italic';
+  textDecorationLine: 'none' | 'underline';
   backgroundColor: string | null;
+  opacity: number;
+  letterSpacing: number;
+  lineHeight: number;
+  shadow: boolean;
   scale: number;
   rotation: number;
-  textAlign?: 'left' | 'center' | 'right';
-  imageIndex: number; // Which image this overlay belongs to
+  textAlign: TextAlign;
+  imageIndex: number;
 };
 
 type EditAsset = {
-  images: string[]; // All image URIs (first is primary)
-  activeIndex: number; // Currently displayed image index
-  filter: string; // Global filter
+  images: string[];
+  activeIndex: number;
+  filter: string;
 };
 
 // ============================================================
@@ -79,6 +88,7 @@ type EditAsset = {
 const TEXT_COLORS = [
   '#FFFFFF', '#000000', '#FF4D6D', '#FF6B6B', '#FFD93D', '#FFA502',
   '#2ECC71', '#00D2D3', '#4A7DFF', '#6C5CE7', '#E056FD', '#FD79A8',
+  '#E17055', '#00B894', '#0984E3', '#6C5CE7', '#B2BEC3', '#636E72',
 ];
 
 const TEXT_BG_COLORS: Array<{ key: string; value: string | null; label: string }> = [
@@ -91,10 +101,11 @@ const TEXT_BG_COLORS: Array<{ key: string; value: string | null; label: string }
   { key: 'green', value: 'rgba(46,204,113,0.9)', label: 'Green' },
   { key: 'pink', value: 'rgba(253,121,168,0.9)', label: 'Pink' },
   { key: 'purple', value: 'rgba(108,92,231,0.9)', label: 'Purple' },
+  { key: 'orange', value: 'rgba(255,159,67,0.9)', label: 'Orange' },
 ];
 
 const FONT_OPTIONS: Array<{ key: string; label: string; family: string }> = [
-  { key: 'bold', label: 'Bold', family: 'System' },
+  { key: 'system', label: 'Classic', family: 'System' },
   { key: 'serif', label: 'Serif', family: Platform.OS === 'ios' ? 'Georgia' : 'serif' },
   { key: 'mono', label: 'Mono', family: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
   { key: 'condensed', label: 'Condensed', family: Platform.OS === 'ios' ? 'AvenirNextCondensed-Bold' : 'sans-serif-condensed' },
@@ -107,6 +118,7 @@ const FONT_SIZE_PRESETS = [
   { key: 'M', size: 28 },
   { key: 'L', size: 42 },
   { key: 'XL', size: 56 },
+  { key: 'XXL', size: 72 },
 ];
 
 const STICKER_TABS = ['Emoji', 'Shapes'] as const;
@@ -129,19 +141,51 @@ const FILTER_PRESETS = [
   { key: 'vintage', label: 'Vintage', overlay: 'rgba(200,150,80,0.22)' },
   { key: 'mono', label: 'Mono', overlay: 'rgba(120,120,120,0.25)' },
   { key: 'vivid', label: 'Vivid', overlay: 'rgba(255,80,120,0.15)' },
+  { key: 'sepia', label: 'Sepia', overlay: 'rgba(180,140,90,0.28)' },
+  { key: 'fade', label: 'Fade', overlay: 'rgba(255,255,255,0.22)' },
 ];
 
 const TRASH_ZONE_HEIGHT = 120;
 
 // ============================================================
-// DRAGGABLE TEXT OVERLAY (with rotation support)
+// DEFAULT OVERLAY FACTORY
+// ============================================================
+const makeDefaultOverlay = (
+  text: string,
+  imageIndex: number
+): TextOverlay => ({
+  id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  text: text.slice(0, 80),
+  x: 0.15,
+  y: 0.4,
+  color: '#FFFFFF',
+  fontSize: 28,
+  fontFamily: 'System',
+  fontWeight: 'bold',
+  fontStyle: 'normal',
+  textDecorationLine: 'none',
+  backgroundColor: null,
+  opacity: 1,
+  letterSpacing: 0,
+  lineHeight: 1.2,
+  shadow: true,
+  scale: 1,
+  rotation: 0,
+  textAlign: 'center',
+  imageIndex,
+});
+
+// ============================================================
+// DRAGGABLE TEXT OVERLAY
 // ============================================================
 interface DraggableTextProps {
   overlay: TextOverlay;
   layerW: number;
   layerH: number;
   isSelected: boolean;
+  isEditable: boolean;
   onSelect: () => void;
+  onDoubleTap: () => void;
   onMove: (x: number, y: number) => void;
   onScale: (scale: number) => void;
   onDragToTrash: () => void;
@@ -153,7 +197,9 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   layerW,
   layerH,
   isSelected,
+  isEditable,
   onSelect,
+  onDoubleTap,
   onMove,
   onScale,
   onDragToTrash,
@@ -169,10 +215,14 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   onScaleRef.current = onScale;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onDoubleTapRef = useRef(onDoubleTap);
+  onDoubleTapRef.current = onDoubleTap;
   const onDragToTrashRef = useRef(onDragToTrash);
   onDragToTrashRef.current = onDragToTrash;
   const onDragStateChangeRef = useRef(onDragStateChange);
   onDragStateChangeRef.current = onDragStateChange;
+  const isEditableRef = useRef(isEditable);
+  isEditableRef.current = isEditable;
 
   const gestureStart = useRef({
     posX: 0,
@@ -182,6 +232,8 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   });
   const isOverTrashRef = useRef(false);
   const isPinchingRef = useRef(false);
+  const lastTapRef = useRef(0);
+  const hasMovedRef = useRef(false);
 
   const panResponder = useMemo(
     () =>
@@ -204,12 +256,17 @@ const DraggableText: React.FC<DraggableTextProps> = ({
           };
           isOverTrashRef.current = false;
           isPinchingRef.current = false;
+          hasMovedRef.current = false;
         },
 
         onPanResponderMove: (
           evt: GestureResponderEvent,
           g: PanResponderGestureState
         ) => {
+          if (Math.abs(g.dx) > 3 || Math.abs(g.dy) > 3) {
+            hasMovedRef.current = true;
+          }
+
           const touches = evt.nativeEvent.touches;
 
           if (touches.length >= 2) {
@@ -264,10 +321,28 @@ const DraggableText: React.FC<DraggableTextProps> = ({
 
         onPanResponderRelease: () => {
           onDragStateChangeRef.current(false, false);
+
           if (isOverTrashRef.current) {
             onDragToTrashRef.current();
             isOverTrashRef.current = false;
+            isPinchingRef.current = false;
+            gestureStart.current.pinchDistance = 0;
+            return;
           }
+
+          // Double-tap detection to edit text
+          if (!hasMovedRef.current && !isPinchingRef.current) {
+            const now = Date.now();
+            if (now - lastTapRef.current < 300) {
+              if (isEditableRef.current) {
+                onDoubleTapRef.current();
+              }
+              lastTapRef.current = 0;
+            } else {
+              lastTapRef.current = now;
+            }
+          }
+
           isPinchingRef.current = false;
           gestureStart.current.pinchDistance = 0;
         },
@@ -283,6 +358,7 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   );
 
   const isDarkText = overlay.color === '#000000';
+  const showShadow = overlay.shadow && !overlay.backgroundColor;
 
   return (
     <View
@@ -296,6 +372,7 @@ const DraggableText: React.FC<DraggableTextProps> = ({
           borderRadius: overlay.backgroundColor ? 8 : 0,
           paddingHorizontal: overlay.backgroundColor ? 8 : 6,
           paddingVertical: 4,
+          opacity: overlay.opacity,
         },
         isSelected && styles.textOverlaySelected,
       ]}
@@ -308,13 +385,19 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             color: overlay.color,
             fontSize: overlay.fontSize,
             fontFamily: overlay.fontFamily,
-            textAlign: overlay.textAlign || 'center',
-            textShadowColor: overlay.backgroundColor
-              ? 'transparent'
-              : isDarkText
-              ? 'rgba(255,255,255,0.7)'
-              : 'rgba(0,0,0,0.65)',
-            textShadowRadius: overlay.backgroundColor ? 0 : 6,
+            fontWeight: overlay.fontWeight,
+            fontStyle: overlay.fontStyle,
+            textDecorationLine: overlay.textDecorationLine,
+            letterSpacing: overlay.letterSpacing,
+            lineHeight: overlay.fontSize * overlay.lineHeight,
+            textAlign: overlay.textAlign,
+            textShadowColor: showShadow
+              ? isDarkText
+                ? 'rgba(255,255,255,0.7)'
+                : 'rgba(0,0,0,0.65)'
+              : 'transparent',
+            textShadowRadius: showShadow ? 6 : 0,
+            textShadowOffset: showShadow ? { width: 0, height: 2 } : { width: 0, height: 0 },
           },
         ]}
       >
@@ -385,9 +468,7 @@ const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
             activeOpacity={0.8}
           >
             <Ionicons name="add" size={22} color="#FFFFFF" />
-            <Text style={styles.thumbnailAddText}>
-              {images.length}/10
-            </Text>
+            <Text style={styles.thumbnailAddText}>{images.length}/10</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -432,6 +513,523 @@ const ToolRail: React.FC<{
 };
 
 // ============================================================
+// LIVE TEXT EDITOR PANEL
+// ============================================================
+interface LiveTextEditorProps {
+  overlay: TextOverlay;
+  onChange: (patch: Partial<TextOverlay>) => void;
+  onDone: () => void;
+  onDelete: () => void;
+  onCopyToAll: () => void;
+  showCopyToAll: boolean;
+  bottomInset: number;
+  canDelete: boolean;
+}
+
+const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
+  overlay,
+  onChange,
+  onDone,
+  onDelete,
+  onCopyToAll,
+  showCopyToAll,
+  bottomInset,
+  canDelete,
+}) => {
+  const [activeTab, setActiveTab] = useState<'style' | 'color' | 'bg' | 'effects'>(
+    'style'
+  );
+
+  return (
+    <View style={[styles.liveEditor, { paddingBottom: bottomInset + 10 }]}>
+      {/* Header */}
+      <View style={styles.liveEditorHeader}>
+        <TouchableOpacity
+          onPress={onDelete}
+          disabled={!canDelete}
+          style={[styles.liveEditorIconBtn, !canDelete && { opacity: 0.3 }]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="trash-outline" size={20} color="#FF4D6D" />
+        </TouchableOpacity>
+
+        <Text style={styles.liveEditorTitle} numberOfLines={1}>
+          {overlay.text}
+        </Text>
+
+        <TouchableOpacity
+          onPress={onDone}
+          style={styles.liveEditorDoneBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.liveEditorDoneText}>Done</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Copy to all */}
+      {showCopyToAll && (
+        <TouchableOpacity
+          style={styles.copyToAllBtn}
+          onPress={onCopyToAll}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="copy-outline" size={14} color="#2ECC71" />
+          <Text style={styles.copyToAllText}>Apply to all images</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Tabs */}
+      <View style={styles.liveEditorTabs}>
+        {(
+          [
+            { key: 'style', label: 'Style', icon: 'text-outline' },
+            { key: 'color', label: 'Color', icon: 'color-palette-outline' },
+            { key: 'bg', label: 'Background', icon: 'square-outline' },
+            { key: 'effects', label: 'Effects', icon: 'sparkles-outline' },
+          ] as const
+        ).map((tab) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.liveEditorTab, isActive && styles.liveEditorTabActive]}
+              onPress={() => setActiveTab(tab.key)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={tab.icon as any}
+                size={14}
+                color={isActive ? '#4A7DFF' : '#8A8AAE'}
+              />
+              <Text
+                style={[
+                  styles.liveEditorTabText,
+                  isActive && styles.liveEditorTabTextActive,
+                ]}
+              >
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Content */}
+      <View style={styles.liveEditorContent}>
+        {/* STYLE TAB */}
+        {activeTab === 'style' && (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.liveEditorScroll}
+          >
+            {/* Fonts */}
+            <Text style={styles.optionLabel}>Font</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.toolSheetScroll}
+            >
+              {FONT_OPTIONS.map((f) => (
+                <TouchableOpacity
+                  key={`font-${f.key}`}
+                  style={[
+                    styles.fontChip,
+                    overlay.fontFamily === f.family && styles.fontChipActive,
+                  ]}
+                  onPress={() => onChange({ fontFamily: f.family })}
+                >
+                  <Text
+                    style={[
+                      styles.fontChipText,
+                      { fontFamily: f.family },
+                      overlay.fontFamily === f.family && styles.fontChipTextActive,
+                    ]}
+                  >
+                    {f.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Size */}
+            <Text style={[styles.optionLabel, { marginTop: 12 }]}>Size</Text>
+            <View style={styles.chipRow}>
+              {FONT_SIZE_PRESETS.map((preset) => (
+                <TouchableOpacity
+                  key={`size-${preset.key}`}
+                  style={[
+                    styles.sizeChip,
+                    overlay.fontSize === preset.size && styles.sizeChipActive,
+                  ]}
+                  onPress={() => onChange({ fontSize: preset.size })}
+                >
+                  <Text
+                    style={[
+                      styles.sizeChipText,
+                      overlay.fontSize === preset.size && styles.sizeChipTextActive,
+                    ]}
+                  >
+                    {preset.key}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Style toggles */}
+            <Text style={[styles.optionLabel, { marginTop: 12 }]}>Style</Text>
+            <View style={styles.chipRow}>
+              <TouchableOpacity
+                style={[
+                  styles.styleToggle,
+                  overlay.fontWeight === 'bold' && styles.styleToggleActive,
+                ]}
+                onPress={() =>
+                  onChange({
+                    fontWeight: overlay.fontWeight === 'bold' ? 'normal' : 'bold',
+                  })
+                }
+              >
+                <Text
+                  style={[
+                    styles.styleToggleText,
+                    { fontWeight: 'bold' },
+                    overlay.fontWeight === 'bold' && styles.styleToggleTextActive,
+                  ]}
+                >
+                  B
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.styleToggle,
+                  overlay.fontStyle === 'italic' && styles.styleToggleActive,
+                ]}
+                onPress={() =>
+                  onChange({
+                    fontStyle: overlay.fontStyle === 'italic' ? 'normal' : 'italic',
+                  })
+                }
+              >
+                <Text
+                  style={[
+                    styles.styleToggleText,
+                    { fontStyle: 'italic' },
+                    overlay.fontStyle === 'italic' && styles.styleToggleTextActive,
+                  ]}
+                >
+                  I
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.styleToggle,
+                  overlay.textDecorationLine === 'underline' && styles.styleToggleActive,
+                ]}
+                onPress={() =>
+                  onChange({
+                    textDecorationLine:
+                      overlay.textDecorationLine === 'underline' ? 'none' : 'underline',
+                  })
+                }
+              >
+                <Text
+                  style={[
+                    styles.styleToggleText,
+                    { textDecorationLine: 'underline' },
+                    overlay.textDecorationLine === 'underline' && styles.styleToggleTextActive,
+                  ]}
+                >
+                  U
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.alignGroup}>
+                <TouchableOpacity
+                  style={[
+                    styles.styleToggleSmall,
+                    overlay.textAlign === 'left' && styles.styleToggleActive,
+                  ]}
+                  onPress={() => onChange({ textAlign: 'left' })}
+                >
+                  <Ionicons
+                    name="text-outline"
+                    size={14}
+                    color={overlay.textAlign === 'left' ? '#4A7DFF' : '#FFFFFF'}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.styleToggleSmall,
+                    overlay.textAlign === 'center' && styles.styleToggleActive,
+                  ]}
+                  onPress={() => onChange({ textAlign: 'center' })}
+                >
+                  <Ionicons
+                    name="reorder-two-outline"
+                    size={14}
+                    color={overlay.textAlign === 'center' ? '#4A7DFF' : '#FFFFFF'}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.styleToggleSmall,
+                    overlay.textAlign === 'right' && styles.styleToggleActive,
+                  ]}
+                  onPress={() => onChange({ textAlign: 'right' })}
+                >
+                  <Ionicons
+                    name="text"
+                    size={14}
+                    color={overlay.textAlign === 'right' ? '#4A7DFF' : '#FFFFFF'}
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        )}
+
+        {/* COLOR TAB */}
+        {activeTab === 'color' && (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.liveEditorScroll}
+          >
+            <Text style={styles.optionLabel}>Text color</Text>
+            <View style={styles.colorGrid}>
+              {TEXT_COLORS.map((c) => (
+                <TouchableOpacity
+                  key={`color-${c}`}
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: c },
+                    overlay.color === c && styles.colorDotSelected,
+                  ]}
+                  onPress={() => onChange({ color: c })}
+                />
+              ))}
+            </View>
+
+            <Text style={[styles.optionLabel, { marginTop: 14 }]}>
+              Opacity — {Math.round(overlay.opacity * 100)}%
+            </Text>
+            <View style={styles.sliderRow}>
+              {[0.2, 0.4, 0.6, 0.8, 1].map((o) => (
+                <TouchableOpacity
+                  key={`op-${o}`}
+                  style={[
+                    styles.sliderChip,
+                    Math.abs(overlay.opacity - o) < 0.05 && styles.sliderChipActive,
+                  ]}
+                  onPress={() => onChange({ opacity: o })}
+                >
+                  <Text
+                    style={[
+                      styles.sliderChipText,
+                      Math.abs(overlay.opacity - o) < 0.05 && styles.sliderChipTextActive,
+                    ]}
+                  >
+                    {Math.round(o * 100)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        )}
+
+        {/* BACKGROUND TAB */}
+        {activeTab === 'bg' && (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.liveEditorScroll}
+          >
+            <Text style={styles.optionLabel}>Highlight background</Text>
+            <View style={styles.colorGrid}>
+              {TEXT_BG_COLORS.map((bg) => {
+                const isSelected = (overlay.backgroundColor ?? null) === bg.value;
+                return (
+                  <TouchableOpacity
+                    key={`bg-${bg.key}`}
+                    style={[
+                      styles.bgColorDot,
+                      bg.value === null && styles.bgColorDotNone,
+                      bg.value !== null && { backgroundColor: bg.value },
+                      isSelected && styles.colorDotSelected,
+                    ]}
+                    onPress={() => onChange({ backgroundColor: bg.value })}
+                  >
+                    {bg.value === null && (
+                      <Ionicons name="close" size={14} color="#FFFFFF" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.optionLabel, { marginTop: 14 }]}>
+              Letter spacing — {overlay.letterSpacing.toFixed(1)}
+            </Text>
+            <View style={styles.sliderRow}>
+              {[0, 1, 2, 4, 6].map((ls) => (
+                <TouchableOpacity
+                  key={`ls-${ls}`}
+                  style={[
+                    styles.sliderChip,
+                    Math.abs(overlay.letterSpacing - ls) < 0.5 && styles.sliderChipActive,
+                  ]}
+                  onPress={() => onChange({ letterSpacing: ls })}
+                >
+                  <Text
+                    style={[
+                      styles.sliderChipText,
+                      Math.abs(overlay.letterSpacing - ls) < 0.5 &&
+                        styles.sliderChipTextActive,
+                    ]}
+                  >
+                    {ls}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.optionLabel, { marginTop: 14 }]}>
+              Line height — {overlay.lineHeight.toFixed(1)}x
+            </Text>
+            <View style={styles.sliderRow}>
+              {[0.8, 1.0, 1.2, 1.4, 1.6].map((lh) => (
+                <TouchableOpacity
+                  key={`lh-${lh}`}
+                  style={[
+                    styles.sliderChip,
+                    Math.abs(overlay.lineHeight - lh) < 0.05 && styles.sliderChipActive,
+                  ]}
+                  onPress={() => onChange({ lineHeight: lh })}
+                >
+                  <Text
+                    style={[
+                      styles.sliderChipText,
+                      Math.abs(overlay.lineHeight - lh) < 0.05 &&
+                        styles.sliderChipTextActive,
+                    ]}
+                  >
+                    {lh.toFixed(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        )}
+
+        {/* EFFECTS TAB */}
+        {activeTab === 'effects' && (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.liveEditorScroll}
+          >
+            <Text style={styles.optionLabel}>Shadow</Text>
+            <View style={styles.chipRow}>
+              <TouchableOpacity
+                style={[
+                  styles.effectChip,
+                  overlay.shadow && styles.effectChipActive,
+                ]}
+                onPress={() => onChange({ shadow: !overlay.shadow })}
+              >
+                <Ionicons
+                  name="cloudy-outline"
+                  size={14}
+                  color={overlay.shadow ? '#4A7DFF' : '#FFFFFF'}
+                />
+                <Text
+                  style={[
+                    styles.effectChipText,
+                    overlay.shadow && styles.effectChipTextActive,
+                  ]}
+                >
+                  {overlay.shadow ? 'On' : 'Off'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.optionLabel, { marginTop: 14 }]}>
+              Rotation — {Math.round(overlay.rotation)}°
+            </Text>
+            <View style={styles.sliderRow}>
+              {[-15, -5, 0, 5, 15].map((r) => (
+                <TouchableOpacity
+                  key={`rot-${r}`}
+                  style={[
+                    styles.sliderChip,
+                    Math.abs(overlay.rotation - r) < 2 && styles.sliderChipActive,
+                  ]}
+                  onPress={() => onChange({ rotation: r })}
+                >
+                  <Text
+                    style={[
+                      styles.sliderChipText,
+                      Math.abs(overlay.rotation - r) < 2 && styles.sliderChipTextActive,
+                    ]}
+                  >
+                    {r}°
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[styles.optionLabel, { marginTop: 14 }]}>Quick presets</Text>
+            <View style={styles.chipRow}>
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() =>
+                  onChange({
+                    color: '#FFFFFF',
+                    backgroundColor: 'rgba(0,0,0,0.75)',
+                    fontSize: 28,
+                    fontWeight: 'bold',
+                    shadow: false,
+                  })
+                }
+              >
+                <Text style={styles.presetChipText}>Caption</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() =>
+                  onChange({
+                    color: '#FFD93D',
+                    backgroundColor: null,
+                    fontSize: 56,
+                    fontWeight: 'bold',
+                    shadow: true,
+                  })
+                }
+              >
+                <Text style={styles.presetChipText}>Headline</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() =>
+                  onChange({
+                    color: '#FFFFFF',
+                    backgroundColor: 'rgba(255,77,109,0.9)',
+                    fontSize: 22,
+                    fontWeight: 'bold',
+                    shadow: false,
+                  })
+                }
+              >
+                <Text style={styles.presetChipText}>Tag</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        )}
+      </View>
+    </View>
+  );
+};
+
+// ============================================================
 // MAIN SCREEN
 // ============================================================
 export const UploadCameraScreen = ({ navigation }: any) => {
@@ -458,9 +1056,11 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
 
-  const [showTextInput, setShowTextInput] = useState(false);
+  // Live inline text editor state
+  const [isEditingText, setIsEditingText] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [editingOverlayId, setEditingOverlayId] = useState<string | null>(null);
+  const textInputRef = useRef<TextInput | null>(null);
 
   const [activeStickerTab, setActiveStickerTab] =
     useState<typeof STICKER_TABS[number]>('Emoji');
@@ -534,10 +1134,14 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     }
   }, [isOverTrash, trashPulse]);
 
+  // Auto-request permission on mount (camera opens automatically when granted)
   useEffect(() => {
     (async () => {
-      if (!cameraPermission?.granted) await requestCameraPermission();
+      if (!cameraPermission?.granted && cameraPermission?.canAskAgain !== false) {
+        await requestCameraPermission();
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleCameraReady = useCallback(() => setCameraReady(true), []);
@@ -552,6 +1156,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setSelectedOverlayId(null);
     setActiveTool(null);
     setActiveFilter('none');
+    setIsEditingText(false);
+    setDraftText('');
+    setEditingOverlayId(null);
   }, []);
 
   // ============================================================
@@ -669,20 +1276,20 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             onPress: () => {
               hideStyledAlert();
               setEditImages((prev) => prev.filter((_, i) => i !== index));
-              setTextOverlays((prev) => {
-                const updated = prev
+              setTextOverlays((prev) =>
+                prev
                   .filter((o) => o.imageIndex !== index)
                   .map((o) =>
                     o.imageIndex > index ? { ...o, imageIndex: o.imageIndex - 1 } : o
-                  );
-                return updated;
-              });
+                  )
+              );
               setActiveImageIndex((idx) => {
                 if (index < idx) return idx - 1;
                 if (index === idx) return Math.max(0, idx - 1);
                 return idx;
               });
               setSelectedOverlayId(null);
+              setIsEditingText(false);
             },
           },
         ],
@@ -703,89 +1310,87 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }, []);
 
   // ============================================================
-  // ADD TEXT OVERLAY
+  // TEXT TOOL — opens live inline editor immediately
   // ============================================================
-  const addTextOverlay = useCallback(
-    (content: string) => {
-      const trimmed = content.trim();
-      if (!trimmed) {
-        setShowTextInput(false);
-        setDraftText('');
-        setEditingOverlayId(null);
-        return;
-      }
+  const openTextTool = useCallback(() => {
+    Haptics.selectionAsync();
 
-      if (editingOverlayId) {
-        // Update existing overlay
-        setTextOverlays((prev) =>
-          prev.map((o) =>
-            o.id === editingOverlayId ? { ...o, text: trimmed.slice(0, 60) } : o
-          )
-        );
-        setEditingOverlayId(null);
-      } else {
-        // Create new overlay
-        const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        setTextOverlays((prev) => [
-          ...prev,
-          {
-            id,
-            text: trimmed.slice(0, 60),
-            x: 0.15,
-            y: 0.4,
-            color: '#FFFFFF',
-            fontSize: 28,
-            fontFamily: 'System',
-            backgroundColor: null,
-            scale: 1,
-            rotation: 0,
-            textAlign: 'center',
-            imageIndex: activeImageIndex,
-          },
-        ]);
-        setSelectedOverlayId(id);
-      }
+    // If there is already a selected overlay, open editor for it
+    if (selectedOverlay) {
+      setEditingOverlayId(selectedOverlay.id);
+      setDraftText(selectedOverlay.text);
+      setIsEditingText(true);
+      setTimeout(() => textInputRef.current?.focus(), 80);
+      return;
+    }
 
-      setDraftText('');
-      setShowTextInput(false);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    },
-    [activeImageIndex, editingOverlayId]
-  );
+    // Otherwise create a new empty overlay and open the live editor
+    const newOverlay = makeDefaultOverlay('', activeImageIndex);
+    setTextOverlays((prev) => [...prev, newOverlay]);
+    setSelectedOverlayId(newOverlay.id);
+    setEditingOverlayId(newOverlay.id);
+    setDraftText('');
+    setIsEditingText(true);
+    setActiveTool(null);
+    setTimeout(() => textInputRef.current?.focus(), 80);
+  }, [selectedOverlay, activeImageIndex]);
 
   // ============================================================
-  // EDIT EXISTING TEXT OVERLAY
+  // EDIT EXISTING OVERLAY (double-tap or from rail)
   // ============================================================
   const editOverlayText = useCallback((overlay: TextOverlay) => {
     setEditingOverlayId(overlay.id);
     setDraftText(overlay.text);
-    setShowTextInput(true);
+    setIsEditingText(true);
+    setActiveTool(null);
+    setTimeout(() => textInputRef.current?.focus(), 80);
   }, []);
+
+  // ============================================================
+  // UPDATE DRAFT TEXT (live)
+  // ============================================================
+  const updateDraftText = useCallback(
+    (value: string) => {
+      setDraftText(value);
+      if (editingOverlayId) {
+        setTextOverlays((prev) =>
+          prev.map((o) =>
+            o.id === editingOverlayId ? { ...o, text: value.slice(0, 80) } : o
+          )
+        );
+      }
+    },
+    [editingOverlayId]
+  );
+
+  // ============================================================
+  // FINISH TEXT EDITING
+  // ============================================================
+  const finishTextEditing = useCallback(() => {
+    if (editingOverlayId) {
+      // If text is empty, remove the overlay
+      const overlay = textOverlays.find((o) => o.id === editingOverlayId);
+      if (overlay && !overlay.text.trim()) {
+        setTextOverlays((prev) => prev.filter((o) => o.id !== editingOverlayId));
+        setSelectedOverlayId(null);
+      }
+    }
+    setIsEditingText(false);
+    setEditingOverlayId(null);
+    setDraftText('');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [editingOverlayId, textOverlays]);
 
   // ============================================================
   // ADD STICKER OVERLAY
   // ============================================================
   const addStickerOverlay = useCallback(
     (emoji: string) => {
-      const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      setTextOverlays((prev) => [
-        ...prev,
-        {
-          id,
-          text: emoji,
-          x: 0.4,
-          y: 0.4,
-          color: '#FFFFFF',
-          fontSize: 56,
-          fontFamily: 'System',
-          backgroundColor: null,
-          scale: 1,
-          rotation: 0,
-          textAlign: 'center',
-          imageIndex: activeImageIndex,
-        },
-      ]);
-      setSelectedOverlayId(id);
+      const overlay = makeDefaultOverlay(emoji, activeImageIndex);
+      overlay.fontSize = 56;
+      overlay.shadow = false;
+      setTextOverlays((prev) => [...prev, overlay]);
+      setSelectedOverlayId(overlay.id);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     },
     [activeImageIndex]
@@ -811,6 +1416,8 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     if (!selectedOverlayId) return;
     setTextOverlays((prev) => prev.filter((o) => o.id !== selectedOverlayId));
     setSelectedOverlayId(null);
+    setIsEditingText(false);
+    setEditingOverlayId(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [selectedOverlayId]);
 
@@ -839,6 +1446,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   // HANDLE PREVIEW TAP
   // ============================================================
   const handlePreviewTap = useCallback(() => {
+    if (isEditingText) return; // Don't dismiss while editing
     if (activeTool) {
       Haptics.selectionAsync();
       setActiveTool(null);
@@ -846,7 +1454,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     if (selectedOverlayId) {
       setSelectedOverlayId(null);
     }
-  }, [activeTool, selectedOverlayId]);
+  }, [activeTool, selectedOverlayId, isEditingText]);
 
   // ============================================================
   // DISCARD EDIT
@@ -870,6 +1478,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             setActiveTool(null);
             setActiveFilter('none');
             setActiveImageIndex(0);
+            setIsEditingText(false);
+            setEditingOverlayId(null);
+            setDraftText('');
           },
         },
       ],
@@ -979,7 +1590,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               layerW={layerW}
               layerH={layerH}
               isSelected={overlay.id === selectedOverlayId}
+              isEditable={!isEditingText || overlay.id !== editingOverlayId}
               onSelect={() => setSelectedOverlayId(overlay.id)}
+              onDoubleTap={() => editOverlayText(overlay)}
               onMove={(x, y) =>
                 setTextOverlays((prev) =>
                   prev.map((o) => (o.id === overlay.id ? { ...o, x, y } : o))
@@ -993,6 +1606,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               onDragToTrash={() => {
                 setTextOverlays((prev) => prev.filter((o) => o.id !== overlay.id));
                 if (selectedOverlayId === overlay.id) setSelectedOverlayId(null);
+                if (editingOverlayId === overlay.id) {
+                  setIsEditingText(false);
+                  setEditingOverlayId(null);
+                }
               }}
               onDragStateChange={(dragging, overTrash) => {
                 setIsDraggingOverlay(dragging);
@@ -1000,20 +1617,92 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               }}
             />
           ))}
+
+          {/* LIVE INLINE TEXT INPUT — sits on top of the image */}
+          {isEditingText && (
+            <View style={styles.inlineTextInputWrap} pointerEvents="box-none">
+              <TextInput
+                ref={textInputRef}
+                style={[
+                  styles.inlineTextInput,
+                  {
+                    color:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.color ??
+                      '#FFFFFF',
+                    fontSize:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.fontSize ??
+                      28,
+                    fontFamily:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.fontFamily ??
+                      'System',
+                    fontWeight:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.fontWeight ??
+                      'bold',
+                    fontStyle:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.fontStyle ??
+                      'normal',
+                    textDecorationLine:
+                      textOverlays.find((o) => o.id === editingOverlayId)
+                        ?.textDecorationLine ?? 'none',
+                    textAlign:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.textAlign ??
+                      'center',
+                    letterSpacing:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.letterSpacing ??
+                      0,
+                    lineHeight:
+                      (textOverlays.find((o) => o.id === editingOverlayId)?.fontSize ??
+                        28) *
+                      (textOverlays.find((o) => o.id === editingOverlayId)?.lineHeight ??
+                        1.2),
+                    backgroundColor:
+                      textOverlays.find((o) => o.id === editingOverlayId)
+                        ?.backgroundColor ?? 'transparent',
+                    textShadowColor:
+                      textOverlays.find((o) => o.id === editingOverlayId)?.shadow
+                        ? 'rgba(0,0,0,0.65)'
+                        : 'transparent',
+                    textShadowRadius: textOverlays.find(
+                      (o) => o.id === editingOverlayId
+                    )?.shadow
+                      ? 6
+                      : 0,
+                    textShadowOffset: textOverlays.find(
+                      (o) => o.id === editingOverlayId
+                    )?.shadow
+                      ? { width: 0, height: 2 }
+                      : { width: 0, height: 0 },
+                  },
+                ]}
+                value={draftText}
+                onChangeText={updateDraftText}
+                placeholder="Type something..."
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                multiline
+                autoFocus
+                maxLength={80}
+                blurOnSubmit={false}
+                returnKeyType="done"
+                onSubmitEditing={finishTextEditing}
+              />
+            </View>
+          )}
         </Pressable>
 
-        {/* Image thumbnail strip */}
-        <ThumbnailStrip
-          images={editImages}
-          activeIndex={activeImageIndex}
-          onSelect={(idx) => {
-            setActiveImageIndex(idx);
-            setSelectedOverlayId(null);
-          }}
-          onRemove={handleRemoveImage}
-          onAdd={handleAddMoreImages}
-          bottomInset={insets.bottom}
-        />
+        {/* Image thumbnail strip — hidden while editing text */}
+        {!isEditingText && (
+          <ThumbnailStrip
+            images={editImages}
+            activeIndex={activeImageIndex}
+            onSelect={(idx) => {
+              setActiveImageIndex(idx);
+              setSelectedOverlayId(null);
+            }}
+            onRemove={handleRemoveImage}
+            onAdd={handleAddMoreImages}
+            bottomInset={insets.bottom}
+          />
+        )}
 
         {/* Trash zone (shown while dragging) */}
         {isDraggingOverlay && (
@@ -1063,236 +1752,46 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </TouchableOpacity>
         </View>
 
-        {/* Tool rail */}
-        <View
-          style={[
-            styles.toolRailWrapper,
-            { top: insets.top + 80, bottom: insets.bottom + 100 },
-          ]}
-          pointerEvents="box-none"
-        >
-          <ToolRail
-            activeTool={activeTool}
-            onSelect={(t) => {
-              Haptics.selectionAsync();
-              setActiveTool(t);
-            }}
+        {/* Tool rail — hidden while editing text */}
+        {!isEditingText && (
+          <View
+            style={[
+              styles.toolRailWrapper,
+              { top: insets.top + 80, bottom: insets.bottom + 100 },
+            ]}
+            pointerEvents="box-none"
+          >
+            <ToolRail
+              activeTool={activeTool}
+              onSelect={(t) => {
+                if (t === 'text') {
+                  openTextTool();
+                } else {
+                  Haptics.selectionAsync();
+                  setActiveTool(t);
+                }
+              }}
+            />
+          </View>
+        )}
+
+        {/* LIVE TEXT EDITOR PANEL */}
+        {isEditingText && selectedOverlay && (
+          <LiveTextEditor
+            overlay={selectedOverlay}
+            onChange={updateSelectedOverlay}
+            onDone={finishTextEditing}
+            onDelete={deleteSelectedOverlay}
+            onCopyToAll={copyOverlayToAll}
+            showCopyToAll={editImages.length > 1}
+            bottomInset={insets.bottom}
+            canDelete={!!selectedOverlay.text.trim()}
           />
-        </View>
+        )}
 
-        {/* Tool sheet */}
-        {activeTool && (
+        {/* Tool sheet (stickers / filters / sound) */}
+        {!isEditingText && activeTool && (
           <View style={[styles.toolSheet, { paddingBottom: insets.bottom + 12 }]}>
-            {/* ================ TEXT ================ */}
-            {activeTool === 'text' && (
-              <>
-                <View style={styles.toolSheetHeader}>
-                  <Text style={styles.toolSheetTitle}>Text</Text>
-                  <TouchableOpacity
-                    style={styles.toolSheetAddBtn}
-                    onPress={() => {
-                      setEditingOverlayId(null);
-                      setDraftText('');
-                      setShowTextInput(true);
-                    }}
-                  >
-                    <Ionicons name="add" size={18} color="#FFFFFF" />
-                    <Text style={styles.toolSheetAddText}>Add text</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {selectedOverlay && (
-                  <>
-                    <TouchableOpacity
-                      style={styles.editTextRow}
-                      onPress={() => editOverlayText(selectedOverlay)}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="create-outline" size={16} color="#4A7DFF" />
-                      <Text style={styles.editTextRowText} numberOfLines={1}>
-                        Edit: "{selectedOverlay.text}"
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* Copy to all images */}
-                    {editImages.length > 1 && (
-                      <TouchableOpacity
-                        style={styles.copyToAllBtn}
-                        onPress={copyOverlayToAll}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="copy-outline" size={16} color="#2ECC71" />
-                        <Text style={styles.copyToAllText}>
-                          Apply to all {editImages.length} images
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-
-                    <Text style={styles.optionLabel}>Font</Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.toolSheetScroll}
-                    >
-                      {FONT_OPTIONS.map((f) => (
-                        <TouchableOpacity
-                          key={`font-${f.key}`}
-                          style={[
-                            styles.fontChip,
-                            selectedOverlay.fontFamily === f.family && styles.fontChipActive,
-                          ]}
-                          onPress={() => updateSelectedOverlay({ fontFamily: f.family })}
-                        >
-                          <Text
-                            style={[
-                              styles.fontChipText,
-                              { fontFamily: f.family },
-                              selectedOverlay.fontFamily === f.family && styles.fontChipTextActive,
-                            ]}
-                          >
-                            {f.label}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-
-                    <Text style={[styles.optionLabel, { marginTop: 10 }]}>Color</Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.toolSheetScroll}
-                    >
-                      {TEXT_COLORS.map((c) => (
-                        <TouchableOpacity
-                          key={`color-${c}`}
-                          style={[
-                            styles.colorDot,
-                            { backgroundColor: c },
-                            selectedOverlay.color === c && styles.colorDotSelected,
-                          ]}
-                          onPress={() => updateSelectedOverlay({ color: c })}
-                        />
-                      ))}
-                    </ScrollView>
-
-                    <Text style={[styles.optionLabel, { marginTop: 10 }]}>
-                      Background
-                    </Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.toolSheetScroll}
-                    >
-                      {TEXT_BG_COLORS.map((bg) => {
-                        const isSelected =
-                          (selectedOverlay.backgroundColor ?? null) === bg.value;
-                        return (
-                          <TouchableOpacity
-                            key={`bg-${bg.key}`}
-                            style={[
-                              styles.bgColorDot,
-                              bg.value === null && styles.bgColorDotNone,
-                              bg.value !== null && { backgroundColor: bg.value },
-                              isSelected && styles.colorDotSelected,
-                            ]}
-                            onPress={() =>
-                              updateSelectedOverlay({ backgroundColor: bg.value })
-                            }
-                          >
-                            {bg.value === null && (
-                              <Ionicons name="close" size={14} color="#FFFFFF" />
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-
-                    <View style={styles.inlineRow}>
-                      <View style={styles.inlineGroup}>
-                        {FONT_SIZE_PRESETS.map((preset) => (
-                          <TouchableOpacity
-                            key={`size-${preset.key}`}
-                            style={[
-                              styles.sizeChip,
-                              selectedOverlay.fontSize === preset.size && styles.sizeChipActive,
-                            ]}
-                            onPress={() => updateSelectedOverlay({ fontSize: preset.size })}
-                          >
-                            <Text
-                              style={[
-                                styles.sizeChipText,
-                                selectedOverlay.fontSize === preset.size && styles.sizeChipTextActive,
-                              ]}
-                            >
-                              {preset.key}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-
-                      <View style={styles.inlineGroup}>
-                        <TouchableOpacity
-                          style={[
-                            styles.alignBtn,
-                            selectedOverlay.textAlign === 'left' && styles.alignBtnActive,
-                          ]}
-                          onPress={() => updateSelectedOverlay({ textAlign: 'left' })}
-                        >
-                          <Ionicons
-                            name="text-outline"
-                            size={16}
-                            color={selectedOverlay.textAlign === 'left' ? '#4A7DFF' : '#FFFFFF'}
-                          />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.alignBtn,
-                            (!selectedOverlay.textAlign || selectedOverlay.textAlign === 'center') &&
-                              styles.alignBtnActive,
-                          ]}
-                          onPress={() => updateSelectedOverlay({ textAlign: 'center' })}
-                        >
-                          <Ionicons
-                            name="reorder-two-outline"
-                            size={16}
-                            color={selectedOverlay.textAlign === 'center' ? '#4A7DFF' : '#FFFFFF'}
-                          />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.alignBtn,
-                            selectedOverlay.textAlign === 'right' && styles.alignBtnActive,
-                          ]}
-                          onPress={() => updateSelectedOverlay({ textAlign: 'right' })}
-                        >
-                          <Ionicons
-                            name="text"
-                            size={16}
-                            color={selectedOverlay.textAlign === 'right' ? '#4A7DFF' : '#FFFFFF'}
-                          />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    <TouchableOpacity
-                      style={styles.deleteTextBtn}
-                      onPress={deleteSelectedOverlay}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="trash-outline" size={16} color="#FF4D6D" />
-                      <Text style={styles.deleteTextBtnText}>Delete text</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-
-                {!selectedOverlay && (
-                  <Text style={styles.toolSheetHint}>
-                    Tap "Add text" to add your first overlay. Tap an overlay on the image to select it.
-                  </Text>
-                )}
-              </>
-            )}
-
             {/* ================ STICKERS ================ */}
             {activeTool === 'stickers' && (
               <>
@@ -1303,7 +1802,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                   {STICKER_TABS.map((tab) => (
                     <TouchableOpacity
                       key={tab}
-                      style={[styles.stickerTab, activeStickerTab === tab && styles.stickerTabActive]}
+                      style={[
+                        styles.stickerTab,
+                        activeStickerTab === tab && styles.stickerTabActive,
+                      ]}
                       onPress={() => setActiveStickerTab(tab)}
                     >
                       <Text
@@ -1341,9 +1843,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               <>
                 <View style={styles.toolSheetHeader}>
                   <Text style={styles.toolSheetTitle}>Filters</Text>
-                  <Text style={styles.toolSheetHintSmall}>
-                    Applied to all images
-                  </Text>
+                  <Text style={styles.toolSheetHintSmall}>Applied to all images</Text>
                 </View>
                 <ScrollView
                   horizontal
@@ -1391,62 +1891,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </View>
         )}
 
-        {/* Text input overlay */}
-        {showTextInput && (
-          <Pressable
-            style={styles.textInputOverlay}
-            onPress={() => {
-              setShowTextInput(false);
-              setDraftText('');
-              setEditingOverlayId(null);
-            }}
-          >
-            <Pressable
-              style={styles.textInputWrapperTransparent}
-              onPress={(e) => e.stopPropagation?.()}
-            >
-              <TextInput
-                style={styles.textInputFieldTransparent}
-                placeholder="Add text..."
-                placeholderTextColor="rgba(255,255,255,0.5)"
-                value={draftText}
-                onChangeText={setDraftText}
-                autoFocus
-                maxLength={60}
-                multiline
-                textAlign="center"
-                returnKeyType="done"
-                onSubmitEditing={() => addTextOverlay(draftText)}
-                blurOnSubmit={false}
-              />
-              <View style={styles.textInputActionsTransparent}>
-                <TouchableOpacity
-                  style={styles.textInputCancelTransparent}
-                  onPress={() => {
-                    setShowTextInput(false);
-                    setDraftText('');
-                    setEditingOverlayId(null);
-                  }}
-                >
-                  <Text style={styles.textInputCancelTextTransparent}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.textInputAddTransparent,
-                    !draftText.trim() && styles.textInputAddDisabled,
-                  ]}
-                  disabled={!draftText.trim()}
-                  onPress={() => addTextOverlay(draftText)}
-                >
-                  <Text style={styles.textInputAddTextTransparent}>
-                    {editingOverlayId ? 'Update' : 'Done'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </Pressable>
-          </Pressable>
-        )}
-
         <StyledAlert
           visible={styledAlertConfig.visible}
           title={styledAlertConfig.title}
@@ -1482,10 +1926,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         colors={['rgba(0,0,0,0.75)', 'rgba(0,0,0,0)']}
         style={[styles.topBar, { paddingTop: insets.top + 8 }]}
       >
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => navigation.goBack()}
-        >
+        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
           <Ionicons name="close" size={28} color="#FFFFFF" />
         </TouchableOpacity>
 
@@ -1754,16 +2195,6 @@ const styles = StyleSheet.create({
   },
   toolSheetTitle: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   toolSheetHintSmall: { color: '#6A7A9E', fontSize: 11 },
-  toolSheetAddBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  toolSheetAddText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   toolSheetHint: { color: '#8A8AAE', fontSize: 12, lineHeight: 16, marginTop: 4 },
   toolSheetScroll: {
     alignItems: 'center',
@@ -1778,17 +2209,115 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     letterSpacing: 0.5,
   },
-  colorDot: {
-    width: 32,
-    height: 32,
+
+  // Live text editor
+  liveEditor: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15,15,26,0.98)',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    maxHeight: SCREEN_HEIGHT * 0.52,
+    zIndex: 50,
+  },
+  liveEditorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  liveEditorIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,77,109,0.12)',
+  },
+  liveEditorTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: 8,
+  },
+  liveEditorDoneBtn: {
+    backgroundColor: '#4A7DFF',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
     borderRadius: 16,
+  },
+  liveEditorDoneText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+
+  copyToAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(46,204,113,0.12)',
+    marginBottom: 10,
+  },
+  copyToAllText: {
+    color: '#2ECC71',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  liveEditorTabs: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+    paddingBottom: 10,
+  },
+  liveEditorTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  liveEditorTabActive: { backgroundColor: 'rgba(74,125,255,0.15)' },
+  liveEditorTabText: { color: '#8A8AAE', fontSize: 11, fontWeight: '600' },
+  liveEditorTabTextActive: { color: '#4A7DFF' },
+  liveEditorContent: { maxHeight: SCREEN_HEIGHT * 0.32 },
+  liveEditorScroll: { paddingBottom: 8 },
+
+  // Chips and toggles
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  colorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  colorDot: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.25)',
   },
+  colorDotSelected: { borderColor: '#4A7DFF', borderWidth: 3 },
   bgColorDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.25)',
     justifyContent: 'center',
@@ -1798,10 +2327,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderStyle: 'dashed',
   },
-  colorDotSelected: { borderColor: '#4A7DFF', borderWidth: 3 },
   sizeChip: {
-    width: 38,
-    height: 32,
+    minWidth: 44,
+    height: 34,
+    paddingHorizontal: 10,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1829,16 +2358,10 @@ const styles = StyleSheet.create({
   },
   fontChipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
   fontChipTextActive: { color: '#4A7DFF' },
-  inlineRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  inlineGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  alignBtn: {
-    width: 36,
-    height: 32,
+
+  styleToggle: {
+    width: 40,
+    height: 34,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1846,56 +2369,70 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.15)',
   },
-  alignBtnActive: {
+  styleToggleSmall: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  styleToggleActive: {
     backgroundColor: 'rgba(74,125,255,0.25)',
     borderColor: '#4A7DFF',
   },
-  deleteTextBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  styleToggleText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
+  styleToggleTextActive: { color: '#4A7DFF' },
+  alignGroup: { flexDirection: 'row', gap: 6, marginLeft: 'auto' },
+
+  sliderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  sliderChip: {
+    minWidth: 48,
+    height: 34,
+    paddingHorizontal: 10,
+    borderRadius: 8,
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  sliderChipActive: {
+    backgroundColor: 'rgba(74,125,255,0.25)',
+    borderColor: '#4A7DFF',
+  },
+  sliderChipText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
+  sliderChipTextActive: { color: '#4A7DFF' },
+
+  effectChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 6,
-    marginTop: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,77,109,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
-  deleteTextBtnText: { color: '#FF4D6D', fontSize: 13, fontWeight: '600' },
+  effectChipActive: {
+    backgroundColor: 'rgba(74,125,255,0.25)',
+    borderColor: '#4A7DFF',
+  },
+  effectChipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+  effectChipTextActive: { color: '#4A7DFF' },
 
-  // Edit text row
-  editTextRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  presetChip: {
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(74,125,255,0.12)',
-    marginBottom: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
-  editTextRowText: {
-    color: '#4A7DFF',
-    fontSize: 12,
-    fontWeight: '600',
-    flex: 1,
-  },
-
-  // Copy to all
-  copyToAllBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(46,204,113,0.12)',
-    marginBottom: 10,
-  },
-  copyToAllText: {
-    color: '#2ECC71',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  presetChipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
 
   // Stickers
   stickerTabs: { flexDirection: 'row', gap: 8, marginBottom: 12 },
@@ -1974,22 +2511,37 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
     gap: 2,
   },
-  thumbnailAddText: {
-    color: '#8A8AAE',
-    fontSize: 9,
-    fontWeight: '600',
-  },
+  thumbnailAddText: { color: '#8A8AAE', fontSize: 9, fontWeight: '600' },
 
   // Text overlay
   textOverlayWrapper: { position: 'absolute' },
   textOverlayText: {
     fontWeight: '800',
-    textShadowOffset: { width: 0, height: 2 },
   },
   textOverlaySelected: {
     borderWidth: 1.5,
     borderColor: '#4A7DFF',
     borderStyle: 'dashed',
+    borderRadius: 8,
+  },
+
+  // Inline text input
+  inlineTextInputWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    zIndex: 60,
+  },
+  inlineTextInput: {
+    minWidth: 100,
+    maxWidth: '95%',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 8,
   },
 
@@ -2021,53 +2573,4 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(231,76,60,0.45)',
   },
   trashZoneText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
-
-  // Text input overlay
-  textInputOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    zIndex: 300,
-  },
-  textInputWrapperTransparent: {
-    width: '100%',
-    maxWidth: 400,
-    gap: 8,
-  },
-  textInputFieldTransparent: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: '600',
-    minHeight: 80,
-    textAlignVertical: 'center',
-    paddingVertical: 8,
-  },
-  textInputActionsTransparent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  textInputCancelTransparent: { paddingHorizontal: 12, paddingVertical: 10 },
-  textInputCancelTextTransparent: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  textInputAddTransparent: {
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  textInputAddDisabled: { opacity: 0.4 },
-  textInputAddTextTransparent: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-  },
 });
