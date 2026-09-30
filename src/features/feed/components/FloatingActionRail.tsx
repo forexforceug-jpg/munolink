@@ -8,12 +8,12 @@ import {
   StyleSheet,
   Image,
   Platform,
-  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Opportunity } from '../../../services/feed.service';
 import { useBreakpoint } from '../../../hooks/useBreakpoint';
+import { sharePost } from '../../../utils/share';
 
 let munoLogo: any = null;
 try {
@@ -42,14 +42,12 @@ const ICONS: Record<string, IconName> = {
 interface FloatingActionRailProps {
   opportunity: Opportunity;
   onUserPress: () => void;
-  /** ✅ Toggle like for this post. */
   onLikePress?: (opportunity: Opportunity) => void;
   onReviewsPress: (productId: string) => void;
   onDirectionsPress: (userName: string, area: string) => void;
   onSharePress: (opportunity: Opportunity) => void;
   onAIPress: (opportunity: Opportunity) => void;
   onSavePress?: (opportunity: Opportunity) => void;
-  /** ✅ Initial liked state + count from the parent. */
   isLiked?: boolean;
   likeCount?: number;
   reviewCount?: number;
@@ -58,16 +56,7 @@ interface FloatingActionRailProps {
   isSaved?: boolean;
   distance?: number;
   userAvatar?: string | null;
-  /**
-   * ✅ Optional bottom padding (in px). Pass the tab bar height + safe
-   *    area inset from the parent so the rail doesn't get hidden behind
-   *    the nav bar. Defaults to 0.
-   */
   bottomInset?: number;
-  /**
-   * ✅ Optional shift toward the right edge (in px). A negative value
-   *    moves the rail closer to the screen edge. Defaults to 0.
-   */
   rightShift?: number;
 }
 
@@ -140,7 +129,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     opportunity.id
   );
 
-  // ✅ Optimistic like state
   const [isLikedState, setIsLikedState] = useState(isLiked);
   const [likeCountState, setLikeCountState] = useState(likeCount);
 
@@ -185,8 +173,8 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
           };
           await Haptics.impactAsync(styleMap[style]);
         }
-      } catch (error) {
-        // Silently fail
+      } catch {
+        /* noop */
       }
     },
     []
@@ -202,7 +190,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     [triggerHaptic]
   );
 
-  // ✅ Like toggle — optimistic
   const handleLikePress = useCallback(() => {
     hasInteractedLikeRef.current = true;
     triggerHaptic('medium');
@@ -241,32 +228,25 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   }, [isSavedState, saveCount, triggerHaptic, onSavePress, opportunity]);
 
+  // ✅ NEW: Delegates to sharePost so the URL is the OG-tagged
+  //    Supabase Edge Function URL — WhatsApp/FB then build a preview
+  //    card from the OG tags. Also notifies the parent so it can
+  //    track the share action server-side.
   const handleSharePress = useCallback(async () => {
+    triggerHaptic('light');
+
+    if (onSharePress) {
+      onSharePress(opportunity);
+    }
+
     try {
-      triggerHaptic('light');
-
-      if (onSharePress) {
-        onSharePress(opportunity);
-      }
-
-      const title = opportunity.title || 'Check this out on Munolink';
-      const price = opportunity.price
-        ? `UGX ${opportunity.price.toLocaleString()}`
-        : '';
-      const user = opportunity.userFullName
-        ? `from ${opportunity.userFullName}`
-        : '';
-      const distanceText = opportunity.distance
-        ? `${opportunity.distance.toFixed(1)}km away`
-        : '';
-
-      let message = `🛍️ ${title}`;
-      if (price) message += `\n💰 ${price}`;
-      if (user) message += `\n👤 ${user}`;
-      if (distanceText) message += `\n📍 ${distanceText}`;
-      message += `\n\n📱 Check it out on Munolink: https://munolink.com/post/${opportunity.id}`;
-
-      await Share.share({ message });
+      await sharePost({
+        id: opportunity.id,
+        title: opportunity.title,
+        price: opportunity.price,
+        currency: opportunity.currency,
+        sellerName: opportunity.userFullName,
+      });
     } catch (error) {
       console.error('Share error:', error);
     }
@@ -289,9 +269,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const valueFontSize = isDesktop
     ? DESKTOP_POSITION.VALUE_FONT_SIZE
     : MOBILE_POSITION.VALUE_FONT_SIZE;
-  const labelFontSize = isDesktop
-    ? DESKTOP_POSITION.LABEL_FONT_SIZE
-    : MOBILE_POSITION.LABEL_FONT_SIZE;
   const gap = isDesktop ? DESKTOP_POSITION.GAP : MOBILE_POSITION.GAP;
   const aiGap = isDesktop ? DESKTOP_POSITION.AI_GAP : MOBILE_POSITION.AI_GAP;
 
@@ -299,7 +276,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
 
   const logoSize = isDesktop ? 80 : 70;
 
-  // ---- Distance ----
   const effectiveDistance =
     typeof opportunity.distance === 'number' && opportunity.distance > 0
       ? opportunity.distance
@@ -318,27 +294,23 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   }
 
-  // ---- Review count ----
   const displayReviewCount =
     typeof opportunity.commentCount === 'number' &&
     opportunity.commentCount >= 0
       ? opportunity.commentCount
       : reviewCount || 0;
 
-  // ---- Share count ----
   const displayShareCount =
     typeof opportunity.shareCount === 'number'
       ? opportunity.shareCount
       : shareCount || 0;
 
-  // ---- Save count ----
   const displaySaveCount = hasInteractedSaveRef.current
     ? saveCount
     : typeof opportunity.saveCount === 'number'
     ? opportunity.saveCount
     : saveCount || 0;
 
-  // ---- Like count ----
   const displayLikeCount = hasInteractedLikeRef.current
     ? likeCountState
     : typeof opportunity.likeCount === 'number'
@@ -392,7 +364,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         </View>
       </TouchableOpacity>
 
-      {/* ✅ LIKE BUTTON — above Reviews */}
+      {/* LIKE */}
       <TouchableOpacity
         style={[
           styles.actionButton,
@@ -596,9 +568,6 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     zIndex: 9999,
-    // The rail is anchored by its parent wrapper. Nothing here forces
-    // vertical centering, so paddingBottom pushed by the parent will
-    // shift the whole rail upward cleanly.
   },
   userButton: {
     backgroundColor: 'transparent',

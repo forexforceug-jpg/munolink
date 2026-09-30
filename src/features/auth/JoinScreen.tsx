@@ -322,7 +322,7 @@ const JoinContent = ({ navigation }: any) => {
           colors={['#4A7DFF', '#6B94FF']}
           style={styles.stepIconGradient}
         >
-          <Text style={styles.stepIcon}>📱</Text>
+          <Ionicons name="person-add" size={32} color="#FFFFFF" />
         </LinearGradient>
       </View>
 

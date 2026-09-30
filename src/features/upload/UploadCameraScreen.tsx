@@ -45,13 +45,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // TYPES
 // ============================================================
 type FlashMode = 'off' | 'on' | 'auto';
-type ActiveTool =
-  | 'text'
-  | 'stickers'
-  | 'filters'
-  | 'sound'
-  | null;
-
+type ActiveTool = 'text' | 'stickers' | 'filters' | 'sound' | null;
 type TextAlign = 'left' | 'center' | 'right';
 
 type TextOverlay = {
@@ -74,6 +68,13 @@ type TextOverlay = {
   rotation: number;
   textAlign: TextAlign;
   imageIndex: number;
+};
+
+type ImageRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 };
 
 // ============================================================
@@ -142,6 +143,48 @@ const FILTER_PRESETS = [
 const TRASH_ZONE_HEIGHT = 120;
 
 // ============================================================
+// HELPERS
+// ============================================================
+/**
+ * Compute the visible rectangle of an image that has been
+ * `resizeMode="contain"`'d inside a wrapper of `wrapperW × wrapperH`.
+ * Overlays anchor to *this* rect, not to the wrapper.
+ */
+function computeContainedRect(
+  wrapperW: number,
+  wrapperH: number,
+  naturalW: number | null,
+  naturalH: number | null
+): ImageRect {
+  if (!naturalW || !naturalH || naturalW <= 0 || naturalH <= 0) {
+    return { left: 0, top: 0, width: wrapperW, height: wrapperH };
+  }
+
+  const imageAspect = naturalW / naturalH;
+  const wrapperAspect = wrapperW / wrapperH;
+
+  let drawW: number;
+  let drawH: number;
+
+  if (imageAspect > wrapperAspect) {
+    // Image is wider than the wrapper → constrained by width, letterboxed vertically.
+    drawW = wrapperW;
+    drawH = wrapperW / imageAspect;
+  } else {
+    // Image is taller than the wrapper → constrained by height, pillarboxed horizontally.
+    drawH = wrapperH;
+    drawW = wrapperH * imageAspect;
+  }
+
+  return {
+    left: (wrapperW - drawW) / 2,
+    top: (wrapperH - drawH) / 2,
+    width: drawW,
+    height: drawH,
+  };
+}
+
+// ============================================================
 // DEFAULT OVERLAY FACTORY
 // ============================================================
 const makeDefaultOverlay = (
@@ -171,11 +214,11 @@ const makeDefaultOverlay = (
 
 // ============================================================
 // DRAGGABLE TEXT OVERLAY
+// Positions itself INSIDE the visible image rect, not the wrapper.
 // ============================================================
 interface DraggableTextProps {
   overlay: TextOverlay;
-  layerW: number;
-  layerH: number;
+  imageRect: ImageRect;
   isSelected: boolean;
   isEditable: boolean;
   onSelect: () => void;
@@ -188,8 +231,7 @@ interface DraggableTextProps {
 
 const DraggableText: React.FC<DraggableTextProps> = ({
   overlay,
-  layerW,
-  layerH,
+  imageRect,
   isSelected,
   isEditable,
   onSelect,
@@ -201,8 +243,8 @@ const DraggableText: React.FC<DraggableTextProps> = ({
 }) => {
   const overlayRef = useRef(overlay);
   overlayRef.current = overlay;
-  const layerRef = useRef({ w: layerW, h: layerH });
-  layerRef.current = { w: layerW, h: layerH };
+  const rectRef = useRef(imageRect);
+  rectRef.current = imageRect;
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
   const onScaleRef = useRef(onScale);
@@ -219,8 +261,12 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   isEditableRef.current = isEditable;
 
   const gestureStart = useRef({
-    posX: 0,
-    posY: 0,
+    posInImageX: 0,
+    posInImageY: 0,
+    imageLeft: 0,
+    imageTop: 0,
+    imageW: 0,
+    imageH: 0,
     scale: 1,
     pinchDistance: 0,
   });
@@ -242,9 +288,15 @@ const DraggableText: React.FC<DraggableTextProps> = ({
           onSelectRef.current();
           onDragStateChangeRef.current(true, false);
 
+          const rect = rectRef.current;
+
           gestureStart.current = {
-            posX: overlayRef.current.x * layerRef.current.w,
-            posY: overlayRef.current.y * layerRef.current.h,
+            posInImageX: overlayRef.current.x * rect.width,
+            posInImageY: overlayRef.current.y * rect.height,
+            imageLeft: rect.left,
+            imageTop: rect.top,
+            imageW: rect.width,
+            imageH: rect.height,
             scale: overlayRef.current.scale,
             pinchDistance: 0,
           };
@@ -263,6 +315,7 @@ const DraggableText: React.FC<DraggableTextProps> = ({
 
           const touches = evt.nativeEvent.touches;
 
+          // ---- Pinch to scale ----
           if (touches.length >= 2) {
             isPinchingRef.current = true;
             const [a, b] = touches;
@@ -290,10 +343,14 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             return;
           }
 
-          const nextX = gestureStart.current.posX + g.dx;
-          const nextY = gestureStart.current.posY + g.dy;
+          // ---- Drag ----
+          const start = gestureStart.current;
+          const nextInImageX = start.posInImageX + g.dx;
+          const nextInImageY = start.posInImageY + g.dy;
 
-          const overTrash = nextY < TRASH_ZONE_HEIGHT;
+          // Trash detection uses absolute screen Y of the overlay top edge.
+          const screenY = start.imageTop + nextInImageY;
+          const overTrash = screenY < TRASH_ZONE_HEIGHT;
           if (overTrash !== isOverTrashRef.current) {
             isOverTrashRef.current = overTrash;
             onDragStateChangeRef.current(true, overTrash);
@@ -302,15 +359,13 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             } catch {}
           }
 
-          const maxX = layerRef.current.w - 20;
-          const maxY = layerRef.current.h - 20;
-          const clampedX = Math.max(0, Math.min(maxX, nextX));
-          const clampedY = Math.max(0, Math.min(maxY, nextY));
+          // Clamp to [0, 1] in image-fraction space.
+          const fracX = start.imageW > 0 ? nextInImageX / start.imageW : 0;
+          const fracY = start.imageH > 0 ? nextInImageY / start.imageH : 0;
+          const clampedX = Math.max(0, Math.min(1, fracX));
+          const clampedY = Math.max(0, Math.min(1, fracY));
 
-          onMoveRef.current(
-            clampedX / layerRef.current.w,
-            clampedY / layerRef.current.h
-          );
+          onMoveRef.current(clampedX, clampedY);
         },
 
         onPanResponderRelease: () => {
@@ -324,7 +379,7 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             return;
           }
 
-          // Double-tap detection to edit text
+          // Double-tap to edit text
           if (!hasMovedRef.current && !isPinchingRef.current) {
             const now = Date.now();
             if (now - lastTapRef.current < 300) {
@@ -354,14 +409,18 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   const isDarkText = overlay.color === '#000000';
   const showShadow = overlay.shadow && !overlay.backgroundColor;
 
+  // ✅ Anchor to the visible image rect.
   return (
     <View
       style={[
         styles.textOverlayWrapper,
         {
-          left: overlay.x * layerW,
-          top: overlay.y * layerH,
-          transform: [{ scale: overlay.scale }, { rotate: `${overlay.rotation}deg` }],
+          left: imageRect.left + overlay.x * imageRect.width,
+          top: imageRect.top + overlay.y * imageRect.height,
+          transform: [
+            { scale: overlay.scale },
+            { rotate: `${overlay.rotation}deg` },
+          ],
           backgroundColor: overlay.backgroundColor || 'transparent',
           borderRadius: overlay.backgroundColor ? 8 : 0,
           paddingHorizontal: overlay.backgroundColor ? 8 : 6,
@@ -391,7 +450,9 @@ const DraggableText: React.FC<DraggableTextProps> = ({
                 : 'rgba(0,0,0,0.65)'
               : 'transparent',
             textShadowRadius: showShadow ? 6 : 0,
-            textShadowOffset: showShadow ? { width: 0, height: 2 } : { width: 0, height: 0 },
+            textShadowOffset: showShadow
+              ? { width: 0, height: 2 }
+              : { width: 0, height: 0 },
           },
         ]}
       >
@@ -446,7 +507,11 @@ const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
             delayLongPress={400}
             activeOpacity={0.8}
           >
-            <Image source={{ uri }} style={styles.thumbnailImage} resizeMode="cover" />
+            <Image
+              source={{ uri }}
+              style={styles.thumbnailImage}
+              resizeMode="cover"
+            />
             {idx === activeIndex && (
               <View style={styles.thumbnailActiveBadge}>
                 <Ionicons name="eye" size={10} color="#FFFFFF" />
@@ -495,8 +560,17 @@ const ToolRail: React.FC<{
             onPress={() => onSelect(isActive ? null : t.key)}
             activeOpacity={0.7}
           >
-            <Ionicons name={t.icon} size={22} color={isActive ? '#4A7DFF' : '#FFFFFF'} />
-            <Text style={[styles.toolRailLabel, isActive && styles.toolRailLabelActive]}>
+            <Ionicons
+              name={t.icon}
+              size={22}
+              color={isActive ? '#4A7DFF' : '#FFFFFF'}
+            />
+            <Text
+              style={[
+                styles.toolRailLabel,
+                isActive && styles.toolRailLabelActive,
+              ]}
+            >
               {t.label}
             </Text>
           </TouchableOpacity>
@@ -530,13 +604,12 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
   bottomInset,
   canDelete,
 }) => {
-  const [activeTab, setActiveTab] = useState<'style' | 'color' | 'bg' | 'effects'>(
-    'style'
-  );
+  const [activeTab, setActiveTab] = useState<
+    'style' | 'color' | 'bg' | 'effects'
+  >('style');
 
   return (
     <View style={[styles.liveEditor, { paddingBottom: bottomInset + 10 }]}>
-      {/* Header */}
       <View style={styles.liveEditorHeader}>
         <TouchableOpacity
           onPress={onDelete}
@@ -560,7 +633,6 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Copy to all */}
       {showCopyToAll && (
         <TouchableOpacity
           style={styles.copyToAllBtn}
@@ -572,7 +644,6 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
         </TouchableOpacity>
       )}
 
-      {/* Tabs */}
       <View style={styles.liveEditorTabs}>
         {(
           [
@@ -608,7 +679,6 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
         })}
       </View>
 
-      {/* Content */}
       <View style={styles.liveEditorContent}>
         {/* STYLE TAB */}
         {activeTab === 'style' && (
@@ -635,7 +705,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                     style={[
                       styles.fontChipText,
                       { fontFamily: f.family },
-                      overlay.fontFamily === f.family && styles.fontChipTextActive,
+                      overlay.fontFamily === f.family &&
+                        styles.fontChipTextActive,
                     ]}
                   >
                     {f.label}
@@ -658,7 +729,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   <Text
                     style={[
                       styles.sizeChipText,
-                      overlay.fontSize === preset.size && styles.sizeChipTextActive,
+                      overlay.fontSize === preset.size &&
+                        styles.sizeChipTextActive,
                     ]}
                   >
                     {preset.key}
@@ -676,7 +748,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                 ]}
                 onPress={() =>
                   onChange({
-                    fontWeight: overlay.fontWeight === 'bold' ? 'normal' : 'bold',
+                    fontWeight:
+                      overlay.fontWeight === 'bold' ? 'normal' : 'bold',
                   })
                 }
               >
@@ -684,7 +757,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   style={[
                     styles.styleToggleText,
                     { fontWeight: 'bold' },
-                    overlay.fontWeight === 'bold' && styles.styleToggleTextActive,
+                    overlay.fontWeight === 'bold' &&
+                      styles.styleToggleTextActive,
                   ]}
                 >
                   B
@@ -698,7 +772,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                 ]}
                 onPress={() =>
                   onChange({
-                    fontStyle: overlay.fontStyle === 'italic' ? 'normal' : 'italic',
+                    fontStyle:
+                      overlay.fontStyle === 'italic' ? 'normal' : 'italic',
                   })
                 }
               >
@@ -706,7 +781,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   style={[
                     styles.styleToggleText,
                     { fontStyle: 'italic' },
-                    overlay.fontStyle === 'italic' && styles.styleToggleTextActive,
+                    overlay.fontStyle === 'italic' &&
+                      styles.styleToggleTextActive,
                   ]}
                 >
                   I
@@ -716,12 +792,15 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
               <TouchableOpacity
                 style={[
                   styles.styleToggle,
-                  overlay.textDecorationLine === 'underline' && styles.styleToggleActive,
+                  overlay.textDecorationLine === 'underline' &&
+                    styles.styleToggleActive,
                 ]}
                 onPress={() =>
                   onChange({
                     textDecorationLine:
-                      overlay.textDecorationLine === 'underline' ? 'none' : 'underline',
+                      overlay.textDecorationLine === 'underline'
+                        ? 'none'
+                        : 'underline',
                   })
                 }
               >
@@ -729,7 +808,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   style={[
                     styles.styleToggleText,
                     { textDecorationLine: 'underline' },
-                    overlay.textDecorationLine === 'underline' && styles.styleToggleTextActive,
+                    overlay.textDecorationLine === 'underline' &&
+                      styles.styleToggleTextActive,
                   ]}
                 >
                   U
@@ -760,7 +840,9 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   <Ionicons
                     name="reorder-two-outline"
                     size={14}
-                    color={overlay.textAlign === 'center' ? '#4A7DFF' : '#FFFFFF'}
+                    color={
+                      overlay.textAlign === 'center' ? '#4A7DFF' : '#FFFFFF'
+                    }
                   />
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -811,14 +893,16 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   key={`op-${o}`}
                   style={[
                     styles.sliderChip,
-                    Math.abs(overlay.opacity - o) < 0.05 && styles.sliderChipActive,
+                    Math.abs(overlay.opacity - o) < 0.05 &&
+                      styles.sliderChipActive,
                   ]}
                   onPress={() => onChange({ opacity: o })}
                 >
                   <Text
                     style={[
                       styles.sliderChipText,
-                      Math.abs(overlay.opacity - o) < 0.05 && styles.sliderChipTextActive,
+                      Math.abs(overlay.opacity - o) < 0.05 &&
+                        styles.sliderChipTextActive,
                     ]}
                   >
                     {Math.round(o * 100)}
@@ -838,7 +922,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
             <Text style={styles.optionLabel}>Highlight background</Text>
             <View style={styles.colorGrid}>
               {TEXT_BG_COLORS.map((bg) => {
-                const isSelected = (overlay.backgroundColor ?? null) === bg.value;
+                const isSelected =
+                  (overlay.backgroundColor ?? null) === bg.value;
                 return (
                   <TouchableOpacity
                     key={`bg-${bg.key}`}
@@ -867,7 +952,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   key={`ls-${ls}`}
                   style={[
                     styles.sliderChip,
-                    Math.abs(overlay.letterSpacing - ls) < 0.5 && styles.sliderChipActive,
+                    Math.abs(overlay.letterSpacing - ls) < 0.5 &&
+                      styles.sliderChipActive,
                   ]}
                   onPress={() => onChange({ letterSpacing: ls })}
                 >
@@ -893,7 +979,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   key={`lh-${lh}`}
                   style={[
                     styles.sliderChip,
-                    Math.abs(overlay.lineHeight - lh) < 0.05 && styles.sliderChipActive,
+                    Math.abs(overlay.lineHeight - lh) < 0.05 &&
+                      styles.sliderChipActive,
                   ]}
                   onPress={() => onChange({ lineHeight: lh })}
                 >
@@ -952,14 +1039,16 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
                   key={`rot-${r}`}
                   style={[
                     styles.sliderChip,
-                    Math.abs(overlay.rotation - r) < 2 && styles.sliderChipActive,
+                    Math.abs(overlay.rotation - r) < 2 &&
+                      styles.sliderChipActive,
                   ]}
                   onPress={() => onChange({ rotation: r })}
                 >
                   <Text
                     style={[
                       styles.sliderChipText,
-                      Math.abs(overlay.rotation - r) < 2 && styles.sliderChipTextActive,
+                      Math.abs(overlay.rotation - r) < 2 &&
+                        styles.sliderChipTextActive,
                     ]}
                   >
                     {r}°
@@ -968,7 +1057,9 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
               ))}
             </View>
 
-            <Text style={[styles.optionLabel, { marginTop: 14 }]}>Quick presets</Text>
+            <Text style={[styles.optionLabel, { marginTop: 14 }]}>
+              Quick presets
+            </Text>
             <View style={styles.chipRow}>
               <TouchableOpacity
                 style={styles.presetChip}
@@ -998,7 +1089,8 @@ const LiveTextEditor: React.FC<LiveTextEditorProps> = ({
               >
                 <Text style={styles.presetChipText}>Headline</Text>
               </TouchableOpacity>
-              <TouchableOpacity                style={styles.presetChip}
+              <TouchableOpacity
+                style={styles.presetChip}
                 onPress={() =>
                   onChange({
                     color: '#FFFFFF',
@@ -1044,7 +1136,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   const [isOverTrash, setIsOverTrash] = useState(false);
 
   const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
-  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(
+    null
+  );
 
   // Live inline text editor state
   const [isEditingText, setIsEditingText] = useState(false);
@@ -1055,8 +1149,24 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   const [activeStickerTab, setActiveStickerTab] =
     useState<typeof STICKER_TABS[number]>('Emoji');
 
-  const [layerW, setLayerW] = useState(SCREEN_WIDTH);
-  const [layerH, setLayerH] = useState(SCREEN_HEIGHT);
+  // ---- Layout: wrapper dims + visible image rect ----
+  const [wrapperW, setWrapperW] = useState(SCREEN_WIDTH);
+  const [wrapperH, setWrapperH] = useState(SCREEN_HEIGHT);
+  const [naturalSize, setNaturalSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const imageRect = useMemo<ImageRect>(
+    () =>
+      computeContainedRect(
+        wrapperW,
+        wrapperH,
+        naturalSize?.width ?? null,
+        naturalSize?.height ?? null
+      ),
+    [wrapperW, wrapperH, naturalSize]
+  );
 
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
@@ -1110,13 +1220,26 @@ export const UploadCameraScreen = ({ navigation }: any) => {
 
   const isInEditMode = editImages.length > 0;
 
+  // Reset the natural size whenever we switch to a different image.
+  useEffect(() => {
+    setNaturalSize(null);
+  }, [activeImageIndex, editImages.length]);
+
   // Trash pulse animation
   const trashPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isOverTrash) {
       Animated.sequence([
-        Animated.timing(trashPulse, { toValue: 1, duration: 120, useNativeDriver: true }),
-        Animated.timing(trashPulse, { toValue: 0, duration: 120, useNativeDriver: true }),
+        Animated.timing(trashPulse, {
+          toValue: 1,
+          duration: 120,
+          useNativeDriver: true,
+        }),
+        Animated.timing(trashPulse, {
+          toValue: 0,
+          duration: 120,
+          useNativeDriver: true,
+        }),
       ]).start();
       try {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1124,7 +1247,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     }
   }, [isOverTrash, trashPulse]);
 
-  // Auto-request permission on mount (camera opens automatically when granted)
+  // Auto-request permission on mount
   useEffect(() => {
     (async () => {
       if (!cameraPermission?.granted && cameraPermission?.canAskAgain !== false) {
@@ -1149,6 +1272,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setIsEditingText(false);
     setDraftText('');
     setEditingOverlayId(null);
+    setNaturalSize(null);
   }, []);
 
   // ============================================================
@@ -1270,7 +1394,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                 prev
                   .filter((o) => o.imageIndex !== index)
                   .map((o) =>
-                    o.imageIndex > index ? { ...o, imageIndex: o.imageIndex - 1 } : o
+                    o.imageIndex > index
+                      ? { ...o, imageIndex: o.imageIndex - 1 }
+                      : o
                   )
               );
               setActiveImageIndex((idx) => {
@@ -1305,7 +1431,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   const openTextTool = useCallback(() => {
     Haptics.selectionAsync();
 
-    // If there is already a selected overlay, open editor for it
     if (selectedOverlay) {
       setEditingOverlayId(selectedOverlay.id);
       setDraftText(selectedOverlay.text);
@@ -1314,7 +1439,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
       return;
     }
 
-    // Otherwise create a new empty overlay and open the live editor
     const newOverlay = makeDefaultOverlay('', activeImageIndex);
     setTextOverlays((prev) => [...prev, newOverlay]);
     setSelectedOverlayId(newOverlay.id);
@@ -1326,7 +1450,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }, [selectedOverlay, activeImageIndex]);
 
   // ============================================================
-  // EDIT EXISTING OVERLAY (double-tap or from rail)
+  // EDIT EXISTING OVERLAY
   // ============================================================
   const editOverlayText = useCallback((overlay: TextOverlay) => {
     setEditingOverlayId(overlay.id);
@@ -1358,10 +1482,11 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   // ============================================================
   const finishTextEditing = useCallback(() => {
     if (editingOverlayId) {
-      // If text is empty, remove the overlay
       const overlay = textOverlays.find((o) => o.id === editingOverlayId);
       if (overlay && !overlay.text.trim()) {
-        setTextOverlays((prev) => prev.filter((o) => o.id !== editingOverlayId));
+        setTextOverlays((prev) =>
+          prev.filter((o) => o.id !== editingOverlayId)
+        );
         setSelectedOverlayId(null);
       }
     }
@@ -1436,7 +1561,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   // HANDLE PREVIEW TAP
   // ============================================================
   const handlePreviewTap = useCallback(() => {
-    if (isEditingText) return; // Don't dismiss while editing
+    if (isEditingText) return;
     if (activeTool) {
       Haptics.selectionAsync();
       setActiveTool(null);
@@ -1471,6 +1596,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             setIsEditingText(false);
             setEditingOverlayId(null);
             setDraftText('');
+            setNaturalSize(null);
           },
         },
       ],
@@ -1553,14 +1679,20 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           style={styles.editPreviewWrapper}
           onPress={handlePreviewTap}
           onLayout={(e) => {
-            setLayerW(e.nativeEvent.layout.width);
-            setLayerH(e.nativeEvent.layout.height);
+            setWrapperW(e.nativeEvent.layout.width);
+            setWrapperH(e.nativeEvent.layout.height);
           }}
         >
           <Image
             source={{ uri: editImages[activeImageIndex] }}
             style={styles.editImage}
             resizeMode="contain"
+            onLoad={(e: any) => {
+              const src = e?.nativeEvent?.source;
+              if (src?.width && src?.height) {
+                setNaturalSize({ width: src.width, height: src.height });
+              }
+            }}
           />
 
           {activeFilterObj?.overlay && (
@@ -1573,10 +1705,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             />
           )}
 
-          {/* Render all overlays EXCEPT the one currently being edited.
-              The overlay being edited is replaced by a TextInput rendered
-              at the exact same position with identical styling, so the
-              user sees a single text object transition into edit mode. */}
           {visibleOverlays.map((overlay) => {
             if (isEditingText && overlay.id === editingOverlayId) return null;
 
@@ -1584,8 +1712,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               <DraggableText
                 key={overlay.id}
                 overlay={overlay}
-                layerW={layerW}
-                layerH={layerH}
+                imageRect={imageRect}
                 isSelected={overlay.id === selectedOverlayId}
                 isEditable={!isEditingText}
                 onSelect={() => setSelectedOverlayId(overlay.id)}
@@ -1597,14 +1724,17 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                 }
                 onScale={(scale) =>
                   setTextOverlays((prev) =>
-                    prev.map((o) => (o.id === overlay.id ? { ...o, scale } : o))
+                    prev.map((o) =>
+                      o.id === overlay.id ? { ...o, scale } : o
+                    )
                   )
                 }
                 onDragToTrash={() => {
                   setTextOverlays((prev) =>
                     prev.filter((o) => o.id !== overlay.id)
                   );
-                  if (selectedOverlayId === overlay.id) setSelectedOverlayId(null);
+                  if (selectedOverlayId === overlay.id)
+                    setSelectedOverlayId(null);
                   if (editingOverlayId === overlay.id) {
                     setIsEditingText(false);
                     setEditingOverlayId(null);
@@ -1618,16 +1748,14 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             );
           })}
 
-          {/* INLINE TEXT INPUT — positioned exactly where the overlay was,
-              with identical styling, so editing feels like it's happening
-              "inside" the text itself. */}
+          {/* INLINE TEXT INPUT — anchored to the image rect */}
           {isEditingText && selectedOverlay && (
             <View
               style={[
                 styles.inlineTextInputWrap,
                 {
-                  left: selectedOverlay.x * layerW,
-                  top: selectedOverlay.y * layerH,
+                  left: imageRect.left + selectedOverlay.x * imageRect.width,
+                  top: imageRect.top + selectedOverlay.y * imageRect.height,
                   transform: [
                     { scale: selectedOverlay.scale },
                     { rotate: `${selectedOverlay.rotation}deg` },
@@ -1658,20 +1786,17 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                     paddingHorizontal: selectedOverlay.backgroundColor ? 8 : 6,
                     paddingVertical: 4,
                     textShadowColor:
-                      selectedOverlay.shadow &&
-                      !selectedOverlay.backgroundColor
+                      selectedOverlay.shadow && !selectedOverlay.backgroundColor
                         ? selectedOverlay.color === '#000000'
                           ? 'rgba(255,255,255,0.7)'
                           : 'rgba(0,0,0,0.65)'
                         : 'transparent',
                     textShadowRadius:
-                      selectedOverlay.shadow &&
-                      !selectedOverlay.backgroundColor
+                      selectedOverlay.shadow && !selectedOverlay.backgroundColor
                         ? 6
                         : 0,
                     textShadowOffset:
-                      selectedOverlay.shadow &&
-                      !selectedOverlay.backgroundColor
+                      selectedOverlay.shadow && !selectedOverlay.backgroundColor
                         ? { width: 0, height: 2 }
                         : { width: 0, height: 0 },
                   },
@@ -1706,7 +1831,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           />
         )}
 
-        {/* Trash zone (shown while dragging) */}
+        {/* Trash zone */}
         {isDraggingOverlay && (
           <View
             style={[styles.trashZone, { paddingTop: insets.top + 8 }]}
@@ -1745,7 +1870,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </TouchableOpacity>
           <View style={styles.editTitleRow}>
             <Text style={styles.editTitle}>
-              Edit {editImages.length > 1 ? `${activeImageIndex + 1}/${editImages.length}` : ''}
+              Edit{' '}
+              {editImages.length > 1
+                ? `${activeImageIndex + 1}/${editImages.length}`
+                : ''}
             </Text>
           </View>
           <TouchableOpacity style={styles.nextButton} onPress={goToPostDetails}>
@@ -1754,7 +1882,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </TouchableOpacity>
         </View>
 
-        {/* Tool rail — hidden while editing text */}
+        {/* Tool rail */}
         {!isEditingText && (
           <View
             style={[
@@ -1794,7 +1922,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         {/* Tool sheet (stickers / filters / sound) */}
         {!isEditingText && activeTool && (
           <View style={[styles.toolSheet, { paddingBottom: insets.bottom + 12 }]}>
-            {/* ================ STICKERS ================ */}
+            {/* STICKERS */}
             {activeTool === 'stickers' && (
               <>
                 <View style={styles.toolSheetHeader}>
@@ -1813,7 +1941,8 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                       <Text
                         style={[
                           styles.stickerTabText,
-                          activeStickerTab === tab && styles.stickerTabTextActive,
+                          activeStickerTab === tab &&
+                            styles.stickerTabTextActive,
                         ]}
                       >
                         {tab}
@@ -1825,27 +1954,30 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.stickerGrid}
                 >
-                  {(activeStickerTab === 'Emoji' ? EMOJI_STICKERS : SHAPE_STICKERS).map(
-                    (emoji, idx) => (
-                      <TouchableOpacity
-                        key={`${emoji}-${idx}`}
-                        style={styles.stickerCell}
-                        onPress={() => addStickerOverlay(emoji)}
-                      >
-                        <Text style={styles.stickerEmoji}>{emoji}</Text>
-                      </TouchableOpacity>
-                    )
-                  )}
+                  {(activeStickerTab === 'Emoji'
+                    ? EMOJI_STICKERS
+                    : SHAPE_STICKERS
+                  ).map((emoji, idx) => (
+                    <TouchableOpacity
+                      key={`${emoji}-${idx}`}
+                      style={styles.stickerCell}
+                      onPress={() => addStickerOverlay(emoji)}
+                    >
+                      <Text style={styles.stickerEmoji}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </ScrollView>
               </>
             )}
 
-            {/* ================ FILTERS ================ */}
+            {/* FILTERS */}
             {activeTool === 'filters' && (
               <>
                 <View style={styles.toolSheetHeader}>
                   <Text style={styles.toolSheetTitle}>Filters</Text>
-                  <Text style={styles.toolSheetHintSmall}>Applied to all images</Text>
+                  <Text style={styles.toolSheetHintSmall}>
+                    Applied to all images
+                  </Text>
                 </View>
                 <ScrollView
                   horizontal
@@ -1861,7 +1993,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                       <View
                         style={[
                           styles.filterSwatch,
-                          { backgroundColor: f.overlay ?? 'rgba(255,255,255,0.1)' },
+                          {
+                            backgroundColor:
+                              f.overlay ?? 'rgba(255,255,255,0.1)',
+                          },
                           activeFilter === f.key && styles.filterSwatchActive,
                         ]}
                       >
@@ -1872,7 +2007,8 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                       <Text
                         style={[
                           styles.filterChipText,
-                          activeFilter === f.key && styles.filterChipTextActive,
+                          activeFilter === f.key &&
+                            styles.filterChipTextActive,
                         ]}
                       >
                         {f.label}
@@ -1883,11 +2019,13 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               </>
             )}
 
-            {/* ================ SOUND ================ */}
+            {/* SOUND */}
             {activeTool === 'sound' && (
               <View style={styles.toolSheetHeader}>
                 <Text style={styles.toolSheetTitle}>Sound</Text>
-                <Text style={styles.toolSheetHint}>Sound library coming soon.</Text>
+                <Text style={styles.toolSheetHint}>
+                  Sound library coming soon.
+                </Text>
               </View>
             )}
           </View>
@@ -1928,7 +2066,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         colors={['rgba(0,0,0,0.75)', 'rgba(0,0,0,0)']}
         style={[styles.topBar, { paddingTop: insets.top + 8 }]}
       >
-        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => navigation.goBack()}
+        >
           <Ionicons name="close" size={28} color="#FFFFFF" />
         </TouchableOpacity>
 
@@ -1939,7 +2080,11 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         <TouchableOpacity style={styles.iconButton} onPress={cycleFlash}>
           <Ionicons
             name={
-              flash === 'on' ? 'flash' : flash === 'auto' ? 'flash-outline' : 'flash-off'
+              flash === 'on'
+                ? 'flash'
+                : flash === 'auto'
+                ? 'flash-outline'
+                : 'flash-off'
             }
             size={22}
             color="#FFFFFF"
@@ -1951,7 +2096,10 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.85)']}
         style={[styles.bottomBar, { paddingBottom: insets.bottom + 24 }]}
       >
-        <TouchableOpacity style={styles.uploadButton} onPress={handleGalleryPress}>
+        <TouchableOpacity
+          style={styles.uploadButton}
+          onPress={handleGalleryPress}
+        >
           <View style={styles.uploadPlaceholder}>
             <Ionicons name="images-outline" size={22} color="#FFFFFF" />
           </View>
@@ -2034,7 +2182,6 @@ const styles = StyleSheet.create({
   permSecondary: { marginTop: 12, padding: 8 },
   permSecondaryText: { color: '#8A8AAE', fontSize: 13 },
 
-  // Camera
   topBar: {
     position: 'absolute',
     top: 0,
@@ -2089,7 +2236,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.5,
   },
-  shutterArea: { alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  shutterArea: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
   shutterOuter: {
     width: SHUTTER_SIZE,
     height: SHUTTER_SIZE,
@@ -2119,7 +2270,6 @@ const styles = StyleSheet.create({
     zIndex: 30,
   },
 
-  // Edit
   editPreviewWrapper: {
     flex: 1,
     backgroundColor: '#000',
@@ -2149,7 +2299,6 @@ const styles = StyleSheet.create({
   },
   nextButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 
-  // Tool rail
   toolRailWrapper: {
     position: 'absolute',
     right: 8,
@@ -2174,7 +2323,6 @@ const styles = StyleSheet.create({
   },
   toolRailLabelActive: { color: '#4A7DFF', opacity: 1 },
 
-  // Tool sheet
   toolSheet: {
     position: 'absolute',
     left: 0,
@@ -2212,7 +2360,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // Live text editor
   liveEditor: {
     position: 'absolute',
     left: 0,
@@ -2267,11 +2414,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(46,204,113,0.12)',
     marginBottom: 10,
   },
-  copyToAllText: {
-    color: '#2ECC71',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  copyToAllText: { color: '#2ECC71', fontSize: 12, fontWeight: '600' },
 
   liveEditorTabs: {
     flexDirection: 'row',
@@ -2296,7 +2439,6 @@ const styles = StyleSheet.create({
   liveEditorContent: { maxHeight: SCREEN_HEIGHT * 0.32 },
   liveEditorScroll: { paddingBottom: 8 },
 
-  // Chips and toggles
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -2436,7 +2578,6 @@ const styles = StyleSheet.create({
   },
   presetChipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
 
-  // Stickers
   stickerTabs: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   stickerTab: {
     paddingHorizontal: 14,
@@ -2456,7 +2597,6 @@ const styles = StyleSheet.create({
   },
   stickerEmoji: { fontSize: 28 },
 
-  // Filters
   filterChip: { alignItems: 'center', gap: 6, padding: 4 },
   filterSwatch: {
     width: 56,
@@ -2471,7 +2611,6 @@ const styles = StyleSheet.create({
   filterChipText: { color: '#8A8AAE', fontSize: 11, fontWeight: '600' },
   filterChipTextActive: { color: '#4A7DFF' },
 
-  // Thumbnail strip
   thumbnailStripWrap: {
     position: 'absolute',
     left: 0,
@@ -2515,7 +2654,6 @@ const styles = StyleSheet.create({
   },
   thumbnailAddText: { color: '#8A8AAE', fontSize: 9, fontWeight: '600' },
 
-  // Text overlay
   textOverlayWrapper: { position: 'absolute' },
   textOverlayText: {
     fontWeight: '800',
@@ -2527,7 +2665,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
 
-  // Inline text input — positioned at the overlay's x/y, not centered
   inlineTextInputWrap: {
     position: 'absolute',
     zIndex: 60,
@@ -2539,7 +2676,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
 
-  // Trash zone
   trashZone: {
     position: 'absolute',
     top: 0,

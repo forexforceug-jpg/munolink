@@ -185,7 +185,6 @@ function resolveEffectivePriceType(
     typeof rawPriceType === 'string' &&
     (valid as string[]).includes(rawPriceType)
   ) {
-    // 'showcase' and 'free' never carry a price — do NOT fall through to free.
     if (
       (rawPriceType === 'fixed' || rawPriceType === 'negotiable') &&
       (!rawPrice || rawPrice <= 0)
@@ -206,8 +205,45 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/**
+ * Compute the visible rectangle of an image that has been
+ * `resizeMode="contain"`'d inside a container of `containerW × containerH`.
+ * Overlays anchor to this rect so they stay glued to the actual image.
+ */
+function computeContainedRect(
+  containerW: number,
+  containerH: number,
+  naturalW: number | undefined,
+  naturalH: number | undefined
+): { left: number; top: number; width: number; height: number } {
+  if (!naturalW || !naturalH || naturalW <= 0 || naturalH <= 0) {
+    return { left: 0, top: 0, width: containerW, height: containerH };
+  }
+
+  const imageAspect = naturalW / naturalH;
+  const containerAspect = containerW / containerH;
+
+  let drawW: number;
+  let drawH: number;
+
+  if (imageAspect > containerAspect) {
+    drawW = containerW;
+    drawH = containerW / imageAspect;
+  } else {
+    drawH = containerH;
+    drawW = containerH * imageAspect;
+  }
+
+  return {
+    left: (containerW - drawW) / 2,
+    top: (containerH - drawH) / 2,
+    width: drawW,
+    height: drawH,
+  };
+}
+
 // ============================================================
-// VIDEO PROGRESS BAR — SCRUBBABLE
+// VIDEO PROGRESS BAR
 // ============================================================
 interface VideoProgressBarProps {
   player: any;
@@ -442,7 +478,7 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
 }
 
 // ============================================================
-// VIDEO ITEM COMPONENT
+// VIDEO ITEM
 // ============================================================
 interface VideoItemProps {
   url: string;
@@ -665,14 +701,19 @@ const VideoItem = memo(
 );
 
 // ============================================================
-// MEDIA OVERLAYS — PER-IMAGE AWARE
+// MEDIA OVERLAYS
+// Overlays are positioned relative to the *visible image rect*,
+// not the container, so they stay glued to the actual photo.
 // ============================================================
 interface MediaOverlaysProps {
   width: number;
   height: number;
   filter?: string | null;
   textOverlays?: TextOverlayData[] | null;
-  currentIndex: number;
+  currentIndex?: number;
+  naturalWidth?: number;
+  naturalHeight?: number;
+  isVideo?: boolean;
 }
 
 const MediaOverlays: React.FC<MediaOverlaysProps> = ({
@@ -680,12 +721,13 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
   height,
   filter,
   textOverlays,
-  currentIndex,
+  currentIndex = 0,
+  naturalWidth,
+  naturalHeight,
+  isVideo = false,
 }) => {
   const tint = filter ? FILTER_TINTS[filter] ?? null : null;
 
-  // Only render overlays belonging to the current image.
-  // Overlays with no imageIndex default to image 0 (back-compat).
   const visibleOverlays = useMemo(() => {
     if (!Array.isArray(textOverlays) || textOverlays.length === 0) return [];
     return textOverlays.filter((o) => {
@@ -693,6 +735,16 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
       return idx === currentIndex;
     });
   }, [textOverlays, currentIndex]);
+
+  // For videos we don't have natural size synchronously; the VideoView
+  // already sizes itself with `contentFit="contain"`, so fall back to
+  // the full container rect for video overlays.
+  const rect = useMemo(() => {
+    if (isVideo) {
+      return { left: 0, top: 0, width, height };
+    }
+    return computeContainedRect(width, height, naturalWidth, naturalHeight);
+  }, [width, height, naturalWidth, naturalHeight, isVideo]);
 
   if (!tint && visibleOverlays.length === 0) return null;
 
@@ -702,9 +754,7 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
       pointerEvents="none"
     >
       {tint && (
-        <View
-          style={[StyleSheet.absoluteFill, { backgroundColor: tint }]}
-        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} />
       )}
 
       {visibleOverlays.map((overlay) => {
@@ -717,8 +767,7 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
         const textDecorationLine = overlay.textDecorationLine ?? 'none';
         const letterSpacing = overlay.letterSpacing ?? 0;
         const lineHeightMultiplier = overlay.lineHeight ?? 1.2;
-        const showShadow =
-          overlay.shadow !== false && !overlay.backgroundColor;
+        const showShadow = overlay.shadow !== false && !overlay.backgroundColor;
         const textAlign = overlay.textAlign ?? 'center';
 
         return (
@@ -727,8 +776,9 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
             style={[
               styles.savedOverlayWrapper,
               {
-                left: overlay.x * width,
-                top: overlay.y * height,
+                // ✅ Anchored to the visible image rectangle
+                left: rect.left + overlay.x * rect.width,
+                top: rect.top + overlay.y * rect.height,
                 opacity,
                 transform: [{ scale }, { rotate: `${rotation}deg` }],
                 backgroundColor: overlay.backgroundColor || 'transparent',
@@ -825,6 +875,12 @@ export function SceneRenderer({
     Record<number, boolean>
   >({});
 
+  // ✅ Natural size of the currently-displayed image, used to place overlays
+  const [activeImageNaturalSize, setActiveImageNaturalSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+
   const flatListRef = useRef<FlatList<MediaItem>>(null);
   const sceneStartTimeRef = useRef<number>(Date.now());
   const lastReportedIndexRef = useRef(0);
@@ -873,6 +929,11 @@ export function SceneRenderer({
     8;
 
   const infoPanelBottomOffset = progressBarBottomOffset;
+
+  // Reset the natural size cache whenever the media changes
+  useEffect(() => {
+    setActiveImageNaturalSize(null);
+  }, [currentIndex, resetKey]);
 
   // ============================================================
   // IMAGE PREFETCH
@@ -961,7 +1022,7 @@ export function SceneRenderer({
   );
 
   // ============================================================
-  // NAVIGATION FUNCTIONS
+  // NAVIGATION
   // ============================================================
   const goToNextMedia = useCallback(
     (source: NavigationSource = 'tap') => {
@@ -1134,11 +1195,21 @@ export function SceneRenderer({
             source={{ uri: item.url }}
             style={[styles.mediaImage, { width, height }]}
             resizeMode="contain"
-            onLoad={() =>
+            onLoad={(e: any) => {
+              // ✅ Capture natural size for overlay positioning
+              if (isCurrent) {
+                const src = e?.nativeEvent?.source;
+                if (src?.width && src?.height) {
+                  setActiveImageNaturalSize({
+                    width: src.width,
+                    height: src.height,
+                  });
+                }
+              }
               setMediaLoadingMap((prev) =>
                 prev[index] === false ? prev : { ...prev, [index]: false }
-              )
-            }
+              );
+            }}
             onError={() =>
               setMediaLoadingMap((prev) =>
                 prev[index] === false ? prev : { ...prev, [index]: false }
@@ -1201,14 +1272,15 @@ export function SceneRenderer({
         {...(Platform.OS === 'web' ? { pagingEnabled: true } : {})}
       />
 
-      {/* Per-image overlays — MediaOverlays now only renders the
-          overlays that belong to the currently visible image. */}
       <MediaOverlays
         width={width}
         height={height}
         filter={filter}
         textOverlays={textOverlays}
         currentIndex={currentIndex}
+        naturalWidth={activeImageNaturalSize?.width}
+        naturalHeight={activeImageNaturalSize?.height}
+        isVideo={currentIsVideo}
       />
 
       {totalItems > 1 && !currentIsVideo && isDesktop && (
@@ -1311,7 +1383,9 @@ export function SceneRenderer({
                 { backgroundColor: priceBadge.color + '20' },
               ]}
             >
-              <Text style={[styles.priceBadgeText, { color: priceBadge.color }]}>
+              <Text
+                style={[styles.priceBadgeText, { color: priceBadge.color }]}
+              >
                 {priceBadge.label}
               </Text>
             </View>
@@ -1413,6 +1487,7 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
+
   videoProgressBarContainer: {
     height: 20,
     width: '100%',
