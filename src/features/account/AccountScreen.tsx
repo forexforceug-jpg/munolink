@@ -1,6 +1,6 @@
 // src/features/account/AccountScreen.tsx
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -48,15 +48,21 @@ import { useIsFocused } from '@react-navigation/native';
 const { width, height } = Dimensions.get('window');
 
 const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
-  itemVisiblePercentOverride: 60,
   itemVisiblePercentThreshold: 60,
   minimumViewTime: 100,
 } as ViewabilityConfig;
 
 // ============================================================
-// ✅ Price type
+// ✅ Price type — now includes 'showcase'
 // ============================================================
-type PriceType = 'fixed' | 'negotiable' | 'free';
+type PriceType = 'fixed' | 'negotiable' | 'free' | 'showcase';
+
+const VALID_PRICE_TYPES: PriceType[] = [
+  'fixed',
+  'negotiable',
+  'free',
+  'showcase',
+];
 
 const PRICE_TYPE_OPTIONS: {
   key: PriceType;
@@ -66,6 +72,7 @@ const PRICE_TYPE_OPTIONS: {
   { key: 'fixed', label: 'Fixed', icon: 'pricetag-outline' },
   { key: 'negotiable', label: 'Negotiable', icon: 'swap-horizontal-outline' },
   { key: 'free', label: 'Free', icon: 'gift-outline' },
+  { key: 'showcase', label: 'Showcase', icon: 'sparkles-outline' },
 ];
 
 // ============================================================
@@ -231,6 +238,106 @@ interface CatalogItem {
 }
 
 // ============================================================
+// HELPERS — pricing
+// ============================================================
+const isRemoteUrl = (u: string | null | undefined): boolean =>
+  !!u && (u.startsWith('http://') || u.startsWith('https://'));
+
+const getFromSpecs = (specs: any, key: string): string | null => {
+  if (!specs || typeof specs !== 'object') return null;
+  const value = specs[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  return null;
+};
+
+const getVideoUrl = (item: CatalogItem): string | null => {
+  if (item.video) return item.video;
+  const specVideo = getFromSpecs(item.specifications, 'video');
+  if (specVideo) return specVideo;
+  return null;
+};
+
+const getPriceFromItem = (item: CatalogItem): number | null => {
+  let price = item.price || null;
+  if (!price && item.specifications && typeof item.specifications === 'object') {
+    const specPrice =
+      item.specifications.price || item.specifications.regular_price || null;
+    if (specPrice !== null && specPrice !== undefined) {
+      price =
+        typeof specPrice === 'number'
+          ? specPrice
+          : parseFloat(String(specPrice));
+    }
+  }
+  return price;
+};
+
+// ✅ Robust price_type resolution
+const getPriceTypeFromItem = (item: CatalogItem): PriceType => {
+  // Prefer the DB column, then the JSON spec, then infer.
+  const candidates: unknown[] = [
+    item.price_type,
+    (item as any)?.specifications?.price_type,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && (VALID_PRICE_TYPES as string[]).includes(c)) {
+      return c as PriceType;
+    }
+  }
+  const p = getPriceFromItem(item);
+  return p === 0 || p === null ? 'free' : 'fixed';
+};
+
+function buildOpportunityFromCatalogItem(
+  item: CatalogItem,
+  profile: UserProfile | null,
+  isSaved: boolean
+): Opportunity {
+  const specs = (item as any).specifications || {};
+  const effectivePriceType = getPriceTypeFromItem(item);
+
+  return {
+    id: item.id,
+    title: item.name || 'Post',
+    price: getPriceFromItem(item) || 0,
+    currency: 'UGX',
+    imageUrl: item.images?.[0] || item.video_thumbnail || '',
+    catalogImages: item.images || [],
+    description: item.description || '',
+    rating: null,
+    reviewCount: item.comment_count || 0,
+    area: profile?.location_city || null,
+    userLatitude: profile?.latitude ?? null,
+    userLongitude: profile?.longitude ?? null,
+    userPhone: profile?.phone_number || null,
+    inStock: true,
+    category: item.category || null,
+    type: 'product',
+    createdAt: item.created_at || undefined,
+    userId: profile?.id || '',
+    userFullName: profile?.full_name || 'User',
+    userAvatar: profile?.avatar_url || null,
+    video: item.video || null,
+    video_thumbnail: item.video_thumbnail || null,
+    video_duration: item.video_duration ?? null,
+    video_size: item.video_size ?? null,
+    likeCount: item.like_count || 0,
+    viewCount: item.view_count || 0,
+    shareCount: item.share_count || 0,
+    commentCount: item.comment_count || 0,
+    saveCount: item.saveCount || 0,
+    isSaved,
+    distance: item.distance,
+    specifications: {
+      ...specs,
+      price_type: effectivePriceType,
+    },
+    ...( { price_type: effectivePriceType } as any),
+  };
+}
+
+// ============================================================
 // SUB-COMPONENTS
 // ============================================================
 
@@ -263,15 +370,14 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
   }
 
   const hasVideo = !!item.video || !!item.specifications?.video;
-
-  let price = null;
-  if (item.specifications && typeof item.specifications === 'object') {
-    price =
-      item.specifications.price || item.specifications.regular_price || null;
-  }
-  if (!price && item.price) {
-    price = item.price;
-  }
+  const effectivePriceType = getPriceTypeFromItem(item);
+  const price = getPriceFromItem(item);
+  const hasPrice =
+    effectivePriceType !== 'free' &&
+    effectivePriceType !== 'showcase' &&
+    price !== null &&
+    price !== undefined &&
+    price > 0;
 
   return (
     <Pressable
@@ -311,10 +417,13 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
           <Text style={styles.gridPostTitle} numberOfLines={1}>
             {item.name || 'Untitled'}
           </Text>
-          {price && (
+          {hasPrice && (
             <Text style={styles.gridPostPrice}>
               UGX {Number(price).toLocaleString()}
             </Text>
+          )}
+          {effectivePriceType === 'showcase' && (
+            <Text style={styles.gridPostShowcase}>Showcase</Text>
           )}
         </View>
       </View>
@@ -374,93 +483,6 @@ const GuestAccountScreen = ({ navigation }: any) => {
     </View>
   );
 };
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-const isRemoteUrl = (u: string | null | undefined): boolean =>
-  !!u && (u.startsWith('http://') || u.startsWith('https://'));
-
-const getFromSpecs = (specs: any, key: string): string | null => {
-  if (!specs || typeof specs !== 'object') return null;
-  const value = specs[key];
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number') return String(value);
-  return null;
-};
-
-const getVideoUrl = (item: CatalogItem): string | null => {
-  if (item.video) return item.video;
-  const specVideo = getFromSpecs(item.specifications, 'video');
-  if (specVideo) return specVideo;
-  return null;
-};
-
-const getPriceFromItem = (item: CatalogItem): number | null => {
-  let price = item.price || null;
-  if (!price && item.specifications && typeof item.specifications === 'object') {
-    const specPrice =
-      item.specifications.price || item.specifications.regular_price || null;
-    if (specPrice !== null && specPrice !== undefined) {
-      price =
-        typeof specPrice === 'number'
-          ? specPrice
-          : parseFloat(String(specPrice));
-    }
-  }
-  return price;
-};
-
-// ✅ Extract price_type from item, defaulting sensibly
-const getPriceTypeFromItem = (item: CatalogItem): PriceType => {
-  const t = item.price_type;
-  if (t === 'fixed' || t === 'negotiable' || t === 'free') return t;
-  // Fallback: if price is 0, treat as free
-  const p = getPriceFromItem(item);
-  return p === 0 || p === null ? 'free' : 'fixed';
-};
-
-function buildOpportunityFromCatalogItem(
-  item: CatalogItem,
-  profile: UserProfile | null,
-  isSaved: boolean
-): Opportunity {
-  return {
-    id: item.id,
-    title: item.name || 'Post',
-    price: getPriceFromItem(item) || 0,
-    currency: 'UGX',
-    imageUrl: item.images?.[0] || item.video_thumbnail || '',
-    catalogImages: item.images || [],
-    description: item.description || '',
-    rating: null,
-    reviewCount: item.comment_count || 0,
-    area: profile?.location_city || null,
-    userLatitude: profile?.latitude ?? null,
-    userLongitude: profile?.longitude ?? null,
-    userPhone: profile?.phone_number || null,
-    inStock: true,
-    category: item.category || null,
-    type: 'product',
-    createdAt: item.created_at || undefined,
-    userId: profile?.id || '',
-    userFullName: profile?.full_name || 'User',
-    userAvatar: profile?.avatar_url || null,
-    video: item.video || null,
-    video_thumbnail: item.video_thumbnail || null,
-    video_duration: item.video_duration ?? null,
-    video_size: item.video_size ?? null,
-    likeCount: item.like_count || 0,
-    viewCount: item.view_count || 0,
-    shareCount: item.share_count || 0,
-    commentCount: item.comment_count || 0,
-    saveCount: item.saveCount || 0,
-    isSaved,
-    distance: item.distance,
-    specifications: item.specifications || {},
-  };
-}
 
 const ItemMediaLoadingSpinner: React.FC = () => {
   return (
@@ -533,7 +555,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
     userProfile,
     isSaved
   );
-const specs = (item as any).specifications || {};
+  const specs = (item as any).specifications || {};
+  const effectivePriceType = getPriceTypeFromItem(item);
   const mediaItems: {
     type: 'image' | 'video';
     url: string;
@@ -590,8 +613,8 @@ const specs = (item as any).specifications || {};
         media={mediaItems}
         title={item.name || 'Post'}
         price={price}
-          filter={specs.filter ?? null}
-  textOverlays={specs.text_overlays ?? null}
+        filter={specs.filter ?? null}
+        textOverlays={specs.text_overlays ?? null}
         currency="UGX"
         userName={userProfile?.full_name || 'User'}
         userAvatar={userProfile?.avatar_url || null}
@@ -619,6 +642,7 @@ const specs = (item as any).specifications || {};
         }}
         autoPlay={true}
         autoPlayInterval={5000}
+        priceType={effectivePriceType}
         resetKey={item.id}
         bottomOffset={0}
         isVisible={isVisible}
@@ -631,8 +655,8 @@ const specs = (item as any).specifications || {};
           key={`rail-${item.id}`}
           opportunity={opportunity}
           isLiked={isLiked}
-          bottomInset={80}       // ← pushes the rail up so the AI button clears the tab bar
-    rightShift={-6}
+          bottomInset={80}
+          rightShift={-6}
           likeCount={likeCount}
           onLikePress={() => onLike(item)}
           onUserPress={() => onUserPress(item)}
@@ -664,9 +688,62 @@ const specs = (item as any).specifications || {};
 };
 
 // ============================================================
+// MANUAL GRID (no nested FlatList → no scroll conflicts)
+// ============================================================
+interface PostsGridProps {
+  items: CatalogItem[];
+  onPress: (item: CatalogItem) => void;
+  onLongPress: (item: CatalogItem) => void;
+  isDesktop: boolean;
+}
+
+const PostsGrid: React.FC<PostsGridProps> = ({
+  items,
+  onPress,
+  onLongPress,
+  isDesktop,
+}) => {
+  const NUM_COLUMNS = 3;
+
+  // Pad the last row with empty placeholders so items keep their width
+  const rows: (CatalogItem | null)[][] = useMemo(() => {
+    const out: (CatalogItem | null)[][] = [];
+    for (let i = 0; i < items.length; i += NUM_COLUMNS) {
+      const row: (CatalogItem | null)[] = items.slice(i, i + NUM_COLUMNS);
+      while (row.length < NUM_COLUMNS) row.push(null);
+      out.push(row);
+    }
+    return out;
+  }, [items]);
+
+  return (
+    <View style={styles.postsGridWrap}>
+      {rows.map((row, rowIdx) => (
+        <View key={`row-${rowIdx}`} style={styles.postsGridRow}>
+          {row.map((cell, colIdx) =>
+            cell ? (
+              <GridPostItem
+                key={cell.id}
+                item={cell}
+                onPress={onPress}
+                onLongPress={onLongPress}
+              />
+            ) : (
+              <View
+                key={`spacer-${rowIdx}-${colIdx}`}
+                style={styles.gridPostSpacer}
+              />
+            )
+          )}
+        </View>
+      ))}
+    </View>
+  );
+};
+
+// ============================================================
 // MAIN CONTENT
 // ============================================================
-
 const AccountContent = ({ navigation }: any) => {
   const { user, isAuthenticated, logout } = useAuth();
   const { isDesktop } = useBreakpoint();
@@ -681,8 +758,6 @@ const AccountContent = ({ navigation }: any) => {
   const [showSettings, setShowSettings] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
 
-  // ✅ Edit-post flow still uses the modal — only "create" moved to the
-  //    dedicated UploadCamera → UploadEditor screens.
   const [showEditPost, setShowEditPost] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
 
@@ -692,7 +767,6 @@ const AccountContent = ({ navigation }: any) => {
     {}
   );
 
-  // ✅ Likes
   const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
@@ -710,7 +784,6 @@ const AccountContent = ({ navigation }: any) => {
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
-  // ✅ StyledAlert state
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -765,7 +838,6 @@ const AccountContent = ({ navigation }: any) => {
   const [editCover, setEditCover] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
 
-  // ✅ Post form — used by the EDIT modal only
   const [postForm, setPostForm] = useState({
     name: '',
     description: '',
@@ -1836,7 +1908,7 @@ const AccountContent = ({ navigation }: any) => {
       return;
     }
 
-    if (postForm.priceType !== 'free') {
+    if (postForm.priceType !== 'free' && postForm.priceType !== 'showcase') {
       const priceNum = parseFloat(postForm.price);
       if (!priceNum || priceNum <= 0) {
         showStyledAlert({
@@ -1929,7 +2001,19 @@ const AccountContent = ({ navigation }: any) => {
       }
 
       const finalPrice =
-        postForm.priceType === 'free' ? 0 : parseFloat(postForm.price) || 0;
+        postForm.priceType === 'free' || postForm.priceType === 'showcase'
+          ? 0
+          : parseFloat(postForm.price) || 0;
+
+      const specs: Record<string, any> = {
+        price_type: postForm.priceType,
+      };
+      if (
+        postForm.priceType === 'fixed' ||
+        postForm.priceType === 'negotiable'
+      ) {
+        specs.price = finalPrice;
+      }
 
       const updateData: any = {
         name: postForm.name.trim(),
@@ -1937,10 +2021,7 @@ const AccountContent = ({ navigation }: any) => {
         images: finalImages.length > 0 ? finalImages : null,
         price: finalPrice,
         price_type: postForm.priceType,
-        specifications:
-          postForm.priceType !== 'free'
-            ? { price: finalPrice, price_type: postForm.priceType }
-            : { price_type: 'free' },
+        specifications: specs,
         video: videoUrl,
         video_thumbnail: isRemoteUrl(videoThumbnail) ? videoThumbnail : null,
         video_duration:
@@ -2215,12 +2296,6 @@ const AccountContent = ({ navigation }: any) => {
     }
   };
 
-  // ============================================================
-  // ✅ UPLOAD FLOW ENTRY POINT
-  //    Both the FAB and the empty-state "Create Post" button
-  //    route here. The UploadCamera screen handles capture and
-  //    forwards to UploadEditor for the caption/price form.
-  // ============================================================
   const openUploadCamera = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     navigation.navigate('UploadCamera');
@@ -2421,11 +2496,10 @@ const AccountContent = ({ navigation }: any) => {
     );
   };
 
-  // ============================================================
-  // ✅ EDIT POST MODAL (edit-only — creation uses UploadCamera)
-  // ============================================================
   const renderEditPostModal = () => {
     const isFree = postForm.priceType === 'free';
+    const isShowcase = postForm.priceType === 'showcase';
+    const priceEditable = !isFree && !isShowcase;
 
     return (
       <Modal
@@ -2477,7 +2551,7 @@ const AccountContent = ({ navigation }: any) => {
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.modalBodyContent}
             >
-              {/* ---------- MEDIA ---------- */}
+              {/* MEDIA */}
               <View style={styles.mediaSection}>
                 <Text style={styles.formLabel}>Media</Text>
                 <Text style={styles.formHelperText}>
@@ -2544,7 +2618,7 @@ const AccountContent = ({ navigation }: any) => {
                 </ScrollView>
               </View>
 
-              {/* ---------- VIDEO THUMBNAIL ---------- */}
+              {/* THUMBNAIL */}
               {postForm.video && (
                 <View style={styles.formGroup}>
                   <Text style={styles.formLabel}>Video Thumbnail</Text>
@@ -2588,7 +2662,7 @@ const AccountContent = ({ navigation }: any) => {
                 </View>
               )}
 
-              {/* ---------- TITLE ---------- */}
+              {/* TITLE */}
               <View style={styles.formGroup}>
                 <TextInput
                   style={styles.formInput}
@@ -2602,11 +2676,11 @@ const AccountContent = ({ navigation }: any) => {
                 />
               </View>
 
-              {/* ---------- PRICE TYPE ---------- */}
+              {/* PRICE TYPE */}
               <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Price Type</Text>
+                <Text style={styles.formLabel}>Post Type</Text>
                 <Text style={styles.formHelperText}>
-                  Choose how you want to price this post
+                  Choose how you want to present this post
                 </Text>
 
                 <View style={styles.priceTypeRow}>
@@ -2626,14 +2700,17 @@ const AccountContent = ({ navigation }: any) => {
                           setPostForm((prev) => ({
                             ...prev,
                             priceType: opt.key,
-                            price: opt.key === 'free' ? '' : prev.price,
+                            price:
+                              opt.key === 'free' || opt.key === 'showcase'
+                                ? ''
+                                : prev.price,
                           }));
                         }}
                         activeOpacity={0.75}
                       >
                         <Ionicons
                           name={opt.icon}
-                          size={16}
+                          size={14}
                           color={selected ? '#4A7DFF' : '#8A8AAE'}
                         />
                         <Text
@@ -2641,6 +2718,7 @@ const AccountContent = ({ navigation }: any) => {
                             styles.priceTypeChipText,
                             selected && styles.priceTypeChipTextActive,
                           ]}
+                          numberOfLines={1}
                         >
                           {opt.label}
                         </Text>
@@ -2650,37 +2728,33 @@ const AccountContent = ({ navigation }: any) => {
                 </View>
               </View>
 
-              {/* ---------- PRICE ---------- */}
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>
-                  {postForm.priceType === 'negotiable'
-                    ? 'Starting Price (UGX) *'
-                    : 'Price (UGX) *'}
-                </Text>
-                <TextInput
-                  style={[
-                    styles.formInput,
-                    isFree && styles.formInputDisabled,
-                  ]}
-                  placeholder={
-                    isFree
-                      ? 'Free — no price needed'
-                      : postForm.priceType === 'negotiable'
-                      ? 'Enter a starting price'
-                      : 'Enter your price'
-                  }
-                  placeholderTextColor="#8A8AAE"
-                  keyboardType="numeric"
-                  editable={!isFree}
-                  value={isFree ? '' : postForm.price}
-                  onChangeText={(text) =>
-                    setPostForm((prev) => ({ ...prev, price: text }))
-                  }
-                  returnKeyType="next"
-                />
-              </View>
+              {/* PRICE — only for fixed / negotiable */}
+              {priceEditable && (
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>
+                    {postForm.priceType === 'negotiable'
+                      ? 'Starting Price (UGX) *'
+                      : 'Price (UGX) *'}
+                  </Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder={
+                      postForm.priceType === 'negotiable'
+                        ? 'Enter a starting price'
+                        : 'Enter your price'
+                    }
+                    placeholderTextColor="#8A8AAE"
+                    keyboardType="numeric"
+                    value={postForm.price}
+                    onChangeText={(text) =>
+                      setPostForm((prev) => ({ ...prev, price: text }))
+                    }
+                    returnKeyType="next"
+                  />
+                </View>
+              )}
 
-              {/* ---------- DESCRIPTION ---------- */}
+              {/* DESCRIPTION */}
               <View style={styles.formGroup}>
                 <TextInput
                   style={[styles.formInput, styles.formTextArea]}
@@ -2935,7 +3009,6 @@ const AccountContent = ({ navigation }: any) => {
               isDesktopView={isDesktop}
             />
 
-            {/* ✅ StyledAlert */}
             <StyledAlert
               visible={styledAlertConfig.visible}
               title={styledAlertConfig.title}
@@ -2981,6 +3054,7 @@ const AccountContent = ({ navigation }: any) => {
           />
         }
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={true}
       >
         <View style={styles.profileHeader}>
           <TouchableOpacity
@@ -3066,7 +3140,6 @@ const AccountContent = ({ navigation }: any) => {
             <Text style={styles.emptyPostsSubtext}>
               Share your first post with the community
             </Text>
-            {/* ✅ Routes to UploadCamera now */}
             <TouchableOpacity
               style={styles.createPostButton}
               onPress={openUploadCamera}
@@ -3075,26 +3148,20 @@ const AccountContent = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
         ) : (
-          <FlatList
-            data={catalogItems}
-            renderItem={({ item }) => (
-              <GridPostItem
-                item={item}
-                onPress={handleItemPress}
-                onLongPress={showPostActions}
-              />
-            )}
-            keyExtractor={(item) => item.id}
-            numColumns={3}
-            scrollEnabled={false}
-            contentContainerStyle={styles.postsGrid}
+          // ✅ Manual grid — no nested FlatList, so outer ScrollView
+          //    gets every touch. Fixes the "can't scroll when grid is
+          //    taller than the screen" bug.
+          <PostsGrid
+            items={catalogItems}
+            onPress={handleItemPress}
+            onLongPress={showPostActions}
+            isDesktop={isDesktop}
           />
         )}
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* ✅ FAB routes to UploadCamera now */}
       <TouchableOpacity
         style={[styles.fab, { bottom: 90 }]}
         onPress={openUploadCamera}
@@ -3110,13 +3177,11 @@ const AccountContent = ({ navigation }: any) => {
         </LinearGradient>
       </TouchableOpacity>
 
-      {/* ✅ Only the edit modal remains in AccountScreen */}
       {renderEditPostModal()}
 
       {renderEditProfileModal()}
       {renderSettingsModal()}
 
-      {/* ✅ StyledAlert (grid view) */}
       <StyledAlert
         visible={styledAlertConfig.visible}
         title={styledAlertConfig.title}
@@ -3146,6 +3211,9 @@ export const AccountScreen = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0D0D1A' },
   desktopContainer: { padding: 24 },
@@ -3299,8 +3367,26 @@ const styles = StyleSheet.create({
   tabActive: { borderBottomColor: '#4A7DFF' },
   tabLabel: { color: '#8A8AAE', fontSize: 12, fontWeight: '500' },
   tabLabelActive: { color: '#FFFFFF' },
-  postsGrid: { paddingVertical: 4 },
-  gridPostItem: { flex: 1 / 3, aspectRatio: 1, padding: 2, position: 'relative' },
+
+  // ✅ Manual posts grid
+  postsGridWrap: {
+    width: '100%',
+  },
+  postsGridRow: {
+    flexDirection: 'row',
+    width: '100%',
+  },
+  gridPostItem: {
+    flex: 1 / 3,
+    aspectRatio: 1,
+    padding: 2,
+    position: 'relative',
+  },
+  gridPostSpacer: {
+    flex: 1 / 3,
+    aspectRatio: 1,
+    padding: 2,
+  },
   gridPostImage: { width: '100%', height: '100%', borderRadius: 4 },
   gridPostPlaceholder: {
     width: '100%',
@@ -3358,6 +3444,15 @@ const styles = StyleSheet.create({
   },
   gridPostPrice: {
     color: '#4A7DFF',
+    fontSize: 10,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+    marginTop: 1,
+  },
+  gridPostShowcase: {
+    color: '#6C5CE7',
     fontSize: 10,
     fontWeight: '700',
     textShadowColor: 'rgba(0,0,0,0.8)',
@@ -3478,25 +3573,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
-  formInputDisabled: {
-    opacity: 0.5,
-  },
+  formInputDisabled: { opacity: 0.5 },
   formTextArea: { height: 80, textAlignVertical: 'top' },
 
-  // ✅ Price type chips
-  priceTypeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4,
-  },
+  priceTypeRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
   priceTypeChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
@@ -3506,15 +3594,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(74, 125, 255, 0.15)',
     borderColor: '#4A7DFF',
   },
-  priceTypeChipText: {
-    color: '#8A8AAE',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  priceTypeChipTextActive: {
-    color: '#4A7DFF',
-    fontWeight: '600',
-  },
+  priceTypeChipText: { color: '#8A8AAE', fontSize: 11, fontWeight: '500' },
+  priceTypeChipTextActive: { color: '#4A7DFF', fontWeight: '600' },
 
   mediaSection: { marginBottom: 16 },
   mediaScrollContent: { gap: 8 },

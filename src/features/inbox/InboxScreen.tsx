@@ -568,14 +568,18 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
 
       if (data) {
         setMyProfile({
-          name: (data as any).full_name || user.full_name || 'Me',
+          name:
+            (data as any).full_name ||
+            (user as any)?.user_metadata?.full_name ||
+            user?.email ||
+            'Me',
           avatarUrl: (data as any).avatar_url || null,
         });
       }
     } catch (err) {
       console.warn('Failed to load my profile:', err);
     }
-  }, [user?.id, user?.full_name]);
+  }, [user?.id, user?.user_metadata?.full_name]);
 
   const loadConversations = useCallback(async () => {
     if (!user?.id || !isMounted.current) {
@@ -1342,6 +1346,12 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             style: 'destructive',
             onPress: async () => {
               try {
+                const currentUserId = user?.id;
+                if (!currentUserId) {
+                  Alert.alert('Error', 'You must be signed in to cancel a payment.');
+                  return;
+                }
+
                 await supabase
                   .from('payment_requests')
                   .update({ status: 'cancelled' })
@@ -1350,7 +1360,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 const { data: msgData } = await supabase
                   .from('messages')
                   .insert({
-                    sender_id: user?.id,
+                    sender_id: currentUserId,
                     receiver_id: payment.is_request
                       ? payment.to_user_id
                       : payment.from_user_id,
@@ -1400,6 +1410,12 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             style: 'destructive',
             onPress: async () => {
               try {
+                const currentUserId = user?.id;
+                if (!currentUserId) {
+                  Alert.alert('Error', 'You must be signed in to reject a payment.');
+                  return;
+                }
+
                 await supabase
                   .from('payment_requests')
                   .update({ status: 'cancelled' })
@@ -1408,7 +1424,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 const { data: msgData } = await supabase
                   .from('messages')
                   .insert({
-                    sender_id: user?.id,
+                    sender_id: currentUserId,
                     receiver_id: payment.from_user_id,
                     text: `❌ ${
                       payment.is_request ? 'Payment request' : 'Payment'
@@ -1839,7 +1855,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 partnerAvatarUrl={
                   partnerProfile?.avatarUrl ?? selectedConversation.avatarUrl ?? null
                 }
-                myName={myProfile?.name || user?.full_name || 'Me'}
+                myName={
+                  myProfile?.name ||
+                    user?.user_metadata?.full_name ||
+                    user?.user_metadata?.name ||
+                    user?.email ||
+                    'Me'
+                }
                 myAvatarUrl={myProfile?.avatarUrl || null}
                 onPaymentAccept={handleAcceptPayment}
                 onPaymentPay={handlePayNow}

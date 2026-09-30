@@ -58,7 +58,7 @@ import { RootStackParamList } from '../../navigation/RootNavigator';
 import { locationService, UserLocation } from '../../services/location.service';
 import { LocationPicker } from './components/LocationPicker';
 import { useIsFocused } from '@react-navigation/native';
-import { StyledAlert } from './components/StyledAlert'; // ✅ Import
+import { StyledAlert } from './components/StyledAlert';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -115,18 +115,15 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const [selectedLocationLabel, setSelectedLocationLabel] =
     useState<string>('');
 
-  // Track saved items per opportunity
   const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
 
-  // ✅ Likes tracking
   const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
   const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
 
-  // ✅ Per-item media loading state
   const [loadingItemsMap, setLoadingItemsMap] = useState<
     Record<string, boolean>
   >({});
@@ -147,7 +144,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     'details' | 'reviews' | 'directions' | null
   >(null);
 
-  // ✅ StyledAlert state
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -198,6 +194,10 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const oppOpenTimeRef = useRef<number>(Date.now());
   const lastOpenOpportunityIdRef = useRef<string | null>(null);
 
+  // ✅ Tracks whether we've ever received a settled response from the
+  //    query. Used to suppress the empty state on first render.
+  const hasFetchedOnceRef = useRef(false);
+
   const {
     opportunities,
     currentIndex,
@@ -215,7 +215,9 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const {
     data,
     isLoading: queryLoading,
+    isFetching: queryFetching,
     error: queryError,
+    status: queryStatus,
   } = useQuery({
     queryKey: ['opportunities'],
     queryFn: async () => {
@@ -231,6 +233,14 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       return feedService.getOpportunities(userCoords);
     },
   });
+
+  // Mark the very first settled response so we know when it's safe
+  // to show the empty state.
+  useEffect(() => {
+    if (queryStatus === 'success' || queryStatus === 'error') {
+      hasFetchedOnceRef.current = true;
+    }
+  }, [queryStatus]);
 
   // ============================================================
   // LOCATION HANDLING
@@ -780,7 +790,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     [isAuthenticated, navigation, user?.id, savedItemsMap, showStyledAlert, hideStyledAlert]
   );
 
-  // ✅ TOGGLE LIKE — mirrors the follow/unfollow pattern
   const handleLikePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!isAuthenticated || !user?.id) {
@@ -1000,7 +1009,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         | 'fixed'
         | 'negotiable'
         | 'starting_from'
-        | 'free' = 'fixed';
+        | 'free'
+        | 'showcase' = 'fixed';
       const specifications = (
         item as Opportunity & {
           specifications?: Record<string, unknown>;
@@ -1020,13 +1030,19 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           specifications.price_type === 'fixed' ||
           specifications.price_type === 'negotiable' ||
           specifications.price_type === 'starting_from' ||
-          specifications.price_type === 'free'
+          specifications.price_type === 'free' ||
+          specifications.price_type === 'showcase'
         ) {
-          priceType = specifications.price_type;
+          priceType = specifications.price_type as any;
         }
       }
 
-      if (price === 0 || price === null || price === undefined) {
+      // Only force 'free' when the type isn't already a non-priced type.
+      if (
+        (price === 0 || price === null || price === undefined) &&
+        priceType !== 'free' &&
+        priceType !== 'showcase'
+      ) {
         price = 0;
         priceType = 'free';
       }
@@ -1166,13 +1182,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             <FloatingActionRail
               key={`rail-${item.id}`}
               opportunity={item}
-              bottomInset={80}       // ← pushes the rail up so the AI button clears the tab bar
+              bottomInset={80}
               rightShift={-6}
-              // ✅ Likes
               isLiked={isLiked}
               likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
               onLikePress={handleLikePress}
-              // Existing
               onUserPress={() => {
                 navigation.navigate('UserProfile' as any, {
                   userId: item.userId,
@@ -1224,7 +1238,15 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     ]
   );
 
-  if (queryLoading || (isLoading && uniqueOpportunities.length === 0)) {
+  // ============================================================
+  // ✅ FIX: never flash the empty state during the very first fetch
+  // ============================================================
+  // Only treat the query as "loading" if it has genuinely not settled
+  // yet. React Query's `isLoading` is true on first mount and false
+  // after data arrives (or errors).
+  const isInitialLoading = !hasFetchedOnceRef.current && queryLoading;
+
+  if (isInitialLoading || (isLoading && uniqueOpportunities.length === 0)) {
     return (
       <View style={[styles.container, { height }]}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
@@ -1312,7 +1334,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
                 end={{ x: 0, y: 1 }}
                 style={[
                   styles.topBarGradient,
-                  { paddingTop: insets.top + 12 }, // ✅ sits below the status bar
+                  { paddingTop: insets.top + 12 },
                 ]}
               >
                 <View style={styles.topBarContent}>
@@ -1441,7 +1463,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
               </View>
             )}
 
-            {/* ✅ StyledAlert for cross‑platform alerts */}
             <StyledAlert
               visible={styledAlertConfig.visible}
               title={styledAlertConfig.title}

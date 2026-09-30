@@ -126,13 +126,14 @@ const DEFAULT_CATEGORIES = [
 ];
 
 // ============================================================
-// HELPER: Resolve effective price type for a SearchResult
+// PRICE TYPE — now includes 'showcase'
 // ============================================================
 const VALID_PRICE_TYPES = [
   'fixed',
   'negotiable',
   'starting_from',
   'free',
+  'showcase',
 ] as const;
 
 type PriceType = typeof VALID_PRICE_TYPES[number];
@@ -154,7 +155,11 @@ function resolvePriceType(item: SearchResult): PriceType {
   const raw = fromRow || fromSpecs;
 
   if (raw && (VALID_PRICE_TYPES as readonly string[]).includes(raw)) {
-    if (raw === 'fixed' && (!item.price || item.price <= 0)) {
+    // 'showcase' and 'free' never carry a price — pass through.
+    if (
+      (raw === 'fixed' || raw === 'negotiable') &&
+      (!item.price || item.price <= 0)
+    ) {
       return 'free';
     }
     return raw as PriceType;
@@ -202,8 +207,10 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
   const hasVideo = !!item.video;
   const priceType = resolvePriceType(item);
   const isFree = priceType === 'free';
+  const isShowcase = priceType === 'showcase';
   const hasPrice =
     !isFree &&
+    !isShowcase &&
     item.price !== undefined &&
     item.price !== null &&
     item.price > 0;
@@ -242,13 +249,15 @@ const GridResultCard = React.memo(({ item, onPress }: any) => {
             {item.title || 'Post'}
           </Text>
 
-          {isFree ? (
-            <Text style={styles.gridPriceFree}>Free</Text>
-          ) : hasPrice ? (
+          {isFree && <Text style={styles.gridPriceFree}>Free</Text>}
+          {isShowcase && (
+            <Text style={styles.gridPriceShowcase}>Showcase</Text>
+          )}
+          {hasPrice && (
             <Text style={styles.gridPrice}>
               UGX {item.price!.toLocaleString()}
             </Text>
-          ) : null}
+          )}
 
           <View style={styles.gridFooter}>
             <Text style={styles.gridShop} numberOfLines={1}>
@@ -276,6 +285,9 @@ const ItemMediaLoadingSpinner: React.FC = () => {
 // HELPER: build Opportunity from SearchResult
 // ============================================================
 function buildOpportunityFromResult(item: SearchResult): any {
+  const effectivePriceType = resolvePriceType(item);
+  const specs = (item as any).specifications || {};
+
   return {
     id: item.id,
     title: item.title || 'Untitled',
@@ -308,8 +320,11 @@ function buildOpportunityFromResult(item: SearchResult): any {
     saveCount: item.saveCount || 0,
     isSaved: item.isSaved || false,
     distance: undefined,
-    specifications: item.specifications || {},
-    price_type: item.price_type ?? null,
+    specifications: {
+      ...specs,
+      price_type: effectivePriceType,
+    },
+    price_type: effectivePriceType,
   };
 }
 
@@ -532,7 +547,6 @@ const SearchResultsContent = ({
     {}
   );
 
-  // ✅ Likes
   const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
@@ -552,7 +566,6 @@ const SearchResultsContent = ({
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
   const [aiContextHint, setAiContextHint] = useState('');
 
-  // ✅ StyledAlert state
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -691,7 +704,7 @@ const SearchResultsContent = ({
     });
   }, [filteredResults]);
 
-  // ✅ Prefetch likes
+  // Prefetch likes
   useEffect(() => {
     if (!user?.id) return;
     const postIds = filteredResults.map((r) => r.id);
@@ -859,7 +872,6 @@ const SearchResultsContent = ({
     setSelectedOpportunity(null);
   }, []);
 
-  // ✅ Toggle like
   const handleLikePress = useCallback(
     async (opportunity: any) => {
       if (!user?.id) {
@@ -1147,7 +1159,6 @@ const SearchResultsContent = ({
               isDesktopView={false}
             />
 
-            {/* ✅ StyledAlert */}
             <StyledAlert
               visible={styledAlertConfig.visible}
               title={styledAlertConfig.title}
@@ -1304,7 +1315,6 @@ const SearchResultsContent = ({
         isDesktopView={false}
       />
 
-      {/* ✅ StyledAlert (grid view) */}
       <StyledAlert
         visible={styledAlertConfig.visible}
         title={styledAlertConfig.title}
@@ -1511,6 +1521,12 @@ const styles = StyleSheet.create({
   gridPrice: { color: '#4A7DFF', fontSize: 13, fontWeight: '700', marginTop: 2 },
   gridPriceFree: {
     color: '#2ECC71',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  gridPriceShowcase: {
+    color: '#6C5CE7',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 2,

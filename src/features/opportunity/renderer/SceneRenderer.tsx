@@ -1,6 +1,13 @@
 // src/features/opportunity/renderer/SceneRenderer.tsx
 
-import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  memo,
+  useMemo,
+} from 'react';
 import {
   View,
   Text,
@@ -72,11 +79,26 @@ export interface TextOverlayData {
   color: string;
   fontSize: number;
   fontFamily?: string;
+  fontWeight?: 'normal' | 'bold';
+  fontStyle?: 'normal' | 'italic';
+  textDecorationLine?: 'none' | 'underline';
   backgroundColor?: string | null;
+  opacity?: number;
+  letterSpacing?: number;
+  lineHeight?: number;
+  shadow?: boolean;
   scale?: number;
+  rotation?: number;
+  textAlign?: 'left' | 'center' | 'right';
+  imageIndex?: number;
 }
 
-type PriceType = 'fixed' | 'negotiable' | 'starting_from' | 'free';
+type PriceType =
+  | 'fixed'
+  | 'negotiable'
+  | 'starting_from'
+  | 'free'
+  | 'showcase';
 
 interface Props {
   media: MediaItem[];
@@ -126,6 +148,8 @@ const FILTER_TINTS: Record<string, string | null> = {
   vintage: 'rgba(200,150,80,0.22)',
   mono: 'rgba(120,120,120,0.25)',
   vivid: 'rgba(255,80,120,0.15)',
+  sepia: 'rgba(180,140,90,0.28)',
+  fade: 'rgba(255,255,255,0.22)',
 };
 
 // ============================================================
@@ -149,13 +173,23 @@ function resolveEffectivePriceType(
   rawPriceType: PriceType | string | null | undefined,
   rawPrice: number | undefined
 ): PriceType {
-  const valid: PriceType[] = ['fixed', 'negotiable', 'starting_from', 'free'];
+  const valid: PriceType[] = [
+    'fixed',
+    'negotiable',
+    'starting_from',
+    'free',
+    'showcase',
+  ];
 
   if (
     typeof rawPriceType === 'string' &&
     (valid as string[]).includes(rawPriceType)
   ) {
-    if (rawPriceType === 'fixed' && (!rawPrice || rawPrice <= 0)) {
+    // 'showcase' and 'free' never carry a price — do NOT fall through to free.
+    if (
+      (rawPriceType === 'fixed' || rawPriceType === 'negotiable') &&
+      (!rawPrice || rawPrice <= 0)
+    ) {
       return 'free';
     }
     return rawPriceType as PriceType;
@@ -173,12 +207,7 @@ function formatTime(seconds: number): string {
 }
 
 // ============================================================
-// VIDEO PROGRESS BAR — SCRUBBABLE, THIN BY DEFAULT
-//
-//  ✅ Thin by default: 2px bar, 8px thumb.
-//  ✅ Grows on touch:  4px bar, 16px thumb — smooth 150ms animation.
-//  ✅ Drag the thumb to seek forward or backward.
-//  ✅ Tap anywhere on the track to jump.
+// VIDEO PROGRESS BAR — SCRUBBABLE
 // ============================================================
 interface VideoProgressBarProps {
   player: any;
@@ -200,7 +229,6 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
 
   const wasPlayingRef = useRef(false);
 
-  // ---- Smooth "active" animation ----
   const activeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -211,44 +239,36 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
     }).start();
   }, [isScrubbing, activeAnim]);
 
-  // Bar height: 2 → 4
   const barHeight = activeAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [2, 4],
   });
 
-  // Thumb size: 8 → 16
   const thumbSize = activeAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [5, 10],
   });
 
-  // Thumb radius: 4 → 8
   const thumbRadius = activeAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [2, 6],
   });
 
-  // Within a 20px-tall container:
-  // - bar top: (20 - 2) / 2 = 9 at rest, (20 - 4) / 2 = 8 active
   const barTop = activeAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [9, 8],
   });
 
-  // Thumb top: (20 - 8) / 2 = 6 at rest, (20 - 16) / 2 = 2 active
   const thumbTop = activeAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [7.5, 5],
   });
 
-  // Margin to keep the thumb horizontally centered over the playhead
   const thumbMarginLeft = activeAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [2.5, -5],
   });
 
-  // ---- Poll playback progress ----
   useEffect(() => {
     if (!player) return;
 
@@ -301,7 +321,6 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
     };
   }, [player, isScrubbing]);
 
-  // ---- Scrubbing ----
   const seekFromX = useCallback((x: number) => {
     const w = barWidthRef.current;
     const d = durationRef.current;
@@ -372,7 +391,6 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
 
   return (
     <View style={styles.videoProgressBarWrapper}>
-      {/* Time indicators */}
       <View style={styles.videoProgressTimeRow}>
         <Text style={styles.videoProgressTimeText}>
           {formatTime(currentSeconds)}
@@ -382,13 +400,11 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
         </Text>
       </View>
 
-      {/* Interactive bar */}
       <View
         style={styles.videoProgressBarContainer}
         onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
         {...panResponder.panHandlers}
       >
-        {/* Track */}
         <Animated.View
           style={[
             styles.videoProgressBarTrack,
@@ -396,7 +412,6 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
           ]}
         />
 
-        {/* Fill */}
         <Animated.View
           style={[
             styles.videoProgressBarFill,
@@ -408,7 +423,6 @@ function VideoProgressBar({ player, isPlaying }: VideoProgressBarProps) {
           ]}
         />
 
-        {/* Thumb */}
         <Animated.View
           style={[
             styles.videoProgressBarThumb,
@@ -651,13 +665,14 @@ const VideoItem = memo(
 );
 
 // ============================================================
-// MEDIA OVERLAYS
+// MEDIA OVERLAYS — PER-IMAGE AWARE
 // ============================================================
 interface MediaOverlaysProps {
   width: number;
   height: number;
   filter?: string | null;
   textOverlays?: TextOverlayData[] | null;
+  currentIndex: number;
 }
 
 const MediaOverlays: React.FC<MediaOverlaysProps> = ({
@@ -665,13 +680,21 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
   height,
   filter,
   textOverlays,
+  currentIndex,
 }) => {
   const tint = filter ? FILTER_TINTS[filter] ?? null : null;
 
-  const hasTextOverlays =
-    Array.isArray(textOverlays) && textOverlays.length > 0;
+  // Only render overlays belonging to the current image.
+  // Overlays with no imageIndex default to image 0 (back-compat).
+  const visibleOverlays = useMemo(() => {
+    if (!Array.isArray(textOverlays) || textOverlays.length === 0) return [];
+    return textOverlays.filter((o) => {
+      const idx = typeof o.imageIndex === 'number' ? o.imageIndex : 0;
+      return idx === currentIndex;
+    });
+  }, [textOverlays, currentIndex]);
 
-  if (!tint && !hasTextOverlays) return null;
+  if (!tint && visibleOverlays.length === 0) return null;
 
   return (
     <View
@@ -684,49 +707,67 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
         />
       )}
 
-      {hasTextOverlays &&
-        textOverlays!.map((overlay) => {
-          const isDarkText = overlay.color === '#000000';
-          const scale = overlay.scale ?? 1;
+      {visibleOverlays.map((overlay) => {
+        const isDarkText = overlay.color === '#000000';
+        const scale = overlay.scale ?? 1;
+        const opacity = overlay.opacity ?? 1;
+        const rotation = overlay.rotation ?? 0;
+        const fontWeight = overlay.fontWeight ?? '800';
+        const fontStyle = overlay.fontStyle ?? 'normal';
+        const textDecorationLine = overlay.textDecorationLine ?? 'none';
+        const letterSpacing = overlay.letterSpacing ?? 0;
+        const lineHeightMultiplier = overlay.lineHeight ?? 1.2;
+        const showShadow =
+          overlay.shadow !== false && !overlay.backgroundColor;
+        const textAlign = overlay.textAlign ?? 'center';
 
-          return (
-            <View
-              key={overlay.id}
+        return (
+          <View
+            key={overlay.id}
+            style={[
+              styles.savedOverlayWrapper,
+              {
+                left: overlay.x * width,
+                top: overlay.y * height,
+                opacity,
+                transform: [{ scale }, { rotate: `${rotation}deg` }],
+                backgroundColor: overlay.backgroundColor || 'transparent',
+                borderRadius: overlay.backgroundColor ? 8 : 0,
+                paddingHorizontal: overlay.backgroundColor ? 8 : 6,
+                paddingVertical: 4,
+              },
+            ]}
+          >
+            <Text
               style={[
-                styles.savedOverlayWrapper,
+                styles.savedOverlayText,
                 {
-                  left: overlay.x * width,
-                  top: overlay.y * height,
-                  transform: [{ scale }],
-                  backgroundColor:
-                    overlay.backgroundColor || 'transparent',
-                  borderRadius: overlay.backgroundColor ? 8 : 0,
-                  paddingHorizontal: overlay.backgroundColor ? 8 : 6,
-                  paddingVertical: 4,
+                  color: overlay.color,
+                  fontSize: overlay.fontSize,
+                  fontFamily: overlay.fontFamily || 'System',
+                  fontWeight,
+                  fontStyle,
+                  textDecorationLine,
+                  letterSpacing,
+                  lineHeight: overlay.fontSize * lineHeightMultiplier,
+                  textAlign,
+                  textShadowColor: showShadow
+                    ? isDarkText
+                      ? 'rgba(255,255,255,0.7)'
+                      : 'rgba(0,0,0,0.65)'
+                    : 'transparent',
+                  textShadowRadius: showShadow ? 6 : 0,
+                  textShadowOffset: showShadow
+                    ? { width: 0, height: 2 }
+                    : { width: 0, height: 0 },
                 },
               ]}
             >
-              <Text
-                style={[
-                  styles.savedOverlayText,
-                  {
-                    color: overlay.color,
-                    fontSize: overlay.fontSize,
-                    fontFamily: overlay.fontFamily || 'System',
-                    textShadowColor: overlay.backgroundColor
-                      ? 'transparent'
-                      : isDarkText
-                      ? 'rgba(255,255,255,0.7)'
-                      : 'rgba(0,0,0,0.65)',
-                    textShadowRadius: overlay.backgroundColor ? 0 : 6,
-                  },
-                ]}
-              >
-                {overlay.text}
-              </Text>
-            </View>
-          );
-        })}
+              {overlay.text}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 };
@@ -814,6 +855,8 @@ export function SceneRenderer({
         return { label: 'Starting From', color: '#2ECC71' };
       case 'free':
         return { label: 'Free', color: '#2ECC71' };
+      case 'showcase':
+        return { label: 'Showcase', color: '#6C5CE7' };
       case 'fixed':
       default:
         return { label: 'Fixed', color: '#4A7DFF' };
@@ -1121,6 +1164,8 @@ export function SceneRenderer({
   const displayPrice =
     effectivePriceType === 'free'
       ? 'Free'
+      : effectivePriceType === 'showcase'
+      ? 'Showcase'
       : effectivePriceType === 'starting_from'
       ? `From ${currency} ${(price || 0).toLocaleString()}`
       : `${currency} ${(price || 0).toLocaleString()}`;
@@ -1156,11 +1201,14 @@ export function SceneRenderer({
         {...(Platform.OS === 'web' ? { pagingEnabled: true } : {})}
       />
 
+      {/* Per-image overlays — MediaOverlays now only renders the
+          overlays that belong to the currently visible image. */}
       <MediaOverlays
         width={width}
         height={height}
         filter={filter}
         textOverlays={textOverlays}
+        currentIndex={currentIndex}
       />
 
       {totalItems > 1 && !currentIsVideo && isDesktop && (
@@ -1346,12 +1394,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // ============================================================
-  // VIDEO PROGRESS BAR — SCRUBBABLE
-  //
-  //  ✅ Bar and thumb sizes are animated in the component.
-  //  ✅ Sits at the bottom of the info panel, below description.
-  // ============================================================
   videoProgressBarWrapper: {
     marginTop: 10,
     width: '100%',
@@ -1371,9 +1413,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-
-  // Touch target — 20px tall so it's easy to grab even when the
-  // visible bar is only 2px thick.
   videoProgressBarContainer: {
     height: 20,
     width: '100%',
@@ -1383,21 +1422,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    // `top` and `height` are set via Animated values in the component
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
     borderRadius: 2,
   },
   videoProgressBarFill: {
     position: 'absolute',
     left: 0,
-    // `top`, `height` and `width` are set via Animated values
     backgroundColor: '#FFFFFF',
     borderRadius: 2,
   },
   videoProgressBarThumb: {
     position: 'absolute',
-    // `top`, `width`, `height`, `borderRadius`, `marginLeft` and `left`
-    // are all set via Animated values in the component.
     backgroundColor: '#FFFFFF',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -1406,7 +1441,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
-  // ---- Media overlays (filter + text) ----
   overlayLayer: {
     zIndex: 15,
   },

@@ -5,6 +5,7 @@ import React, {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
 } from 'react';
 import {
   View,
@@ -42,6 +43,7 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { useIsFocused } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
+
 // ============================================================
 // MODULE-LEVEL VIEWABILITY CONFIG
 // ============================================================
@@ -49,6 +51,24 @@ const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
   itemVisiblePercentThreshold: 60,
   minimumViewTime: 100,
 };
+
+// ============================================================
+// PRICE TYPE
+// ============================================================
+type PriceType =
+  | 'fixed'
+  | 'negotiable'
+  | 'starting_from'
+  | 'free'
+  | 'showcase';
+
+const VALID_PRICE_TYPES: PriceType[] = [
+  'fixed',
+  'negotiable',
+  'starting_from',
+  'free',
+  'showcase',
+];
 
 // ============================================================
 // TYPES
@@ -129,17 +149,25 @@ function extractPriceFromSpecifications(post: any): number {
   return price;
 }
 
-function extractPriceType(post: any): string | null {
-  if (typeof post?.price_type === 'string' && post.price_type.length > 0) {
-    return post.price_type;
-  }
-  const specs = post?.specifications;
-  if (isSpecificationsObject(specs)) {
-    if (typeof specs.price_type === 'string' && specs.price_type.length > 0) {
-      return specs.price_type;
+function extractPriceType(post: any): PriceType | null {
+  const candidates: unknown[] = [
+    post?.price_type,
+    post?.specifications?.price_type,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && (VALID_PRICE_TYPES as string[]).includes(c)) {
+      return c as PriceType;
     }
   }
   return null;
+}
+
+// Effective price type — infers free/fixed if not set.
+function resolvePostPriceType(post: any): PriceType {
+  const t = extractPriceType(post);
+  if (t) return t;
+  const p = extractPriceFromSpecifications(post);
+  return p === 0 ? 'free' : 'fixed';
 }
 
 // ============================================================
@@ -183,9 +211,11 @@ const GridPostItem = ({ item, onPress, userName }: any) => {
   const displayName = userName || 'User';
 
   const price = extractPriceFromSpecifications(item);
-  const priceType = extractPriceType(item);
-  const isFree = priceType === 'free' || price <= 0;
-  const hasPrice = !isFree && price > 0;
+  const effectivePriceType = resolvePostPriceType(item);
+
+  const isFree = effectivePriceType === 'free';
+  const isShowcase = effectivePriceType === 'showcase';
+  const hasPrice = !isFree && !isShowcase && price > 0;
 
   return (
     <TouchableOpacity
@@ -217,13 +247,15 @@ const GridPostItem = ({ item, onPress, userName }: any) => {
             {item.name || 'Post'}
           </Text>
 
-          {isFree ? (
-            <Text style={styles.gridPriceFree}>Free</Text>
-          ) : hasPrice ? (
+          {isFree && <Text style={styles.gridPriceFree}>Free</Text>}
+          {isShowcase && (
+            <Text style={styles.gridPriceShowcase}>Showcase</Text>
+          )}
+          {hasPrice && (
             <Text style={styles.gridPrice}>
               UGX {price.toLocaleString()}
             </Text>
-          ) : null}
+          )}
 
           <View style={styles.gridFooter}>
             <Text style={styles.gridUser} numberOfLines={1}>
@@ -240,6 +272,57 @@ const GridPostItem = ({ item, onPress, userName }: any) => {
 };
 
 // ============================================================
+// MANUAL POSTS GRID (avoids nested-list scroll conflicts)
+// ============================================================
+interface PostsGridProps {
+  items: UserPost[];
+  onPress: (item: UserPost) => void;
+  userName: string;
+}
+
+const PostsGrid: React.FC<PostsGridProps> = ({
+  items,
+  onPress,
+  userName,
+}) => {
+  const NUM_COLUMNS = 3;
+
+  const rows: (UserPost | null)[][] = useMemo(() => {
+    const out: (UserPost | null)[][] = [];
+    for (let i = 0; i < items.length; i += NUM_COLUMNS) {
+      const row: (UserPost | null)[] = items.slice(i, i + NUM_COLUMNS);
+      while (row.length < NUM_COLUMNS) row.push(null);
+      out.push(row);
+    }
+    return out;
+  }, [items]);
+
+  return (
+    <View style={styles.postsGridWrap}>
+      {rows.map((row, rowIdx) => (
+        <View key={`row-${rowIdx}`} style={styles.postsGridRow}>
+          {row.map((cell, colIdx) =>
+            cell ? (
+              <GridPostItem
+                key={cell.id}
+                item={cell}
+                onPress={onPress}
+                userName={userName}
+              />
+            ) : (
+              <View
+                key={`spacer-${rowIdx}-${colIdx}`}
+                style={styles.gridPostSpacer}
+              />
+            )
+          )}
+        </View>
+      ))}
+    </View>
+  );
+};
+
+// ============================================================
 // HELPER: build Opportunity from UserPost
 // ============================================================
 function buildOpportunityFromPost(
@@ -248,6 +331,8 @@ function buildOpportunityFromPost(
   isSaved: boolean
 ): Opportunity {
   const price = extractPriceFromSpecifications(item);
+  const effectivePriceType = resolvePostPriceType(item);
+  const specs = (item as any).specifications || {};
 
   return {
     id: item.id,
@@ -281,8 +366,12 @@ function buildOpportunityFromPost(
     saveCount: item.saveCount || 0,
     isSaved,
     distance: item.distance,
-    specifications: item.specifications || {},
-    price_type: item.price_type ?? null,
+    specifications: {
+      ...specs,
+      price_type: effectivePriceType,
+    },
+    // carry it at top level too
+    ...( { price_type: effectivePriceType } as any),
   } as any;
 }
 
@@ -399,7 +488,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   }
 
   const price = extractPriceFromSpecifications(item);
-  const priceType = extractPriceType(item);
+  const effectivePriceType = resolvePostPriceType(item);
 
   const cardWidth = isDesktop ? 420 : winWidth;
   const cardHeight = isDesktop ? winHeight : winHeight;
@@ -422,7 +511,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         media={mediaItems}
         title={item.name || 'Post'}
         price={price}
-        priceType={priceType as any}
+        priceType={effectivePriceType}
         currency="UGX"
         userName={userProfile?.full_name || 'User'}
         userAvatar={userProfile?.avatar_url || null}
@@ -531,7 +620,6 @@ const UserProfileContent = ({
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
-  // ✅ StyledAlert state
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -858,7 +946,7 @@ const UserProfileContent = ({
     if (userId) loadAllData();
   }, [userId]);
 
-  // ✅ Seed loadingItemsMap
+  // Seed loadingItemsMap
   useEffect(() => {
     if (userPosts.length === 0) return;
 
@@ -875,7 +963,7 @@ const UserProfileContent = ({
     });
   }, [userPosts]);
 
-  // ✅ Prefetch likes
+  // Prefetch likes
   useEffect(() => {
     if (!currentUser?.id) return;
     const postIds = userPosts.map((p) => p.id);
@@ -1322,7 +1410,6 @@ const UserProfileContent = ({
               isDesktopView={isDesktop}
             />
 
-            {/* ✅ StyledAlert */}
             <StyledAlert
               visible={styledAlertConfig.visible}
               title={styledAlertConfig.title}
@@ -1375,6 +1462,7 @@ const UserProfileContent = ({
             tintColor="#4A7DFF"
           />
         }
+        scrollEnabled={true}
       >
         <View style={styles.coverContainer}>
           {userProfile.cover_url ? (
@@ -1495,26 +1583,17 @@ const UserProfileContent = ({
             </Text>
           </View>
         ) : (
-          <FlatList
-            data={userPosts}
-            renderItem={({ item }) => (
-              <GridPostItem
-                item={item}
-                onPress={handleItemPress}
-                userName={userProfile.full_name || 'User'}
-              />
-            )}
-            keyExtractor={(item) => item.id}
-            numColumns={3}
-            scrollEnabled={false}
-            contentContainerStyle={styles.postsGrid}
+          // Manual grid: no nested list → outer ScrollView gets every touch
+          <PostsGrid
+            items={userPosts}
+            onPress={handleItemPress}
+            userName={userProfile.full_name || 'User'}
           />
         )}
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* ✅ StyledAlert (grid view) */}
       <StyledAlert
         visible={styledAlertConfig.visible}
         title={styledAlertConfig.title}
@@ -1692,12 +1771,26 @@ const styles = StyleSheet.create({
   statItem: { alignItems: 'center' },
   statNumber: { color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' },
   statLabel: { color: '#8A8AAE', fontSize: 12, marginTop: 2 },
-  postsGrid: { paddingHorizontal: 4 },
+
+  // ✅ Manual grid
+  postsGridWrap: {
+    width: '100%',
+    paddingHorizontal: 4,
+  },
+  postsGridRow: {
+    flexDirection: 'row',
+    width: '100%',
+  },
   gridPostItem: {
     flex: 1 / 3,
     aspectRatio: 1,
     padding: 2,
     position: 'relative',
+  },
+  gridPostSpacer: {
+    flex: 1 / 3,
+    aspectRatio: 1,
+    padding: 2,
   },
   gridPostImage: { width: '100%', height: '100%', borderRadius: 4 },
   gridPostPlaceholder: {
@@ -1751,6 +1844,15 @@ const styles = StyleSheet.create({
   },
   gridPriceFree: {
     color: '#2ECC71',
+    fontSize: 10,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+    marginTop: 1,
+  },
+  gridPriceShowcase: {
+    color: '#6C5CE7',
     fontSize: 10,
     fontWeight: '700',
     textShadowColor: 'rgba(0,0,0,0.8)',

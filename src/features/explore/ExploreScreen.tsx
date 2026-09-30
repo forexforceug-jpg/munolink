@@ -58,6 +58,16 @@ const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
   minimumViewTime: 100,
 };
 
+// ============================================================
+// TYPES
+// ============================================================
+type PriceType =
+  | 'fixed'
+  | 'negotiable'
+  | 'starting_from'
+  | 'free'
+  | 'showcase';
+
 interface ExplorePost {
   id: string;
   user_id: string;
@@ -95,7 +105,39 @@ interface ExplorePost {
   saveCount?: number;
   isSaved?: boolean;
   specifications?: any;
-  price_type?: string | null;
+  price_type?: PriceType | string | null;
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+const VALID_PRICE_TYPES: PriceType[] = [
+  'fixed',
+  'negotiable',
+  'starting_from',
+  'free',
+  'showcase',
+];
+
+/**
+ * Robustly resolve the price type for an ExplorePost.
+ * Preference order:
+ *   1. explicit item.price_type (already normalized)
+ *   2. item.specifications.price_type
+ *   3. inferred from price (fixed / free)
+ */
+function resolvePostPriceType(item: ExplorePost): PriceType {
+  const candidates: Array<unknown> = [
+    item.price_type,
+    (item as any)?.specifications?.price_type,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && (VALID_PRICE_TYPES as string[]).includes(c)) {
+      return c as PriceType;
+    }
+  }
+  if (!item.price || item.price <= 0) return 'free';
+  return 'fixed';
 }
 
 const DEFAULT_CATEGORIES = [
@@ -138,6 +180,9 @@ const FilterChip = ({ label, selected, onPress, count }: any) => (
   </TouchableOpacity>
 );
 
+// ============================================================
+// GRID CARD
+// ============================================================
 const GridResultCard = React.memo(
   ({
     item,
@@ -159,8 +204,13 @@ const GridResultCard = React.memo(
 
     const displayName = item.user_full_name || 'User';
     const hasVideo = !!item.video;
+    const effectivePriceType = resolvePostPriceType(item);
     const hasPrice =
-      item.price !== undefined && item.price !== null && item.price > 0;
+      effectivePriceType !== 'free' &&
+      effectivePriceType !== 'showcase' &&
+      item.price !== undefined &&
+      item.price !== null &&
+      item.price > 0;
 
     return (
       <TouchableOpacity
@@ -201,6 +251,9 @@ const GridResultCard = React.memo(
                 UGX {item.price!.toLocaleString()}
               </Text>
             )}
+            {effectivePriceType === 'showcase' && (
+              <Text style={styles.gridShowcase}>Showcase</Text>
+            )}
 
             <View style={styles.gridFooter}>
               <Text style={styles.gridShop} numberOfLines={1}>
@@ -217,10 +270,16 @@ const GridResultCard = React.memo(
   }
 );
 
+// ============================================================
+// ADAPTER
+// ============================================================
 function buildOpportunityFromPost(
   item: ExplorePost,
   isSaved: boolean
 ): Opportunity {
+  const specs = (item as any).specifications || {};
+  const effectivePriceType = resolvePostPriceType(item);
+
   return {
     id: item.id,
     title: item.name || 'Untitled',
@@ -257,7 +316,12 @@ function buildOpportunityFromPost(
     saveCount: item.saveCount || 0,
     isSaved,
     distance: item.distance,
-    specifications: item.specifications || {},
+    specifications: {
+      ...specs,
+      price_type: effectivePriceType,
+    },
+    // carry the resolved price_type on the opportunity too
+    ...( { price_type: effectivePriceType } as any),
   };
 }
 
@@ -269,6 +333,9 @@ const ItemMediaLoadingSpinner: React.FC = () => {
   );
 };
 
+// ============================================================
+// FULLSCREEN ITEM
+// ============================================================
 interface FullscreenItemProps {
   item: ExplorePost;
   index: number;
@@ -317,6 +384,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onAIPress,
 }) => {
   const opportunity = buildOpportunityFromPost(item, isSaved);
+  const effectivePriceType = resolvePostPriceType(item);
 
   const mediaItems: {
     type: 'image' | 'video';
@@ -392,8 +460,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         height={cardHeight}
         onShowMore={() => onShowMore(item)}
         onShare={onShare}
-          filter={specs.filter ?? null}
-  textOverlays={specs.text_overlays ?? null}
+        filter={specs.filter ?? null}
+        textOverlays={specs.text_overlays ?? null}
         onSave={() => onSave(item)}
         onPrimaryAction={() => onInbox(item)}
         onInboxPress={() => onInbox(item)}
@@ -407,7 +475,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         }}
         autoPlay={true}
         autoPlayInterval={5000}
-        priceType={item.price_type as any}
+        priceType={effectivePriceType}
         resetKey={item.id}
         bottomOffset={0}
         isVisible={isVisible}
@@ -420,8 +488,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
           key={`rail-${item.id}`}
           opportunity={opportunity}
           isLiked={isLiked}
-          bottomInset={80}       // ← pushes the rail up so the AI button clears the tab bar
-    rightShift={-6}
+          bottomInset={80}
+          rightShift={-6}
           likeCount={likeCount}
           onLikePress={() => onLike(item)}
           onUserPress={() => onUserPress(item)}
@@ -442,6 +510,9 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   );
 };
 
+// ============================================================
+// EXPLORE CONTENT
+// ============================================================
 const ExploreContent = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
@@ -461,7 +532,6 @@ const ExploreContent = ({ navigation }: any) => {
     {}
   );
 
-  // ✅ Likes
   const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
@@ -482,7 +552,6 @@ const ExploreContent = ({ navigation }: any) => {
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
 
-  // ✅ StyledAlert state
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -555,6 +624,11 @@ const ExploreContent = ({ navigation }: any) => {
 
       const posts: ExplorePost[] = opportunities.map((opp) => {
         const images = opp.catalogImages || [];
+        const specs = (opp as any).specifications || {};
+
+        // Resolve the price_type from whichever source has it.
+        const rawPriceType =
+          (opp as any).price_type ?? specs.price_type ?? null;
 
         return {
           id: opp.id,
@@ -592,11 +666,8 @@ const ExploreContent = ({ navigation }: any) => {
           distance: opp.distance,
           saveCount: opp.saveCount || 0,
           isSaved: opp.isSaved || false,
-          specifications: opp.specifications || {},
-          price_type:
-            (opp as any).price_type ??
-            (opp.specifications && (opp.specifications as any).price_type) ??
-            null,
+          specifications: specs,
+          price_type: rawPriceType,
         };
       });
 
@@ -701,7 +772,7 @@ const ExploreContent = ({ navigation }: any) => {
     });
   }, [filteredItems]);
 
-  // ✅ Prefetch likes
+  // Prefetch likes
   useEffect(() => {
     if (!user?.id) return;
     const postIds = filteredItems.map((o) => o.id);
@@ -711,7 +782,6 @@ const ExploreContent = ({ navigation }: any) => {
     (async () => {
       try {
         const { data, error } = await supabase
-          // `likes` is not present in the generated Supabase database types.
           .from('likes' as any)
           .select('post_id')
           .eq('user_id', user.id)
@@ -814,7 +884,6 @@ const ExploreContent = ({ navigation }: any) => {
     setSelectedOpportunity(null);
   }, []);
 
-  // ✅ Toggle like
   const handleLikePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!user?.id) {
@@ -1194,7 +1263,6 @@ const ExploreContent = ({ navigation }: any) => {
               isDesktopView={isDesktop}
             />
 
-            {/* ✅ StyledAlert */}
             <StyledAlert
               visible={styledAlertConfig.visible}
               title={styledAlertConfig.title}
@@ -1298,7 +1366,6 @@ const ExploreContent = ({ navigation }: any) => {
 
       {renderSortModal()}
 
-      {/* ✅ StyledAlert (grid view) */}
       <StyledAlert
         visible={styledAlertConfig.visible}
         title={styledAlertConfig.title}
@@ -1328,6 +1395,9 @@ export const ExploreScreen = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0D0D1A' },
   containerDesktop: { backgroundColor: '#0D0D1A', padding: 24 },
@@ -1483,6 +1553,12 @@ const styles = StyleSheet.create({
   },
   gridTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
   gridPrice: { color: '#4A7DFF', fontSize: 13, fontWeight: '700', marginTop: 2 },
+  gridShowcase: {
+    color: '#6C5CE7',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
   gridFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
