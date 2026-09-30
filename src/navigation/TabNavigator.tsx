@@ -1,6 +1,6 @@
 // src/navigation/TabNavigator.tsx
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
   View,
@@ -21,7 +21,7 @@ import { PayScreen } from '../features/pay/PayScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
 import { AccountScreen } from '../features/account/AccountScreen';
 import { useBreakpoint } from '../hooks/useBreakpoint';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../../src/context/AuthContext';
 import { supabase } from '../lib/supabase';
 
 const Tab = createBottomTabNavigator();
@@ -36,10 +36,56 @@ const isMediumDevice = width >= 375 && width < 420;
 
 export const BASE_TAB_HEIGHT = 60;
 
+// Minimum bottom buffer to keep the tab bar clear of browser chrome
+// on web (Safari URL bar, Android Chrome gesture area, etc.).
+const WEB_BOTTOM_BUFFER = 12;
+
 const getIconSize = (baseSize: number) => {
   const scaled = baseSize * Math.min(pixelRatio / 2, 1.2);
   return Math.round(scaled);
 };
+
+// ----------------------------------------------------------------
+// Web safe-area bottom helper
+//
+// react-native-safe-area-context does not compute CSS env(safe-area-
+// inset-bottom) on web, so on iOS Safari the tab bar can sit under
+// the home indicator. We read it directly via a DOM probe, falling
+// back to a sensible default when unavailable.
+//
+// Runs once and caches the result.
+// ----------------------------------------------------------------
+let cachedWebSafeBottom: number | null = null;
+
+function getWebSafeAreaBottom(): number {
+  if (Platform.OS !== 'web') return 0;
+  if (cachedWebSafeBottom !== null) return cachedWebSafeBottom;
+
+  if (typeof document === 'undefined') {
+    cachedWebSafeBottom = 0;
+    return 0;
+  }
+
+  try {
+    const probe = document.createElement('div');
+    probe.style.position = 'fixed';
+    probe.style.bottom = '0';
+    probe.style.left = '0';
+    probe.style.width = '0';
+    probe.style.height = 'env(safe-area-inset-bottom, 0px)';
+    probe.style.pointerEvents = 'none';
+    probe.style.visibility = 'hidden';
+    document.body.appendChild(probe);
+    const rect = probe.getBoundingClientRect();
+    const value = rect.height || 0;
+    document.body.removeChild(probe);
+    cachedWebSafeBottom = value;
+    return value;
+  } catch {
+    cachedWebSafeBottom = 0;
+    return 0;
+  }
+}
 
 // ----------------------------------------------------------------
 // Custom Pay button
@@ -195,20 +241,10 @@ const TabIcon = ({
 // Hook: unread message count
 // ================================================================
 //
-// ✅ Crash-proof against Supabase Realtime v2 rules:
-//    1. supabase.channel(name)         — build
-//    2. .on(...).on(...)...            — attach ALL handlers
-//    3. .subscribe()                   — subscribe LAST
-//    4. .unsubscribe()                 — cleanup
-//
-// ✅ Unique channel name per effect run so Strict Mode / HMR / rapid
-//    auth-state flips can never reuse an already-subscribed channel.
-//
-// ✅ userId read from a ref so fetchCount stays stable and the effect
-//    only re-runs when the id actually changes.
-//
-// ✅ Poll fallback every 15s in case realtime drops.
-//
+// ✅ Crash-proof against Supabase Realtime v2 rules.
+// ✅ Unique channel name per effect run.
+// ✅ userId read from a ref so fetchCount stays stable.
+// ✅ Poll fallback every 15s.
 // ✅ isMountedRef guard so async callbacks don't touch state after
 //    the component unmounts.
 //
@@ -238,7 +274,6 @@ const useUnreadMessageCount = (): number => {
         .eq('is_read', false);
 
       if (error) {
-        // Non-fatal — badge just won't update.
         if (__DEV__) {
           console.log('ℹ️ Unread count query warning:', error.message);
         }
@@ -249,7 +284,6 @@ const useUnreadMessageCount = (): number => {
         setCount(unread || 0);
       }
     } catch (err) {
-      // Non-fatal — swallow so we never blank the screen over a badge.
       if (__DEV__) console.log('ℹ️ Unread count error:', err);
     }
   }, [isAuthenticated]);
@@ -257,15 +291,12 @@ const useUnreadMessageCount = (): number => {
   useEffect(() => {
     isMountedRef.current = true;
 
-    // Initial + poll
     fetchCount();
     const interval = setInterval(fetchCount, 15000);
 
-    // Realtime (optional) — only when logged in
     const uid = userIdRef.current;
 
     if (uid && isAuthenticated) {
-      // ✅ Unique name — new channel object every effect run.
       const channelName = `unread-badge-${uid}-${Date.now()}-${Math.random()
         .toString(36)
         .slice(2)}`;
@@ -273,7 +304,6 @@ const useUnreadMessageCount = (): number => {
       try {
         const channel = supabase.channel(channelName);
 
-        // ✅ Attach ALL listeners BEFORE subscribe.
         channel.on(
           'postgres_changes',
           {
@@ -287,12 +317,10 @@ const useUnreadMessageCount = (): number => {
           }
         );
 
-        // ✅ Subscribe LAST.
         channel.subscribe();
 
         channelRef.current = channel;
       } catch (err) {
-        // Non-fatal — we still have the 15s polling fallback.
         if (__DEV__) console.log('ℹ️ Realtime subscription failed:', err);
       }
     }
@@ -308,7 +336,7 @@ const useUnreadMessageCount = (): number => {
         try {
           ch.unsubscribe();
         } catch {
-          /* noop — safe to swallow */
+          /* noop */
         }
       }
     };
@@ -325,7 +353,19 @@ export const TabNavigator = () => {
   const insets = useSafeAreaInsets();
   const unreadCount = useUnreadMessageCount();
 
-  const tabBarHeight = BASE_TAB_HEIGHT + insets.bottom;
+  // ---- Compute the effective bottom inset ----
+  // On native: use the safe-area inset (home indicator, gesture bar).
+  // On web:   the safe-area lib returns 0, so we add our own buffer
+  //           and, where the browser supports it, env(safe-area-
+  //           inset-bottom) via getWebSafeAreaBottom().
+  const webSafeBottom = useMemo(() => getWebSafeAreaBottom(), []);
+
+  const effectiveBottomInset =
+    Platform.OS === 'web'
+      ? Math.max(insets.bottom, webSafeBottom) + WEB_BOTTOM_BUFFER
+      : insets.bottom;
+
+  const tabBarHeight = BASE_TAB_HEIGHT + effectiveBottomInset;
 
   if (isDesktop) {
     return (
@@ -352,7 +392,7 @@ export const TabNavigator = () => {
           styles.tabBar,
           {
             height: tabBarHeight,
-            paddingBottom: insets.bottom + 6,
+            paddingBottom: effectiveBottomInset + 6,
             paddingTop: 8,
           },
         ],
@@ -458,6 +498,11 @@ const styles = StyleSheet.create({
       },
       android: {
         elevation: 12,
+      },
+      web: {
+        // Ensures the bar always sits above browser chrome overlays
+        // (mobile Safari URL bar, Chrome gesture area).
+        zIndex: 1000,
       },
     }),
   },
