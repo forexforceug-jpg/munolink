@@ -55,6 +55,25 @@ const StepIndicator = ({ currentStep, totalSteps }: any) => (
   </View>
 );
 
+// ============================================================
+// "Already registered" detection
+// Supabase returns different messages across versions, so we
+// pattern-match on a few known phrases.
+// ============================================================
+function isAlreadyRegisteredError(message: string | undefined): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return (
+    m.includes('already registered') ||
+    m.includes('already been registered') ||
+    m.includes('user already exists') ||
+    m.includes('email address is already') ||
+    m.includes('phone number is already') ||
+    m.includes('duplicate key') ||
+    m.includes('unique constraint')
+  );
+}
+
 const JoinContent = ({ navigation }: any) => {
   const {
     signInWithGoogle,
@@ -98,15 +117,37 @@ const JoinContent = ({ navigation }: any) => {
   const isNameValid = fullName.trim().length >= 2;
   const isEmailValid = /\S+@\S+\.\S+/.test(email.trim());
   const isPasswordValid = password.length >= 6;
-  const passwordsMatch = password === confirmPassword;
+  const passwordsMatch =
+    password.length > 0 && confirmPassword.length > 0 && password === confirmPassword;
+
+  // ✅ confirm-password is required for BOTH phone and email now
   const canSubmit =
     isNameValid &&
+    isPasswordValid &&
+    passwordsMatch &&
     (method === 'phone'
-      ? phoneNumber.length >= 7 && isPasswordValid
-      : isEmailValid && isPasswordValid && passwordsMatch);
+      ? phoneNumber.length >= 7
+      : isEmailValid);
 
   // ============================================================
-  // STEP 1: CREATE ACCOUNT (sends OTP via Supabase)
+  // "ALREADY REGISTERED" ALERT — offers to jump to Sign In
+  // ============================================================
+  const showAlreadyRegisteredAlert = () => {
+    Alert.alert(
+      'Account already exists',
+      `It looks like this ${method === 'phone' ? 'phone number' : 'email'} is already registered. Would you like to sign in instead?`,
+      [
+        { text: 'Try again', style: 'cancel' },
+        {
+          text: 'Sign In',
+          onPress: () => navigation.navigate('SignIn'),
+        },
+      ]
+    );
+  };
+
+  // ============================================================
+  // STEP 1: CREATE ACCOUNT
   // ============================================================
   const handleContinue = async () => {
     if (!isNameValid) {
@@ -119,6 +160,14 @@ const JoinContent = ({ navigation }: any) => {
       return;
     }
 
+    // ✅ Confirm password required for both methods
+    if (!passwordsMatch) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    const name = fullName.trim();
+
     if (method === 'phone') {
       if (phoneNumber.length < 7) {
         Alert.alert('Error', 'Please enter a valid phone number');
@@ -127,18 +176,22 @@ const JoinContent = ({ navigation }: any) => {
 
       setIsLoading(true);
       try {
-        // Supabase handles OTP generation + storage.
-        // The Send SMS Hook forwards the OTP to Yoola.
         const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
-        await signUpWithPhone(fullPhone, password);
+        // ✅ Pass fullName through so AuthContext can persist it
+        await signUpWithPhone(fullPhone, password, name);
         setStep(2);
         setResendTimer(60);
       } catch (error: any) {
         console.error('Phone signup error:', error);
-        Alert.alert(
-          'Error',
-          error.message || 'Failed to create account. Please try again.'
-        );
+        const msg = error?.message || '';
+        if (isAlreadyRegisteredError(msg)) {
+          showAlreadyRegisteredAlert();
+        } else {
+          Alert.alert(
+            'Error',
+            msg || 'Failed to create account. Please try again.'
+          );
+        }
       } finally {
         setIsLoading(false);
       }
@@ -150,22 +203,24 @@ const JoinContent = ({ navigation }: any) => {
       Alert.alert('Error', 'Please enter a valid email');
       return;
     }
-    if (!passwordsMatch) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
 
     setIsLoading(true);
     try {
-      await signUpWithEmail(email.trim().toLowerCase(), password);
+      // ✅ Pass fullName through
+      await signUpWithEmail(email.trim().toLowerCase(), password, name);
       setStep(2);
       setResendTimer(60);
     } catch (error: any) {
       console.error('Email signup error:', error);
-      Alert.alert(
-        'Error',
-        error.message || 'Failed to create account. Please try again.'
-      );
+      const msg = error?.message || '';
+      if (isAlreadyRegisteredError(msg)) {
+        showAlreadyRegisteredAlert();
+      } else {
+        Alert.alert(
+          'Error',
+          msg || 'Failed to create account. Please try again.'
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -183,14 +238,15 @@ const JoinContent = ({ navigation }: any) => {
 
     setIsLoading(true);
     try {
+      const name = fullName.trim();
       if (method === 'phone') {
         const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
-        await verifyPhoneOtp(fullPhone, code);
+        // ✅ Also pass fullName during verification as a safety net
+        await verifyPhoneOtp(fullPhone, code, name);
       } else {
-        await verifyEmailOtp(email.trim().toLowerCase(), code);
+        await verifyEmailOtp(email.trim().toLowerCase(), code, name);
       }
 
-      // onAuthStateChange in AuthContext takes over from here
       navigation.replace('MainTabs');
     } catch (error: any) {
       console.error('OTP verification error:', error);
@@ -208,12 +264,12 @@ const JoinContent = ({ navigation }: any) => {
     setResendTimer(60);
 
     try {
+      const name = fullName.trim();
       if (method === 'phone') {
         const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
-        // Re-trigger signup which resends the OTP
-        await signUpWithPhone(fullPhone, password);
+        await signUpWithPhone(fullPhone, password, name);
       } else {
-        await signUpWithEmail(email.trim().toLowerCase(), password);
+        await signUpWithEmail(email.trim().toLowerCase(), password, name);
       }
       Alert.alert('Code Sent', 'A new verification code has been sent.');
     } catch (error: any) {
@@ -245,8 +301,6 @@ const JoinContent = ({ navigation }: any) => {
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
-      // Auth state change handles navigation on native.
-      // On web, the redirect happens and the user comes back signed in.
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to sign in with Google.');
     } finally {
@@ -261,6 +315,7 @@ const JoinContent = ({ navigation }: any) => {
     <ScrollView
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.scrollContent}
+      keyboardShouldPersistTaps="handled"
     >
       <View style={styles.stepIconContainer}>
         <LinearGradient
@@ -286,6 +341,7 @@ const JoinContent = ({ navigation }: any) => {
           value={fullName}
           onChangeText={setFullName}
           autoCapitalize="words"
+          returnKeyType="next"
         />
       </View>
 
@@ -379,7 +435,7 @@ const JoinContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* PASSWORD (shown for both methods) */}
+      {/* PASSWORD */}
       <View style={styles.inputContainer}>
         <Text style={styles.inputLabel}>Password</Text>
         <View style={styles.passwordInput}>
@@ -406,37 +462,35 @@ const JoinContent = ({ navigation }: any) => {
         </View>
       </View>
 
-      {/* CONFIRM PASSWORD (only for email) */}
-      {method === 'email' && (
-        <View style={styles.inputContainer}>
-          <Text style={styles.inputLabel}>Confirm Password</Text>
-          <View style={styles.passwordInput}>
-            <TextInput
-              style={styles.passwordField}
-              placeholder="Re-enter password"
-              placeholderTextColor={COLORS.textMuted}
-              secureTextEntry={!showConfirmPassword}
-              autoCapitalize="none"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
+      {/* CONFIRM PASSWORD — now shown for BOTH methods */}
+      <View style={styles.inputContainer}>
+        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <View style={styles.passwordInput}>
+          <TextInput
+            style={styles.passwordField}
+            placeholder="Re-enter password"
+            placeholderTextColor={COLORS.textMuted}
+            secureTextEntry={!showConfirmPassword}
+            autoCapitalize="none"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+          />
+          <TouchableOpacity
+            onPress={() => setShowConfirmPassword((v) => !v)}
+            style={styles.eyeButton}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color={COLORS.textSecondary}
             />
-            <TouchableOpacity
-              onPress={() => setShowConfirmPassword((v) => !v)}
-              style={styles.eyeButton}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons
-                name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
-                size={20}
-                color={COLORS.textSecondary}
-              />
-            </TouchableOpacity>
-          </View>
-          {confirmPassword.length > 0 && !passwordsMatch && (
-            <Text style={styles.inputError}>Passwords do not match</Text>
-          )}
+          </TouchableOpacity>
         </View>
-      )}
+        {confirmPassword.length > 0 && !passwordsMatch && (
+          <Text style={styles.inputError}>Passwords do not match</Text>
+        )}
+      </View>
 
       <TouchableOpacity
         style={[
@@ -488,22 +542,22 @@ const JoinContent = ({ navigation }: any) => {
         </Text>
       </TouchableOpacity>
 
-    <Text style={styles.termsText}>
-  By continuing, you agree to our{' '}
-  <Text
-    style={styles.termsLink}
-    onPress={() => navigation.navigate('TermsOfService')}
-  >
-    Terms of Service
-  </Text>{' '}
-  and{' '}
-  <Text
-    style={styles.termsLink}
-    onPress={() => navigation.navigate('PrivacyPolicy')}
-  >
-    Privacy Policy
-  </Text>
-</Text>
+      <Text style={styles.termsText}>
+        By continuing, you agree to our{' '}
+        <Text
+          style={styles.termsLink}
+          onPress={() => navigation.navigate('TermsOfService')}
+        >
+          Terms of Service
+        </Text>{' '}
+        and{' '}
+        <Text
+          style={styles.termsLink}
+          onPress={() => navigation.navigate('PrivacyPolicy')}
+        >
+          Privacy Policy
+        </Text>
+      </Text>
     </ScrollView>
   );
 
@@ -521,7 +575,9 @@ const JoinContent = ({ navigation }: any) => {
         </LinearGradient>
       </View>
 
-      <Text style={styles.stepTitle}>Verify your {method === 'phone' ? 'phone' : 'email'}</Text>
+      <Text style={styles.stepTitle}>
+        Verify your {method === 'phone' ? 'phone' : 'email'}
+      </Text>
       <Text style={styles.stepSubtitle}>
         We've sent a 6-digit code to{' '}
         <Text style={styles.highlightText}>

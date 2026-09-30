@@ -18,6 +18,9 @@ import * as QueryParams from 'expo-auth-session/build/QueryParams';
 
 WebBrowser.maybeCompleteAuthSession();
 
+// ============================================================
+// Types
+// ============================================================
 interface AuthContextType {
   isAuthenticated: boolean;
   isGuest: boolean;
@@ -25,12 +28,29 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
 
-  signUpWithEmail: (email: string, password: string) => Promise<void>;
-  verifyEmailOtp: (email: string, token: string) => Promise<void>;
+  // ✅ fullName is now optional on all signup/verify flows
+  signUpWithEmail: (
+    email: string,
+    password: string,
+    fullName?: string
+  ) => Promise<void>;
+  verifyEmailOtp: (
+    email: string,
+    token: string,
+    fullName?: string
+  ) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
 
-  signUpWithPhone: (phone: string, password: string) => Promise<void>;
-  verifyPhoneOtp: (phone: string, token: string) => Promise<void>;
+  signUpWithPhone: (
+    phone: string,
+    password: string,
+    fullName?: string
+  ) => Promise<void>;
+  verifyPhoneOtp: (
+    phone: string,
+    token: string,
+    fullName?: string
+  ) => Promise<void>;
   signInWithPhonePassword: (phone: string, password: string) => Promise<void>;
 
   signInWithGoogle: () => Promise<void>;
@@ -41,6 +61,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// ============================================================
+// Helpers
+// ============================================================
 function generateNonce(length = 32): string {
   const bytes: any = Crypto.getRandomBytes(length);
   return Array.from(bytes as Uint8Array)
@@ -48,6 +71,53 @@ function generateNonce(length = 32): string {
     .join('');
 }
 
+/**
+ * Best-effort persist of the user's profile row.
+ * Non-fatal: if RLS blocks it before email/phone confirmation,
+ * we retry after OTP verification.
+ */
+async function upsertUserProfile(params: {
+  userId: string;
+  fullName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}): Promise<void> {
+  const { userId, fullName, email, phone } = params;
+  if (!userId) return;
+
+  const patch: Record<string, any> = { id: userId };
+
+  if (fullName && fullName.trim().length > 0) {
+    patch.full_name = fullName.trim();
+  }
+  if (email) {
+    patch.email = email;
+  }
+  if (phone) {
+    patch.phone_number = phone;
+  }
+
+  // Nothing to write except the id
+  if (Object.keys(patch).length <= 1) return;
+
+  try {
+    const { error } = await supabase
+      .from('users')
+      .upsert(patch, { onConflict: 'id' });
+    if (error) {
+      // Non-fatal; may fail if the users row doesn't exist yet or RLS blocks.
+      if (__DEV__) {
+        console.log('ℹ️ upsertUserProfile warning:', error.message);
+      }
+    }
+  } catch (err) {
+    if (__DEV__) console.log('ℹ️ upsertUserProfile threw:', err);
+  }
+}
+
+// ============================================================
+// Provider
+// ============================================================
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -73,17 +143,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         console.warn('Deep link error:', err);
       }
     };
-    Linking.getInitialURL().then((url) => { if (url) handleDeepLink({ url }); });
+    Linking.getInitialURL().then((url) => {
+      if (url) handleDeepLink({ url });
+    });
     const sub = Linking.addEventListener('url', handleDeepLink);
     return () => sub.remove();
   }, []);
 
-  // ✅ Restore session on mount — Supabase handles all the persistence
+  // Restore session on mount
   useEffect(() => {
     let cancelled = false;
     const initAuth = async () => {
       try {
-        const { data: { session: restored } } = await supabase.auth.getSession();
+        const {
+          data: { session: restored },
+        } = await supabase.auth.getSession();
         if (!cancelled && restored) {
           setSession(restored);
           setUser(restored.user);
@@ -100,19 +174,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     };
     initAuth();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // ✅ Listen to all auth events — SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED
+  // Listen to all auth events
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, newSession) => {
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
-        setIsAuthenticated(!!newSession);
-        setIsGuest(!newSession);
-      }
-    );
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+      setIsAuthenticated(!!newSession);
+      setIsGuest(!newSession);
+    });
     return () => subscription.unsubscribe();
   }, []);
 
@@ -126,13 +202,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
     if (response?.type === 'success' && response.params.id_token) {
-      supabase.auth.signInWithIdToken({
-        provider: 'google',
-        token: response.params.id_token,
-        nonce: rawNonceRef.current || undefined,
-      }).then(({ error }) => {
-        if (error) Alert.alert('Error', error.message);
-      });
+      supabase.auth
+        .signInWithIdToken({
+          provider: 'google',
+          token: response.params.id_token,
+          nonce: rawNonceRef.current || undefined,
+        })
+        .then(({ error }) => {
+          if (error) Alert.alert('Error', error.message);
+        });
     }
   }, [response]);
 
@@ -153,48 +231,143 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  // ---- EMAIL ----
-  const signUpWithEmail = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password });
+  // ============================================================
+  // EMAIL
+  // ============================================================
+  const signUpWithEmail = async (
+    email: string,
+    password: string,
+    fullName?: string
+  ) => {
+    const trimmedName = fullName?.trim() || null;
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: trimmedName,
+        },
+      },
+    });
     if (error) throw error;
-    // Supabase sends the email OTP automatically
+
+    // Best-effort: write to public.users now. If RLS or row-not-yet-
+    // created blocks it, verifyEmailOtp will retry.
+    if (data?.user?.id) {
+      await upsertUserProfile({
+        userId: data.user.id,
+        fullName: trimmedName,
+        email,
+      });
+    }
   };
 
-  const verifyEmailOtp = async (email: string, token: string) => {
-    const { error } = await supabase.auth.verifyOtp({
+  const verifyEmailOtp = async (
+    email: string,
+    token: string,
+    fullName?: string
+  ) => {
+    const { data, error } = await supabase.auth.verifyOtp({
       email,
       token,
       type: 'signup',
     });
     if (error) throw error;
+
+    // Pull the name from anywhere we might have stashed it.
+    const fromArgs = fullName?.trim() || null;
+    const fromMeta =
+      (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
+    const resolvedName = fromArgs || fromMeta || null;
+
+    if (data?.user?.id && resolvedName) {
+      await upsertUserProfile({
+        userId: data.user.id,
+        fullName: resolvedName,
+        email,
+      });
+    }
   };
 
   const signInWithEmail = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
     if (error) throw error;
   };
 
-  // ---- PHONE ----
-  const signUpWithPhone = async (phone: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ phone, password });
+  // ============================================================
+  // PHONE
+  // ============================================================
+  const signUpWithPhone = async (
+    phone: string,
+    password: string,
+    fullName?: string
+  ) => {
+    const trimmedName = fullName?.trim() || null;
+
+    const { data, error } = await supabase.auth.signUp({
+      phone,
+      password,
+      options: {
+        data: {
+          full_name: trimmedName,
+        },
+      },
+    });
     if (error) throw error;
-    // Supabase triggers the Send SMS Hook → your Edge Function → Yoola
+
+    if (data?.user?.id) {
+      await upsertUserProfile({
+        userId: data.user.id,
+        fullName: trimmedName,
+        phone,
+      });
+    }
   };
 
-  const verifyPhoneOtp = async (phone: string, token: string) => {
-    const { error } = await supabase.auth.verifyOtp({
+  const verifyPhoneOtp = async (
+    phone: string,
+    token: string,
+    fullName?: string
+  ) => {
+    const { data, error } = await supabase.auth.verifyOtp({
       phone,
       token,
       type: 'sms',
     });
     if (error) throw error;
+
+    const fromArgs = fullName?.trim() || null;
+    const fromMeta =
+      (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
+    const resolvedName = fromArgs || fromMeta || null;
+
+    if (data?.user?.id && resolvedName) {
+      await upsertUserProfile({
+        userId: data.user.id,
+        fullName: resolvedName,
+        phone,
+      });
+    }
   };
 
-  const signInWithPhonePassword = async (phone: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ phone, password });
+  const signInWithPhonePassword = async (
+    phone: string,
+    password: string
+  ) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      phone,
+      password,
+    });
     if (error) throw error;
   };
 
+  // ============================================================
+  // SIGN OUT / GUEST
+  // ============================================================
   const signOut = async () => {
     await supabase.auth.signOut();
   };
@@ -206,12 +379,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setSession(null);
   };
 
-  const contextValue = useMemo(() => ({
-    isAuthenticated, isGuest, isLoading, user, session,
-    signUpWithEmail, verifyEmailOtp, signInWithEmail,
-    signUpWithPhone, verifyPhoneOtp, signInWithPhonePassword,
-    signInWithGoogle, signOut, logout: signOut, joinAsGuest,
-  }), [isAuthenticated, isGuest, isLoading, user, session]);
+  // ============================================================
+  // Context value
+  // ============================================================
+  const contextValue = useMemo(
+    () => ({
+      isAuthenticated,
+      isGuest,
+      isLoading,
+      user,
+      session,
+      signUpWithEmail,
+      verifyEmailOtp,
+      signInWithEmail,
+      signUpWithPhone,
+      verifyPhoneOtp,
+      signInWithPhonePassword,
+      signInWithGoogle,
+      signOut,
+      logout: signOut,
+      joinAsGuest,
+    }),
+    [isAuthenticated, isGuest, isLoading, user, session]
+  );
 
   return (
     <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>

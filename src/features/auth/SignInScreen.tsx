@@ -30,12 +30,15 @@ const COLORS = {
   textMuted: '#6A7A9E',
   accent: '#4A7DFF',
   accentSoft: 'rgba(74,125,255,0.15)',
+  google: '#FFFFFF',
+  googleText: '#1F1F1F',
 };
 
 type SignInMethod = 'phone' | 'email';
 
 const SignInContent = ({ navigation }: any) => {
-  const { signInWithEmail, signInWithPhonePassword } = useAuth();
+  const { signInWithEmail, signInWithPhonePassword, signInWithGoogle } =
+    useAuth();
   const { isDesktop } = useBreakpoint();
 
   const [method, setMethod] = useState<SignInMethod>('phone');
@@ -44,6 +47,7 @@ const SignInContent = ({ navigation }: any) => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const handleSignIn = async () => {
     if (method === 'phone') {
@@ -82,6 +86,19 @@ const SignInContent = ({ navigation }: any) => {
       Alert.alert('Error', e.message || 'Failed to sign in.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsGoogleLoading(true);
+    try {
+      await signInWithGoogle();
+      // On native, onAuthStateChange in AuthContext handles navigation.
+      // On web, the redirect happens and the user comes back signed in.
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to sign in with Google.');
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -261,6 +278,35 @@ const SignInContent = ({ navigation }: any) => {
             </LinearGradient>
           </TouchableOpacity>
 
+          {/* ✅ Continue with Google */}
+          <View style={styles.dividerContainer}>
+            <View style={styles.divider} />
+            <Text style={styles.dividerText}>or continue with</Text>
+            <View style={styles.divider} />
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.googleButton,
+              isGoogleLoading && styles.googleButtonDisabled,
+            ]}
+            onPress={handleGoogleSignIn}
+            disabled={isGoogleLoading}
+          >
+            {isGoogleLoading ? (
+              <ActivityIndicator color={COLORS.googleText} />
+            ) : (
+              <>
+                <Ionicons
+                  name="logo-google"
+                  size={20}
+                  color={COLORS.googleText}
+                />
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.joinButton}
             onPress={() => navigation.navigate('Join')}
@@ -424,7 +470,7 @@ const styles = StyleSheet.create({
   signInButton: {
     borderRadius: 12,
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 8,
     shadowColor: COLORS.accent,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.35,
@@ -439,6 +485,38 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   signInButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+
+  // ✅ Divider + Google button
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
+  },
+  divider: { flex: 1, height: 1, backgroundColor: COLORS.border },
+  dividerText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    paddingHorizontal: 16,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.google,
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 8,
+    marginBottom: 16,
+  },
+  googleButtonDisabled: { opacity: 0.6 },
+  googleButtonText: {
+    color: COLORS.googleText,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+
   joinButton: { alignItems: 'center', paddingVertical: 4 },
   joinText: { color: COLORS.textSecondary, fontSize: 14, textAlign: 'center' },
   joinLink: { color: COLORS.accent, fontWeight: '500' },
