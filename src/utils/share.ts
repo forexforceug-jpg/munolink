@@ -10,9 +10,7 @@ const SUPABASE_URL =
  * WhatsApp/Facebook scrape this URL to build the preview card.
  */
 export function getShareUrl(postId: string): string {
-  return `${SUPABASE_URL}/functions/v1/share?postId=${encodeURIComponent(
-    postId
-  )}`;
+  return `https://munolink.com/s/${postId}`;
 }
 
 export interface SharePostInfo {
