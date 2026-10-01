@@ -1284,14 +1284,14 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   // ============================================================
   // FLATTEN CURRENT IMAGE
   // Captures the current preview (image + filter + overlays) into a
-  // single JPG file URI. Returns null on failure.
+  // single PNG file URI. Returns null on failure.
   // ============================================================
   const captureCurrentImage = useCallback(async (): Promise<string | null> => {
     if (!captureViewRef.current) return null;
     try {
       const uri = await captureRef(captureViewRef, {
-        format: 'jpg',
-        quality: 0.9,
+        format: 'png',
+        quality: 1,
         result: 'tmpfile',
       });
       return uri;
@@ -1354,7 +1354,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
       setIsCapturing(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.9,
+        quality: 1,
         skipProcessing: false,
       });
       if (!photo?.uri) return;
@@ -1382,7 +1382,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
         selectionLimit: 10,
-        quality: 0.9,
+        quality: 1,
       });
 
       if (result.canceled || !result.assets?.length) return;
@@ -1411,7 +1411,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
         selectionLimit: 10 - editImages.length,
-        quality: 0.9,
+        quality: 1,
       });
       if (result.canceled || !result.assets?.length) return;
 

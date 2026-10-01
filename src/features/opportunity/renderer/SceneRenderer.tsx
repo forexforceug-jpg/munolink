@@ -26,17 +26,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-export const BASE_TAB_HEIGHT = 60;
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
-const SYSTEM_NAV_FALLBACK = Platform.select({
-  ios: 34,
-  android: 48,
-  default: 0,
-}) as number;
 
 // ============================================================
 // TYPES
@@ -205,11 +196,6 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/**
- * Compute the visible rectangle of an image that has been
- * `resizeMode="contain"`'d inside a container of `containerW × containerH`.
- * Overlays anchor to this rect so they stay glued to the actual image.
- */
 function computeContainedRect(
   containerW: number,
   containerH: number,
@@ -702,8 +688,6 @@ const VideoItem = memo(
 
 // ============================================================
 // MEDIA OVERLAYS
-// Overlays are positioned relative to the *visible image rect*,
-// not the container, so they stay glued to the actual photo.
 // ============================================================
 interface MediaOverlaysProps {
   width: number;
@@ -736,9 +720,6 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
     });
   }, [textOverlays, currentIndex]);
 
-  // For videos we don't have natural size synchronously; the VideoView
-  // already sizes itself with `contentFit="contain"`, so fall back to
-  // the full container rect for video overlays.
   const rect = useMemo(() => {
     if (isVideo) {
       return { left: 0, top: 0, width, height };
@@ -776,7 +757,6 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
             style={[
               styles.savedOverlayWrapper,
               {
-                // ✅ Anchored to the visible image rectangle
                 left: rect.left + overlay.x * rect.width,
                 top: rect.top + overlay.y * rect.height,
                 opacity,
@@ -862,8 +842,6 @@ export function SceneRenderer({
   filter = null,
   textOverlays = null,
 }: Props) {
-  const insets = useSafeAreaInsets();
-
   const [currentIndex, setCurrentIndex] = useState(0);
   const [dotPulse] = useState(new Animated.Value(0));
   const [isExpanded, setIsExpanded] = useState(false);
@@ -875,7 +853,6 @@ export function SceneRenderer({
     Record<number, boolean>
   >({});
 
-  // ✅ Natural size of the currently-displayed image, used to place overlays
   const [activeImageNaturalSize, setActiveImageNaturalSize] = useState<{
     width: number;
     height: number;
@@ -923,14 +900,12 @@ export function SceneRenderer({
   const timeAgo = formatTimeAgo(createdAt);
   const displayName = userName || 'User';
 
-  const progressBarBottomOffset =
-    Math.max(insets.bottom, SYSTEM_NAV_FALLBACK) +
-    (isDesktop ? 0 : BASE_TAB_HEIGHT) +
-    8;
+  // The parent ScreenShell has already reserved space for the tab
+  // bar and safe areas. We just sit at the bottom of our content
+  // area with a small visual buffer.
+  const infoPanelBottomOffset = 8;
 
-  const infoPanelBottomOffset = progressBarBottomOffset;
-
-  // Reset the natural size cache whenever the media changes
+  // Reset natural-size cache when media changes
   useEffect(() => {
     setActiveImageNaturalSize(null);
   }, [currentIndex, resetKey]);
@@ -995,9 +970,6 @@ export function SceneRenderer({
     }
   }, [currentIsVideo]);
 
-  // ============================================================
-  // BEHAVIORAL EVENT EMITTER
-  // ============================================================
   const emitBehavioralEvent = useCallback(
     (event: BehavioralEvent) => {
       if (onBehavioralEvent) onBehavioralEvent(event);
@@ -1021,9 +993,6 @@ export function SceneRenderer({
     [emitBehavioralEvent]
   );
 
-  // ============================================================
-  // NAVIGATION
-  // ============================================================
   const goToNextMedia = useCallback(
     (source: NavigationSource = 'tap') => {
       if (totalItems <= 1) return;
@@ -1069,9 +1038,6 @@ export function SceneRenderer({
     [currentIndex, totalItems, onSceneChange, trackSceneView, dotPulse]
   );
 
-  // ============================================================
-  // SCROLL HANDLERS
-  // ============================================================
   const commitScrollIndex = useCallback(
     (newIndex: number, source: NavigationSource = 'swipe') => {
       if (newIndex < 0 || newIndex >= totalItems) return;
@@ -1127,9 +1093,6 @@ export function SceneRenderer({
     };
   }, []);
 
-  // ============================================================
-  // DOTS PULSE
-  // ============================================================
   useEffect(() => {
     dotPulse.setValue(0);
     const anim = Animated.loop(
@@ -1150,9 +1113,6 @@ export function SceneRenderer({
     return () => anim.stop();
   }, [currentIndex, dotPulse]);
 
-  // ============================================================
-  // RESET WHEN KEY CHANGES
-  // ============================================================
   useEffect(() => {
     setCurrentIndex(0);
     lastReportedIndexRef.current = 0;
@@ -1163,9 +1123,6 @@ export function SceneRenderer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey, totalItems]);
 
-  // ============================================================
-  // RENDER MEDIA ITEM
-  // ============================================================
   const renderMediaItem = useCallback(
     ({ item, index }: { item: MediaItem; index: number }) => {
       const isCurrent = index === currentIndex;
@@ -1196,7 +1153,6 @@ export function SceneRenderer({
             style={[styles.mediaImage, { width, height }]}
             resizeMode="contain"
             onLoad={(e: any) => {
-              // ✅ Capture natural size for overlay positioning
               if (isCurrent) {
                 const src = e?.nativeEvent?.source;
                 if (src?.width && src?.height) {
@@ -1222,9 +1178,6 @@ export function SceneRenderer({
     [width, height, currentIndex, isVisible, handleVideoReady]
   );
 
-  // ============================================================
-  // RENDER
-  // ============================================================
   const shouldShowSeeDetails = description && description.length > 100;
   const displayDescription = isExpanded
     ? description
