@@ -1,0 +1,166 @@
+--------- beginning of main
+[32m10-01 14:20:51.083  1928  1928 I pixel-thermal: VIRTUAL-SKIN:36.44 raw data: VIRTUAL-GNSS-BATT:35766 VIRTUAL-NEUTRAL-QI:31848.6 VIRTUAL-QI-DISP:36440 VIRTUAL-SKIN:36440 VIRTUAL-USB2-BATT:35389.9 battery:34400 disp_therm:34243 gnss_tcxo_therm:34132 neutral_therm:34377 qi_therm:35556 usb_pwr_therm2:34198 [0m
+[32m10-01 14:20:51.089  1928  1928 I pixel-thermal: VIRTUAL-SKIN:36.44 raw data: VIRTUAL-SKIN:36440 [0m
+[32m10-01 14:20:51.090  2345  2557 I TemperatureStateSource: temperature was set[0m
+[34m10-01 14:20:51.091  2345  2557 D ImpulseStateSource: Notify clients: 1219[0m
+[34m10-01 14:20:51.092  2345  2557 D ImpulseConnection: bindService: com.google.android.apps.turbo[0m
+[34m10-01 14:20:51.122  2345  2345 D ImpulseConnection: onServiceConnected: ComponentInfo{com.google.android.apps.turbo/com.google.android.apps.turbo.adaptiveplatform.impulse.ImpulseClientService} service is null false[0m
+[32m10-01 14:20:52.502  1928  1931 I pixel-thermal: cellular-emergency:36.44 raw data: VIRTUAL-SKIN:36440 cellular-emergency:36440 [0m
+[32m10-01 14:20:52.502  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU:36.44 raw data: VIRTUAL-SKIN:36440 VIRTUAL-SKIN-CPU:36440 [0m
+[32m10-01 14:20:52.503  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU power_budget=2624.02 err=4.56004 s_power=800 time_elapsed_ms=7019 p=1824.02 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:20:52.503  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU binded power rails: (S4M_VDD_CPUCL0: 17.49 mW)(S2M_VDD_CPUCL2: 9.45 mW)(S3M_VDD_CPUCL1: 10.66 mW)[0m
+[32m10-01 14:20:52.504  1928  1931 I pixel-thermal: VIRTUAL-SKIN:36.44 raw data: VIRTUAL-SKIN:36440 [0m
+[32m10-01 14:20:52.504  1928  1931 I pixel-thermal: VIRTUAL-SKIN-HINT:36.44 raw data: VIRTUAL-SKIN:36440 VIRTUAL-SKIN-HINT:36440 [0m
+[32m10-01 14:20:52.505  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CHARGE:36.44 raw data: VIRTUAL-GNSS-BATT:35766 VIRTUAL-NEUTRAL-QI:31848.6 VIRTUAL-QI-DISP:36440 VIRTUAL-SKIN-CHARGE:36440 VIRTUAL-USB2-BATT:35389.9 [0m
+[32m10-01 14:20:52.505  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:36.44 raw data: VIRTUAL-SKIN:36440 VIRTUAL-SKIN-CPU-GPU:36440 [0m
+[32m10-01 14:20:52.505  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU power_budget=3368.01 err=8.56004 s_power=800 time_elapsed_ms=7019 p=2568.01 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:20:52.506  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU binded power rails: (S4M_VDD_CPUCL0: 17.49 mW)(S2M_VDD_CPUCL2: 9.45 mW)(S3M_VDD_CPUCL1: 10.66 mW)(S2S_VDD_G3D: 0.31 mW)[0m
+[32m10-01 14:20:59.523  1928  1931 I pixel-thermal: cellular-emergency:36.4334 raw data: VIRTUAL-GNSS-BATT:35699 VIRTUAL-NEUTRAL-QI:31804 VIRTUAL-QI-DISP:36433.4 VIRTUAL-SKIN:36433.4 VIRTUAL-USB2-BATT:35385.4 battery:34400 cellular-emergency:36433.4 disp_therm:34243 gnss_tcxo_therm:33998 neutral_therm:34332 qi_therm:35512 usb_pwr_therm2:34109 [0m
+[32m10-01 14:20:59.524  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU:36.4334 raw data: VIRTUAL-SKIN:36433.4 VIRTUAL-SKIN-CPU:36433.4 [0m
+[32m10-01 14:20:59.524  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU power_budget=2626.66 err=4.56665 s_power=800 time_elapsed_ms=7017 p=1826.66 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:20:59.524  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU binded power rails: (S4M_VDD_CPUCL0: 15.34 mW)(S2M_VDD_CPUCL2: 9.21 mW)(S3M_VDD_CPUCL1: 9.98 mW)[0m
+[32m10-01 14:20:59.525  1928  1931 I pixel-thermal: VIRTUAL-SKIN:36.4334 raw data: VIRTUAL-SKIN:36433.4 [0m
+[32m10-01 14:20:59.525  1928  1931 I pixel-thermal: VIRTUAL-SKIN-HINT:36.4334 raw data: VIRTUAL-SKIN:36433.4 VIRTUAL-SKIN-HINT:36433.4 [0m
+[32m10-01 14:20:59.525  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CHARGE:36.4334 raw data: VIRTUAL-GNSS-BATT:35699 VIRTUAL-NEUTRAL-QI:31804 VIRTUAL-QI-DISP:36433.4 VIRTUAL-SKIN-CHARGE:36433.4 VIRTUAL-USB2-BATT:35385.4 [0m
+[32m10-01 14:20:59.526  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:36.4334 raw data: VIRTUAL-SKIN:36433.4 VIRTUAL-SKIN-CPU-GPU:36433.4 [0m
+[32m10-01 14:20:59.526  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU power_budget=3369.99 err=8.56665 s_power=800 time_elapsed_ms=7017 p=2569.99 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:20:59.526  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU binded power rails: (S4M_VDD_CPUCL0: 15.34 mW)(S2M_VDD_CPUCL2: 9.21 mW)(S3M_VDD_CPUCL1: 9.98 mW)(S2S_VDD_G3D: 0.33 mW)[0m
+[32m10-01 14:21:01.092  1928  1928 I pixel-thermal: VIRTUAL-SKIN:36.4334 raw data: VIRTUAL-SKIN:36433.4 [0m
+[34m10-01 14:21:01.094  2345  3641 D ImpulseStateSource: Notify clients: 1220[0m
+[32m10-01 14:21:02.693  3013  3013 I pixelstats: MmMetrics: kernel: old PSI sysfs node.[0m
+[34m10-01 14:21:06.125  2345  3641 D ImpulseConnection: timeout happen: com.google.android.apps.turbo[0m
+[34m10-01 14:21:06.126  2345  3641 D ImpulseConnection: unbindService for releasing a CONNECTED connection com.google.android.apps.turbo[0m
+--------- beginning of system
+[33m10-01 14:21:06.145  1556  4781 W ProcessStats: Tracking association SourceState{b72b84 com.google.android.gms/10169 BFgs #34524} whose proc state 4 is better than process ProcessState{afed5b5 com.google.android.adservices.api/10265 pkg=com.google.android.adservices.api} proc state 14 (3 skipped)[0m
+[32m10-01 14:21:06.543  1928  1931 I pixel-thermal: cellular-emergency:36.3984 raw data: VIRTUAL-GNSS-BATT:35560 VIRTUAL-NEUTRAL-QI:31812.8 VIRTUAL-QI-DISP:36398.4 VIRTUAL-SKIN:36398.4 VIRTUAL-USB2-BATT:35289.4 battery:34300 cellular-emergency:36398.4 disp_therm:34198 gnss_tcxo_therm:33820 neutral_therm:34332 qi_therm:35534 usb_pwr_therm2:34087 [0m
+[32m10-01 14:21:06.544  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU:36.3984 raw data: VIRTUAL-SKIN:36398.4 VIRTUAL-SKIN-CPU:36398.4 [0m
+[32m10-01 14:21:06.544  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU power_budget=2640.64 err=4.6016 s_power=800 time_elapsed_ms=7020 p=1840.64 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:21:06.544  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU binded power rails: (S4M_VDD_CPUCL0: 15.83 mW)(S2M_VDD_CPUCL2: 9.05 mW)(S3M_VDD_CPUCL1: 9.98 mW)[0m
+[32m10-01 14:21:06.545  1928  1931 I pixel-thermal: VIRTUAL-SKIN:36.3984 raw data: VIRTUAL-SKIN:36398.4 [0m
+[32m10-01 14:21:06.545  1928  1931 I pixel-thermal: VIRTUAL-SKIN-HINT:36.3984 raw data: VIRTUAL-SKIN:36398.4 VIRTUAL-SKIN-HINT:36398.4 [0m
+[32m10-01 14:21:06.546  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CHARGE:36.3984 raw data: VIRTUAL-GNSS-BATT:35560 VIRTUAL-NEUTRAL-QI:31812.8 VIRTUAL-QI-DISP:36398.4 VIRTUAL-SKIN-CHARGE:36398.4 VIRTUAL-USB2-BATT:35289.4 [0m
+[32m10-01 14:21:06.546  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:36.3984 raw data: VIRTUAL-SKIN:36398.4 VIRTUAL-SKIN-CPU-GPU:36398.4 [0m
+[32m10-01 14:21:06.546  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU power_budget=3380.48 err=8.6016 s_power=800 time_elapsed_ms=7020 p=2580.48 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:21:06.547  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU binded power rails: (S4M_VDD_CPUCL0: 15.83 mW)(S2M_VDD_CPUCL2: 9.05 mW)(S3M_VDD_CPUCL1: 9.98 mW)(S2S_VDD_G3D: 0.29 mW)[0m
+[32m10-01 14:21:08.430  1928  1931 I pixel-thermal: VIRTUAL-USB-THROTTLING:0 raw data: USB2-MINUS-QI:-1447 USB2-MINUS-USB:-45 VIRTUAL-USB-THROTTLING:0 qi_therm:35534 usb_pwr_therm:34132 usb_pwr_therm2:34087 [0m
+[32m10-01 14:21:08.431  1928  1931 I pixel-thermal: VIRTUAL-USB-UI:0 raw data: USB2-MINUS-QI:-1447 USB2-MINUS-USB:-45 VIRTUAL-USB-UI:0 usb_pwr_therm2:34087 [0m
+[32m10-01 14:21:08.431  1928  1931 I pixel-thermal: Power rails total power: 335.01 mW for 60015 ms[0m
+[32m10-01 14:21:08.431  1928  1931 I pixel-thermal: Power rails [VSYS_PWR_DISPLAY: 0.00 mW] [S2S_VDD_G3D: 0.31 mW] [S10S_VDD2L: 17.46 mW] [S5S_VDDQ_MEM: 4.91 mW] [S10M_VDD_TPU: 13.19 mW] [L2S_VDD_AOC_RET: 23.80 mW] [0m
+[32m10-01 14:21:08.431  1928  1931 I pixel-thermal: Power rails [VSYS_PWR_MMWAVE: 0.00 mW] [S1M_VDD_MIF: 14.88 mW] [S5M_VDD_INT: 30.98 mW] [VSYS_PWR_RFFE: 30.80 mW] [S4M_VDD_CPUCL0: 16.93 mW] [S2M_VDD_CPUCL2: 9.24 mW] [0m
+[32m10-01 14:21:08.431  1928  1931 I pixel-thermal: Power rails [S3M_VDD_CPUCL1: 10.20 mW] [S4S_VDD2H_MEM: 18.26 mW] [S9S_VDD_AOC: 14.38 mW] [VSYS_PWR_MODEM: 129.65 mW] [0m
+[32m10-01 14:21:08.432  1928  1931 I pixel-thermal: CDEV log dc_icl state:0 tpu_cooling state:0 usbc-port state:0 wlc_fcc state:0 thermal-cpufreq-1 state:0 fcc state:0 thermal-gpufreq-0 state:0 thermal-cpufreq-2 state:0 thermal-cpufreq-0 state:0 [0m
+[33m10-01 14:21:08.625  2527  2555 W System  : A resource failed to call AbstractCursor.close. [0m
+[33m10-01 14:21:08.626  2527  2555 W System  : A resource failed to call AbstractCursor.close. [0m
+[32m10-01 14:21:11.104  1928  1928 I pixel-thermal: VIRTUAL-SKIN:36.3697 raw data: VIRTUAL-GNSS-BATT:35582.5 VIRTUAL-NEUTRAL-QI:31772.8 VIRTUAL-QI-DISP:36369.7 VIRTUAL-SKIN:36369.7 VIRTUAL-USB2-BATT:35291.6 battery:34300 disp_therm:34176 gnss_tcxo_therm:33865 neutral_therm:34310 qi_therm:35467 usb_pwr_therm2:34132 [0m
+[34m10-01 14:21:11.108  2345  2538 D ImpulseStateSource: Notify clients: 1221[0m
+[32m10-01 14:21:12.870  1556  2137 I MdnsReplySender: Sending {MdnsReplyInfo: /192.168.100.166:5353 to /224.0.0.251:5353, answers: 1, additionalAnswers: 6, knownAnswers: 0, sendDelayMs 31}[0m
+[32m10-01 14:21:13.556  1928  1931 I pixel-thermal: cellular-emergency:36.3697 raw data: VIRTUAL-GNSS-BATT:35582.5 VIRTUAL-NEUTRAL-QI:31772.8 VIRTUAL-QI-DISP:36369.7 VIRTUAL-SKIN:36369.7 VIRTUAL-USB2-BATT:35291.6 battery:34300 cellular-emergency:36369.7 disp_therm:34176 gnss_tcxo_therm:33865 neutral_therm:34310 qi_therm:35467 usb_pwr_therm2:34132 [0m
+[32m10-01 14:21:13.556  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU:36.3697 raw data: VIRTUAL-SKIN:36369.7 VIRTUAL-SKIN-CPU:36369.7 [0m
+[32m10-01 14:21:13.557  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU power_budget=2652.14 err=4.63034 s_power=800 time_elapsed_ms=7013 p=1852.14 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:21:13.557  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU binded power rails: (S4M_VDD_CPUCL0: 15.70 mW)(S2M_VDD_CPUCL2: 8.99 mW)(S3M_VDD_CPUCL1: 10.02 mW)[0m
+[32m10-01 14:21:13.558  1928  1931 I pixel-thermal: VIRTUAL-SKIN:36.3697 raw data: VIRTUAL-SKIN:36369.7 [0m
+[32m10-01 14:21:13.558  1928  1931 I pixel-thermal: VIRTUAL-SKIN-HINT:36.3697 raw data: VIRTUAL-SKIN:36369.7 VIRTUAL-SKIN-HINT:36369.7 [0m
+[32m10-01 14:21:13.558  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CHARGE:36.3697 raw data: VIRTUAL-GNSS-BATT:35582.5 VIRTUAL-NEUTRAL-QI:31772.8 VIRTUAL-QI-DISP:36369.7 VIRTUAL-SKIN-CHARGE:36369.7 VIRTUAL-USB2-BATT:35291.6 [0m
+[32m10-01 14:21:13.559  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:36.3697 raw data: VIRTUAL-SKIN:36369.7 VIRTUAL-SKIN-CPU-GPU:36369.7 [0m
+[32m10-01 14:21:13.559  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU power_budget=3389.1 err=8.63034 s_power=800 time_elapsed_ms=7013 p=2589.1 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:21:13.559  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU binded power rails: (S4M_VDD_CPUCL0: 15.70 mW)(S2M_VDD_CPUCL2: 8.99 mW)(S3M_VDD_CPUCL1: 10.02 mW)(S2S_VDD_G3D: 0.36 mW)[0m
+[34m10-01 14:21:16.183  1556  2063 D ActivityManager: freezing 8209 com.google.android.apps.turbo[0m
+[34m10-01 14:21:16.198  1556  2134 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET, states=14[0m
+[34m10-01 14:21:16.207  1556  2134 D InetDiagMessage: Destroyed 0 sockets, proto=IPPROTO_TCP, family=AF_INET6, states=14[0m
+[34m10-01 14:21:16.208  1556  2134 D InetDiagMessage: Destroyed live tcp sockets for uids={10121} in 16ms[0m
+[34m10-01 14:21:19.284  2304 20426 D IpClient/wlan0: interfaceLinkStateChanged: ifindex 47 up[0m
+[33m10-01 14:21:19.343  2798 27479 W ChimeraUtils: Module com.google.android.gms.gcm missing resource null(0)[0m
+[32m10-01 14:21:19.349  2798 27479 I AlarmManager: setExactAndAllowWhileIdle [name: FcmRetry type: 2 triggerAtMillis: 26878395][0m
+[34m10-01 14:21:19.350  2798  2798 D BoundBrokerSvc: onRebind: Intent { act=com.google.android.gms.common.telemetry.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentApiService }[0m
+[34m10-01 14:21:19.357  1081  2327 D AudioFlinger: onStateChanged: pid:9757  uid:10291  state:unfrozen - no freeze activity[0m
+[34m10-01 14:21:19.360  1556  1787 D ActivityManager: sync unfroze 9757 org.telegram.messenger for 3[0m
+[34m10-01 14:21:19.365  1556  1787 D ActivityManager: sync unfroze 25431 com.android.vending for 3[0m
+[32m10-01 14:21:19.367 25431 26373 I PlayCommon: [136] Preparing logs for uploading[0m
+[32m10-01 14:21:19.368 25431 25431 I Finsky  : [2] Memory trim requested to level 40[0m
+[32m10-01 14:21:19.368 25431 25431 I Finsky  : [2] Flushing in-memory image cache[0m
+[32m10-01 14:21:19.369 25431 25431 I Finsky  : [2] Memory trim requested to level 40[0m
+[32m10-01 14:21:19.369 25431 25431 I Finsky  : [2] Flushing in-memory image cache[0m
+[33m10-01 14:21:19.370 25431 26373 W PlayCommon: [136] No account for auth token provided[0m
+[32m10-01 14:21:19.370 25431 26373 I PlayCommon: [136] Connecting to server: https://play.googleapis.com/play/log?format=raw&proto_v2=true[0m
+[33m10-01 14:21:19.390  1556  3833 W ProcessStats: Tracking association SourceState{b72b84 com.google.android.gms/10169 BFgs #34527} whose proc state 4 is better than process ProcessState{afed5b5 com.google.android.adservices.api/10265 pkg=com.google.android.adservices.api} proc state 14 (1 skipped)[0m
+[33m10-01 14:21:19.396  1556  4781 W JobInfo : Job 'org.telegram.messenger/.KeepAliveJob#1000' has a deadline with functional constraints and an extremely short time window of 0 ms (delay=0, deadline=0). The functional constraints are not likely to be satisfied when the job runs.[0m
+[33m10-01 14:21:19.397  1556  4781 W JobInfo : Job 'org.telegram.messenger/.KeepAliveJob#1000' has a deadline with functional constraints and an extremely short time window of 0 ms (delay=0, deadline=0). The functional constraints are not likely to be satisfied when the job runs.[0m
+[33m10-01 14:21:19.771  9757  9919 W Notification: Bubbles work best with icons of TYPE_URI or TYPE_URI_ADAPTIVE_BITMAP. In the future, using an icon of this type will be required.[0m
+[33m10-01 14:21:19.785  1556  1785 W NotificationHistory: Attempted to remove conversation for locked/gone/disabled user 0[0m
+[33m10-01 14:21:19.832  9757  9919 W Notification: Bubbles work best with icons of TYPE_URI or TYPE_URI_ADAPTIVE_BITMAP. In the future, using an icon of this type will be required.[0m
+[33m10-01 14:21:19.838  1556  1785 W NotificationHistory: Attempted to remove conversation for locked/gone/disabled user 0[0m
+[32m10-01 14:21:20.322 25431 26373 I PlayCommon: [136] Successfully uploaded logs.[0m
+[32m10-01 14:21:20.576  1928  1931 I pixel-thermal: cellular-emergency:36.3664 raw data: VIRTUAL-GNSS-BATT:35577 VIRTUAL-NEUTRAL-QI:31750.2 VIRTUAL-QI-DISP:36366.4 VIRTUAL-SKIN:36366.4 VIRTUAL-USB2-BATT:35191 battery:34200 cellular-emergency:36366.4 disp_therm:34176 gnss_tcxo_therm:33954 neutral_therm:34287 qi_therm:35445 usb_pwr_therm2:34020 [0m
+[32m10-01 14:21:20.577  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU:36.3664 raw data: VIRTUAL-SKIN:36366.4 VIRTUAL-SKIN-CPU:36366.4 [0m
+[32m10-01 14:21:20.577  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU power_budget=2653.46 err=4.63365 s_power=800 time_elapsed_ms=7018 p=1853.46 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:21:20.577  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU binded power rails: (S4M_VDD_CPUCL0: 27.75 mW)(S2M_VDD_CPUCL2: 9.68 mW)(S3M_VDD_CPUCL1: 11.12 mW)[0m
+[32m10-01 14:21:20.578  1928  1931 I pixel-thermal: VIRTUAL-SKIN:36.3664 raw data: VIRTUAL-SKIN:36366.4 [0m
+[32m10-01 14:21:20.578  1928  1931 I pixel-thermal: VIRTUAL-SKIN-HINT:36.3664 raw data: VIRTUAL-SKIN:36366.4 VIRTUAL-SKIN-HINT:36366.4 [0m
+[32m10-01 14:21:20.579  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CHARGE:36.3664 raw data: VIRTUAL-GNSS-BATT:35577 VIRTUAL-NEUTRAL-QI:31750.2 VIRTUAL-QI-DISP:36366.4 VIRTUAL-SKIN-CHARGE:36366.4 VIRTUAL-USB2-BATT:35191 [0m
+[32m10-01 14:21:20.579  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU:36.3664 raw data: VIRTUAL-SKIN:36366.4 VIRTUAL-SKIN-CPU-GPU:36366.4 [0m
+[32m10-01 14:21:20.579  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU power_budget=3390.09 err=8.63365 s_power=800 time_elapsed_ms=7018 p=2590.09 i=0 d=0 dt_per_min=nan compensation=0 budget transient=0 control target=3 excluded power budget=0 is_emul_throttling_info=0[0m
+[32m10-01 14:21:20.579  1928  1931 I pixel-thermal: VIRTUAL-SKIN-CPU-GPU binded power rails: (S4M_VDD_CPUCL0: 27.75 mW)(S2M_VDD_CPUCL2: 9.68 mW)(S3M_VDD_CPUCL1: 11.12 mW)(S2S_VDD_G3D: 1.19 mW)[0m
+[32m10-01 14:21:20.650  1335  1335 I adbd    : adbd service requested 'shell,v2:export ANDROID_LOG_TAGS=''; exec logcat '-v' 'color' '*:V''[0m
+[32m10-01 14:21:21.114  1928  1928 I pixel-thermal: VIRTUAL-SKIN:36.3664 raw data: VIRTUAL-SKIN:36366.4 [0m
+[34m10-01 14:21:21.116  2345  2660 D ImpulseStateSource: Notify clients: 1222[0m
+[34m10-01 14:21:22.299  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 3: Enabled 0, odr_index 0.[0m
+[34m10-01 14:21:22.301  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 249: USF: Lsm6dsrDevice: Config sampling too slow. Took 890869ns.[0m
+[34m10-01 14:21:22.301  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Motion Detect (active:-1).[0m
+[34m10-01 14:21:22.301  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5595 not found.[0m
+[34m10-01 14:21:22.301  1293  1293 D AOC     : A3:MSG: usf_sensor_client.cc, 161: USF: Received kErrNotFound when disabling one shot sensor.[0m
+[34m10-01 14:21:22.302  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Stationary Detect (active:1).[0m
+[34m10-01 14:21:22.302  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 4: Enabled 1, odr_index 1.[0m
+[34m10-01 14:21:22.304  1293  1293 D AOC     : A3:MSG: motion_state_sensor.cc, 327: USF: MoSt: StationaryDetect sampling started with sampling ID 5612.[0m
+[34m10-01 14:21:22.304  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Motion Detect (active:-1).[0m
+[34m10-01 14:21:22.304  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5594 not found.[0m
+[34m10-01 14:21:22.306  1293  1293 D AOC     : A3:MSG: usf_sensor_client.cc, 145: USF: Received kErrNotFound when disabling one shot sensor.[0m
+[34m10-01 14:21:22.306  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Significant Motion] stopSensorEvents: sensor 0x20002[0m
+[34m10-01 14:21:22.307  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Significant Motion] requestSensorEvents: sensor 0x10001, period=20 latency=3200ms[0m
+[34m10-01 14:21:22.308  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:1).[0m
+[34m10-01 14:21:22.310  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 2: Enabled 1, odr_index 1.[0m
+[34m10-01 14:21:22.310  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 249: USF: Lsm6dsrDevice: Config sampling too slow. Took 438720ns.[0m
+[34m10-01 14:21:22.311  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 1, odr_index 3.[0m
+[34m10-01 14:21:22.312  1293  1293 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 71 Intr: 1.[0m
+[34m10-01 14:21:22.315  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Step Counter] stopSensorEvents: sensor 0x20002[0m
+[34m10-01 14:21:22.316  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Step Counter] requestSensorEvents: sensor 0x10001, period=20 latency=1000ms.[0m
+[34m10-01 14:21:22.318  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:2).[0m
+[34m10-01 14:21:22.319  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Device Pickup Sensor] requestSensorEvents: sensor 0x10001, period=20 latency=0ms.[0m
+[34m10-01 14:21:22.319  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:3).[0m
+[34m10-01 14:21:22.320  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 0: Enabled 1, odr_index 3.[0m
+[34m10-01 14:21:22.320  1293  1293 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 1 Intr: 52.[0m
+[34m10-01 14:21:22.320  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 400878ns.[0m
+[34m10-01 14:21:22.322  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Device Pickup Sensor] stopSensorEvents: sensor 0x20002[0m
+[34m10-01 14:21:22.322  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 532: VSC: [Quick Pickup Sensor] requestSensorEvents: sensor 0x10001, period=20 latency=0ms.[0m
+[34m10-01 14:21:22.322  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] Accelerometer enabled with interval: 20000000 ns.[0m
+[34m10-01 14:21:22.322  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] SD enabled.[0m
+[34m10-01 14:21:22.324  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] QPA: state -> QPA_STATE_MOTION_DETECTED[0m
+[34m10-01 14:21:22.325  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] FNA: state -> FNA_STATE_MOTION_DETECTED[0m
+[34m10-01 14:21:22.325  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] FNA: request accel.[0m
+[34m10-01 14:21:22.325  1293  1293 D AOC     : A3:MSG: vsc_controller.cc, 550: VSC: [Quick Pickup Sensor] stopSensorEvents: sensor 0x20002[0m
+[34m10-01 14:21:22.325  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] MD disabled.[0m
+[34m10-01 14:21:22.326  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] STA: state -> STA_STATE_MOTION_DETECTED[0m
+[34m10-01 14:21:22.327  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] STA: request accel.[0m
+[34m10-01 14:21:22.327  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Accelerometer (active:3).[0m
+[34m10-01 14:21:22.327  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Stationary Detect (active:2).[0m
+[34m10-01 14:21:22.328  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR FreeFall Detect (active:1).[0m
+[34m10-01 14:21:22.329  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 763: USF: Lsm6dsrDevice: Sensor 5: Enabled 1, odr_index 1.[0m
+[34m10-01 14:21:22.329  1293  1293 D AOC     : A3:MSG: lsm6dsr_fifo.cc, 750: USF: Lsm6dsrFifo: ODR: XL/G/T/TS: 52/0/13/6 WM: 1 Intr: 52.[0m
+[32m10-01 14:21:22.329  1024  1054 I CHRE    : @ 26757.237: [AR] IDLE => ON[0m
+[34m10-01 14:21:22.329  1293  1293 D AOC     : A3:MSG: lsm6dsr_device.cc, 671: USF: Lsm6dsrDevice: Fifo was disabled for 416504ns.[0m
+[34m10-01 14:21:22.332  1024  1054 D CHRE.HAL: Received a nanoapp message from 0x476f6f676c001016 endpoint 0x2: Type 0x8003 size 1 [0m
+[34m10-01 14:21:22.332  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1581: USF: Received stop sampling request for LSM6DSR Motion Detect (active:-1).[0m
+[34m10-01 14:21:22.333  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 2037: USF: Sampling configuration 5596 not found.[0m
+[34m10-01 14:21:22.333  1293  1293 D AOC     : A3:MSG: usf_sensor_client.cc, 145: USF: Received kErrNotFound when disabling one shot sensor.[0m
+[34m10-01 14:21:22.333  1293  1293 D AOC     : A3:MSG: usf_sensor.cc, 1573: USF: Received start sampling request for LSM6DSR Temperature (active:2).[0m
+[32m10-01 14:21:22.351  1080  3689 I vendor.google.wifi_ext-service-vendor: Wifi: Setting SAR Scenario to 3[0m
+[31m10-01 14:21:22.351  1080  3689 E WifiHAL : wifi_select_tx_power_scenario[0m
+[34m10-01 14:21:22.361  2355  2355 D GRIL-S  : [0674]> UPDATE_DEVICE_STATE DeviceState: Usb:1, Wifi: 1, Wifi AP: 0, Earpiece: 0, Bluetooth: 0, Wireless charging: 0, Screen: 0, Camera: 0, 0, -, -, Motion: 1, Bluetooth tethering: 0, Voice: 0, Wifi 2.4G: 1, Radio: 1, Bluetooth connected: 0, Bluetooth media: 0, Wifi Band: 1, Wifi AP Band: 0, Wifi call: 0, mmWave: 0, mCellBackhaul: 0, mHallSensor: 0, mDozeStatus: 1, mAppClassInfo: 0, mWifiCapSensorStatus: 0, mCellCapSensorStatus: 0, mBesideHeadHandStatus: 0, mSpeakerStatus: 0, mProtectiveCaseStatus: 0, mWifiSettingStatus: 0, mGpsStatus: 0[0m
+[34m10-01 14:21:22.409  2355  3244 D GRIL-S  : [0674]< UPDATE_DEVICE_STATE [0m
+[33m10-01 14:21:22.510  9757  9919 W Notification: Bubbles work best with icons of TYPE_URI or TYPE_URI_ADAPTIVE_BITMAP. In the future, using an icon of this type will be required.[0m
+[33m10-01 14:21:22.537  1556  1785 W NotificationHistory: Attempted to remove conversation for locked/gone/disabled user 0[0m
+[34m10-01 14:21:22.544  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] FNA: Motion to nudge accel timed out.[0m
+[34m10-01 14:21:22.544  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] FNA: state -> FNA_STATE_WAIT_NEXT_MOTION[0m
+[33m10-01 14:21:22.607  9757  9919 W Notification: Bubbles work best with icons of TYPE_URI or TYPE_URI_ADAPTIVE_BITMAP. In the future, using an icon of this type will be required.[0m
+[33m10-01 14:21:22.618  1556  1785 W NotificationHistory: Attempted to remove conversation for locked/gone/disabled user 0[0m
+[34m10-01 14:21:22.732  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] STA: Significant Y-axis acceleration change.[0m
+[34m10-01 14:21:22.732  1293  1293 D AOC     : A3:MSG: usf_vsc_log.cc, 44: USF: [QuickPickup] STA: state -> STA_STATE_WAIT_NEXT_MOTION[0m

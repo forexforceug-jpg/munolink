@@ -903,7 +903,7 @@ export function SceneRenderer({
   // The parent ScreenShell has already reserved space for the tab
   // bar and safe areas. We just sit at the bottom of our content
   // area with a small visual buffer.
-  const infoPanelBottomOffset = 8;
+  const infoPanelBottomOffset = 80 + bottomOffset;
 
   // Reset natural-size cache when media changes
   useEffect(() => {

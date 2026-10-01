@@ -24,6 +24,7 @@ import {
   ActivityIndicator,
   Text,
   TouchableOpacity,
+  Share,
   useWindowDimensions,
   Image,
   StatusBar,
@@ -32,7 +33,10 @@ import {
   ViewabilityConfig,
   ViewToken,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { FloatingActionRail } from './components/FloatingActionRail';
 import { useFeedStore } from '../../store/feedStore';
@@ -59,7 +63,6 @@ import { LocationPicker } from './components/LocationPicker';
 import { useIsFocused } from '@react-navigation/native';
 import { StyledAlert } from './components/StyledAlert';
 import { sharePost } from '../../utils/share';
-import { ScreenShell, useScreenShell } from '../../utils/screenShell';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -103,18 +106,14 @@ const ItemMediaLoadingSpinner: React.FC = () => {
 };
 
 export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
+  const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
   const { isAuthenticated, isGuest, user } = useAuth();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
-
-  // ✅ Read the shell's content dimensions. This is the correct area
-  //    for the swipe cards — everything above the tab bar and below
-  //    the status bar / notch.
-  const { contentSize, insets, tabBarHeight } = useScreenShell();
-  const { height, width } = contentSize;
 
   const [userLocation, setUserLocation] = useState<string>('Detecting...');
   const [isLocationLoading, setIsLocationLoading] = useState(true);
@@ -204,7 +203,12 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const oppOpenTimeRef = useRef<number>(Date.now());
   const lastOpenOpportunityIdRef = useRef<string | null>(null);
 
+  // Tracks whether the query has settled at least once.
   const hasFetchedOnceRef = useRef(false);
+
+  // ✅ Deep-link tracking
+  // pendingOpenPostIdRef: the post id waiting to be scrolled to.
+  // lastHandledPostIdRef: the post id we've already scrolled to.
   const pendingOpenPostIdRef = useRef<string | null>(null);
   const lastHandledPostIdRef = useRef<string | null>(null);
 
@@ -219,6 +223,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setError,
   } = useFeedStore();
 
+  // ============================================================
+  // QUERY
+  // ============================================================
   const {
     data,
     isLoading: queryLoading,
@@ -247,6 +254,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [queryStatus]);
 
+  // ============================================================
+  // LOCATION HANDLING
+  // ============================================================
   useEffect(() => {
     const getLocation = async () => {
       try {
@@ -346,6 +356,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     [data, user?.id, setOpportunities]
   );
 
+  // --- Memoized Values ---
   const uniqueOpportunities = useMemo(() => {
     if (!opportunities || opportunities.length === 0) return [];
     const map = new Map<string, Opportunity>();
@@ -368,6 +379,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     return uniqueOpportunities.slice(0, FEATURED_COUNT);
   }, [uniqueOpportunities]);
 
+  // --- Sync query state into store ---
   useEffect(() => {
     if (queryError) {
       setError(queryError.message);
@@ -376,7 +388,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [queryError, queryLoading, setError, setLoading]);
 
   // ============================================================
-  // DEEP LINK: capture incoming post id
+  // ✅ DEEP LINK: capture the incoming post id into a ref
   // ============================================================
   useEffect(() => {
     const openPostId = route?.params?.openPostId;
@@ -387,7 +399,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [route?.params?.openPostId]);
 
   // ============================================================
-  // DEEP LINK: scroll to pending post once the feed loads
+  // ✅ DEEP LINK: scroll to the pending post once the feed loads
   // ============================================================
   useEffect(() => {
     const openPostId = pendingOpenPostIdRef.current;
@@ -399,7 +411,13 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     if (index === -1) {
       if (__DEV__) {
         console.log('⚠️ Deep-linked post not found in feed:', openPostId);
+        console.log(
+          'Feed IDs:',
+          uniqueOpportunities.slice(0, 5).map((o) => o.id),
+          '...'
+        );
       }
+      // Clear the pending value so we don't retry forever.
       pendingOpenPostIdRef.current = null;
       lastHandledPostIdRef.current = openPostId;
       return;
@@ -420,13 +438,15 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         flatListRef.current?.scrollToIndex({ index, animated: false });
         setCurrentIndex(index);
 
+        // Success — remember we handled it.
         lastHandledPostIdRef.current = openPostId;
         pendingOpenPostIdRef.current = null;
 
+        // Clear the param so remounting doesn't re-scroll.
         try {
           navigation.setParams({ openPostId: undefined } as any);
         } catch {
-          /* noop */
+          /* older RN versions may not support setParams */
         }
 
         if (__DEV__) console.log('🎯 Scrolled to post on attempt', attempts);
@@ -452,6 +472,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     };
   }, [uniqueOpportunities, navigation, setCurrentIndex]);
 
+  // ============================================================
+  // ✅ FlatList scrollToIndex failure handler
+  // ============================================================
   const handleScrollToIndexFailed = useCallback(
     (info: {
       index: number;
@@ -475,6 +498,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     []
   );
 
+  // ============================================================
+  // PREFETCH LIKES
+  // ============================================================
   useEffect(() => {
     if (!user?.id) return;
     const postIds = uniqueOpportunities.map((o) => o.id);
@@ -506,6 +532,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     };
   }, [user?.id, uniqueOpportunities]);
 
+  // ============================================================
+  // INITIALISE loadingItemsMap
+  // ============================================================
   useEffect(() => {
     if (uniqueOpportunities.length === 0) return;
 
@@ -532,6 +561,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     []
   );
 
+  // ============================================================
+  // SILENT RECOMMENDATION PASS
+  // ============================================================
   useEffect(() => {
     if (!data || data.length === 0) return;
 
@@ -571,6 +603,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           if (__DEV__)
             console.log(`✅ Applied ${result.length} personalized opportunities`);
           setOpportunities(result);
+        } else {
+          if (__DEV__)
+            console.log('ℹ️ Recommender returned empty — keeping raw feed');
         }
       } catch (error) {
         console.error('❌ Error applying recommendations:', error);
@@ -609,6 +644,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [swipeCount, isAuthenticated, isGuest]);
 
+  // ============================================================
+  // STABLE VIEWABILITY HANDLER
+  // ============================================================
   const onViewableItemsChangedRef = useRef<
     | ((info: {
         viewableItems: ViewToken<Opportunity>[];
@@ -682,10 +720,19 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       if (firstOpp) {
         lastOpenOpportunityIdRef.current = firstOpp.id;
         oppOpenTimeRef.current = Date.now();
+        if (__DEV__) {
+          console.log('📊 Behavioral Event:', {
+            type: 'opportunity_open',
+            sceneIndex: 0,
+            sceneType: 'media',
+            source: 'tap',
+          });
+        }
       }
     }
   }, [uniqueOpportunities, currentIndex]);
 
+  // --- Action Handlers ---
   const handleReviewsPress = useCallback(
     (productId: string, productTitle?: string) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -735,6 +782,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const handleDirectionsPress = useCallback(
     (userName: string, area: string) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      console.log(`📍 Directions to ${userName} in ${area}`);
       setShowDirectionsModal(true);
     },
     []
@@ -743,6 +791,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const handleAIPress = useCallback(
     (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      console.log('🤖 AI Pressed for opportunity:', opportunity.title);
       setSelectedOpportunity(opportunity);
       setAiContextHint('');
 
@@ -779,6 +828,50 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       }
     },
     [isDesktop]
+  );
+
+  const handleLovePress = useCallback(
+    (opportunity: Opportunity, isLoved: boolean) => {
+      if (!isAuthenticated) {
+        showStyledAlert({
+          title: '🔒 Join Munolink',
+          message: 'Create a free account to save opportunities.',
+          icon: 'lock-closed',
+          iconColor: '#4A7DFF',
+          buttons: [
+            {
+              text: 'Continue Browsing',
+              style: 'cancel',
+              onPress: hideStyledAlert,
+            },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (user?.id && isLoved) {
+        setSavedItemsMap((prev) => ({
+          ...prev,
+          [opportunity.id]: true,
+        }));
+        recommendationService
+          .trackInteraction(
+            user.id,
+            opportunity.id,
+            'save',
+            mapItemType(opportunity.type)
+          )
+          .catch(() => {});
+      }
+    },
+    [isAuthenticated, navigation, user?.id, showStyledAlert, hideStyledAlert]
   );
 
   const handleSavePress = useCallback(
@@ -920,8 +1013,22 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     ]
   );
 
+  const handleFollowPress = useCallback(
+    (opportunity: Opportunity) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      navigation.navigate('Inbox', {
+        userId: opportunity.userId,
+        userName: opportunity.userFullName || 'User',
+      });
+    },
+    [navigation]
+  );
+
   const handleInboxPress = useCallback(() => {
-    if (!currentOpportunity) return;
+    if (!currentOpportunity) {
+      console.warn('⚠️ No current opportunity');
+      return;
+    }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -950,9 +1057,12 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       return;
     }
 
+    const targetUserId = currentOpportunity.userId || '';
+    const targetUserName = currentOpportunity.userFullName || 'User';
+
     navigation.navigate('Inbox', {
-      userId: currentOpportunity.userId || '',
-      userName: currentOpportunity.userFullName || 'User',
+      userId: targetUserId,
+      userName: targetUserName,
     });
   }, [
     currentOpportunity,
@@ -1138,8 +1248,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       return (
         <View
           style={{
-            height: height,
-            width: width,
+            height: isDesktop ? height : height,
             justifyContent: 'center',
             alignItems: 'center',
             position: 'relative',
@@ -1162,8 +1271,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             type={item.type || 'product'}
             createdAt={item.createdAt}
             isDesktop={isDesktop}
-            width={width}
-            height={height}
+            width={isDesktop ? 420 : width}
+            height={isDesktop ? height : height}
             onShowMore={() => handleShowMorePress(item)}
             onShare={() => handleSharePress(item)}
             onSave={() => handleSavePress(item)}
@@ -1209,8 +1318,13 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             onMediaLoadStateChange={(isLoading) =>
               handleMediaLoadStateChange(item.id, isLoading)
             }
-            onSceneChange={(sceneIdx, source) => {}}
-            onBehavioralEvent={(event) => {}}
+            onSceneChange={(sceneIdx, source) => {
+              if (__DEV__)
+                console.log(`Scene changed to: ${sceneIdx}`, source);
+            }}
+            onBehavioralEvent={(event) => {
+              if (__DEV__) console.log('📊 Behavioral Event:', event);
+            }}
             autoPlay={true}
             autoPlayInterval={5000}
             resetKey={item.id}
@@ -1224,7 +1338,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             <FloatingActionRail
               key={`rail-${item.id}`}
               opportunity={item}
-              bottomInset={16}
+              bottomInset={80}
               rightShift={-6}
               isLiked={isLiked}
               likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
@@ -1239,6 +1353,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 handleReviewsPress(productId, item.title)
               }
               onDirectionsPress={(userName, area) => {
+                console.log(`📍 Directions to ${userName} in ${area}`);
                 setShowDirectionsModal(true);
               }}
               onSharePress={handleSharePress}
@@ -1279,38 +1394,47 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     ]
   );
 
+  // ============================================================
+  // Loading / error / empty states
+  // ============================================================
   const isInitialLoading = !hasFetchedOnceRef.current && queryLoading;
 
   if (isInitialLoading || (isLoading && uniqueOpportunities.length === 0)) {
     return (
-      <ScreenShell backgroundColor="#05070f">
-        <View style={styles.container}>
-          <StatusBar barStyle="light-content" backgroundColor="#000000" />
-          <TikTokLoadingSkeleton />
-        </View>
-      </ScreenShell>
+      <View style={[styles.container, { height }]}>
+        <StatusBar barStyle="light-content" backgroundColor="#000000" />
+        <TikTokLoadingSkeleton />
+      </View>
     );
   }
 
   if (error) {
     return (
-      <ScreenShell backgroundColor="#000000">
-        <View style={styles.centered}>
-          <Text style={styles.errorText}>Error loading feed</Text>
-          <Text style={styles.errorSubtext}>{error}</Text>
-        </View>
-      </ScreenShell>
+      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>
+          Error loading feed
+        </Text>
+        <Text
+          style={[styles.errorSubtext, { fontSize: width < 380 ? 12 : 14 }]}
+        >
+          {error}
+        </Text>
+      </SafeAreaView>
     );
   }
 
   if (uniqueOpportunities.length === 0) {
     return (
-      <ScreenShell backgroundColor="#000000">
-        <View style={styles.centered}>
-          <Text style={styles.emptyText}>No opportunities found</Text>
-          <Text style={styles.emptySubtext}>Check back later for new deals!</Text>
-        </View>
-      </ScreenShell>
+      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>
+          No opportunities found
+        </Text>
+        <Text
+          style={[styles.emptySubtext, { fontSize: width < 380 ? 12 : 14 }]}
+        >
+          Check back later for new deals!
+        </Text>
+      </SafeAreaView>
     );
   }
 
@@ -1347,166 +1471,154 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     >
       <GestureHandlerRootView style={{ flex: 1 }}>
         <BottomSheetModalProvider>
-          {/* ✅ Full-bleed feed with the shell handling all insets.
-              The gradient overlay is inside the shell so it stays
-              below the notch / status bar. */}
-          <ScreenShell backgroundColor="#05070f" includeTopSafeArea={false}>
-            <View style={styles.container}>
-              <StatusBar barStyle="light-content" />
+          <SafeAreaView style={[styles.container, { height }]}>
+            <StatusBar barStyle="light-content" />
 
-              {!isDesktop && (
-                <LinearGradient
-                  colors={[
-                    'rgba(0, 0, 0, 0.92)',
-                    'rgba(0, 0, 0, 0.7)',
-                    'rgba(0, 0, 0, 0.4)',
-                    'rgba(0, 0, 0, 0)',
-                  ]}
-                  locations={[0, 0.25, 0.5, 1]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 0, y: 1 }}
-                  style={[
-                    styles.topBarGradient,
-                    { paddingTop: insets.top + 12 },
-                  ]}
-                >
-                  <View style={styles.topBarContent}>
-                    <TouchableOpacity style={styles.logoContainer}>
-                      <Image
-                        source={require('../../../assets/favicon.png')}
-                        style={styles.logoImage}
-                        resizeMode="contain"
-                      />
-                    </TouchableOpacity>
+            {!isDesktop && (
+              <LinearGradient
+                colors={[
+                  'rgba(0, 0, 0, 0.92)',
+                  'rgba(0, 0, 0, 0.7)',
+                  'rgba(0, 0, 0, 0.4)',
+                  'rgba(0, 0, 0, 0)',
+                ]}
+                locations={[0, 0.25, 0.5, 1]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={[styles.topBarGradient, { paddingTop: insets.top + 12 }]}
+              >
+                <View style={styles.topBarContent}>
+                  <TouchableOpacity style={styles.logoContainer}>
+                    <Image
+                      source={require('../../../assets/favicon.png')}
+                      style={styles.logoImage}
+                      resizeMode="contain"
+                    />
+                  </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={styles.locationContainer}
-                      onPress={() => setShowLocationPicker(true)}
-                      activeOpacity={0.7}
+                  <TouchableOpacity
+                    style={styles.locationContainer}
+                    onPress={() => setShowLocationPicker(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name="location-outline"
+                      size={16}
+                      color="#4A7DFF"
+                    />
+                    <Text
+                      style={[styles.locationText, { fontSize: 13 }]}
+                      numberOfLines={1}
                     >
-                      <Ionicons
-                        name="location-outline"
-                        size={16}
-                        color="#4A7DFF"
-                      />
-                      <Text
-                        style={[styles.locationText, { fontSize: 13 }]}
-                        numberOfLines={1}
-                      >
-                        {getLocationDisplay()}
-                      </Text>
-                      <Ionicons
-                        name="chevron-down"
-                        size={14}
-                        color="#4A7DFF"
-                      />
-                    </TouchableOpacity>
+                      {getLocationDisplay()}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
+                  </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={styles.searchContainer}
-                      onPress={() => {
-                        (navigation as any).navigate('Search');
-                      }}
-                    >
-                      <Ionicons
-                        name="search-outline"
-                        size={24}
-                        color="#FFFFFF"
-                      />
-                    </TouchableOpacity>
-                  </View>
-                </LinearGradient>
-              )}
-
-              <FlatList
-                ref={flatListRef}
-                data={uniqueOpportunities}
-                renderItem={renderItem}
-                keyExtractor={(item, index) => `item-${item.id}-${index}`}
-                pagingEnabled={!isDesktop}
-                showsVerticalScrollIndicator={false}
-                snapToInterval={isDesktop ? undefined : height}
-                snapToAlignment="start"
-                decelerationRate="fast"
-                viewabilityConfig={VIEWABILITY_CONFIG}
-                onViewableItemsChanged={handleViewableItemsChanged}
-                getItemLayout={(data, index) => ({
-                  length: height,
-                  offset: height * index,
-                  index,
-                })}
-                initialScrollIndex={currentIndex}
-                removeClippedSubviews={false}
-                maxToRenderPerBatch={isDesktop ? 3 : 2}
-                windowSize={isDesktop ? 5 : 3}
-                onScrollToIndexFailed={handleScrollToIndexFailed}
-                scrollEventThrottle={32}
-                style={{ flex: 1, backgroundColor: '#0D0D1A' }}
-              />
-
-              <ReviewsBottomSheet
-                visible={showReviewsModal}
-                productId={selectedProductId}
-                productTitle={selectedProductTitle}
-                onClose={() => {
-                  setShowReviewsModal(false);
-                  setSelectedProductId('');
-                  setSelectedProductTitle('');
-                }}
-              />
-
-              <AIBottomSheet
-                visible={showAIModal}
-                opportunity={selectedOpportunity}
-                contextHint={aiContextHint}
-                onClose={() => {
-                  setShowAIModal(false);
-                  setSelectedOpportunity(null);
-                  setAiContextHint('');
-                }}
-                isDesktopView={false}
-              />
-
-              <DirectionsBottomSheet
-                visible={showDirectionsModal}
-                opportunity={currentOpportunity}
-                onClose={handleCloseDirections}
-                isDesktopView={false}
-              />
-
-              <LocationPicker
-                visible={showLocationPicker}
-                onClose={() => setShowLocationPicker(false)}
-                onSelectLocation={handleLocationSelect}
-                currentLocationLabel={selectedLocationLabel || userLocation}
-                isLocationLoading={isLocationLoading}
-              />
-
-              {showGuestPrompt && (
-                <View style={styles.guestPromptOverlay}>
-                  <GuestPromptCard
-                    onJoinPress={() => {
-                      setShowGuestPrompt(false);
-                      navigation.navigate('Join');
+                  <TouchableOpacity
+                    style={styles.searchContainer}
+                    onPress={() => {
+                      (navigation as any).navigate('Search');
                     }}
-                    onContinuePress={() => {
-                      setShowGuestPrompt(false);
-                    }}
-                  />
+                  >
+                    <Ionicons
+                      name="search-outline"
+                      size={24}
+                      color="#FFFFFF"
+                    />
+                  </TouchableOpacity>
                 </View>
-              )}
+              </LinearGradient>
+            )}
 
-              <StyledAlert
-                visible={styledAlertConfig.visible}
-                title={styledAlertConfig.title}
-                message={styledAlertConfig.message}
-                icon={styledAlertConfig.icon}
-                iconColor={styledAlertConfig.iconColor}
-                buttons={styledAlertConfig.buttons}
-                onClose={hideStyledAlert}
-              />
-            </View>
-          </ScreenShell>
+            <FlatList
+              ref={flatListRef}
+              data={uniqueOpportunities}
+              renderItem={renderItem}
+              keyExtractor={(item, index) => `item-${item.id}-${index}`}
+              pagingEnabled={!isDesktop}
+              showsVerticalScrollIndicator={false}
+              snapToInterval={isDesktop ? undefined : height}
+              snapToAlignment="start"
+              decelerationRate="fast"
+              viewabilityConfig={VIEWABILITY_CONFIG}
+              onViewableItemsChanged={handleViewableItemsChanged}
+              getItemLayout={(data, index) => ({
+                length: height,
+                offset: height * index,
+                index,
+              })}
+              initialScrollIndex={currentIndex}
+              removeClippedSubviews={false}
+              maxToRenderPerBatch={isDesktop ? 3 : 2}
+              windowSize={isDesktop ? 5 : 3}
+              onScrollToIndexFailed={handleScrollToIndexFailed}
+              scrollEventThrottle={32}
+              style={{ flex: 1, backgroundColor: '#0D0D1A' }}
+            />
+
+            <ReviewsBottomSheet
+              visible={showReviewsModal}
+              productId={selectedProductId}
+              productTitle={selectedProductTitle}
+              onClose={() => {
+                setShowReviewsModal(false);
+                setSelectedProductId('');
+                setSelectedProductTitle('');
+              }}
+            />
+
+            <AIBottomSheet
+              visible={showAIModal}
+              opportunity={selectedOpportunity}
+              contextHint={aiContextHint}
+              onClose={() => {
+                setShowAIModal(false);
+                setSelectedOpportunity(null);
+                setAiContextHint('');
+              }}
+              isDesktopView={false}
+            />
+
+            <DirectionsBottomSheet
+              visible={showDirectionsModal}
+              opportunity={currentOpportunity}
+              onClose={handleCloseDirections}
+              isDesktopView={false}
+            />
+
+            <LocationPicker
+              visible={showLocationPicker}
+              onClose={() => setShowLocationPicker(false)}
+              onSelectLocation={handleLocationSelect}
+              currentLocationLabel={selectedLocationLabel || userLocation}
+              isLocationLoading={isLocationLoading}
+            />
+
+            {showGuestPrompt && (
+              <View style={styles.guestPromptOverlay}>
+                <GuestPromptCard
+                  onJoinPress={() => {
+                    setShowGuestPrompt(false);
+                    navigation.navigate('Join');
+                  }}
+                  onContinuePress={() => {
+                    setShowGuestPrompt(false);
+                  }}
+                />
+              </View>
+            )}
+
+            <StyledAlert
+              visible={styledAlertConfig.visible}
+              title={styledAlertConfig.title}
+              message={styledAlertConfig.message}
+              icon={styledAlertConfig.icon}
+              iconColor={styledAlertConfig.iconColor}
+              buttons={styledAlertConfig.buttons}
+              onClose={hideStyledAlert}
+            />
+          </SafeAreaView>
         </BottomSheetModalProvider>
       </GestureHandlerRootView>
     </ResponsiveLayout>

@@ -21,24 +21,71 @@ import { PayScreen } from '../features/pay/PayScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
 import { AccountScreen } from '../features/account/AccountScreen';
 import { useBreakpoint } from '../hooks/useBreakpoint';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../../src/context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { BASE_TAB_HEIGHT, useTabBarHeight } from '../utils/screenShell';
 
 const Tab = createBottomTabNavigator();
 const { width } = Dimensions.get('window');
 const pixelRatio = PixelRatio.get();
 
+// ----------------------------------------------------------------
+// Responsive sizing
+// ----------------------------------------------------------------
 const isSmallDevice = width < 375;
 const isMediumDevice = width >= 375 && width < 420;
 
-// Re-export so existing imports keep working.
-export { BASE_TAB_HEIGHT };
+export const BASE_TAB_HEIGHT = 60;
+
+// Minimum bottom buffer to keep the tab bar clear of browser chrome
+// on web (Safari URL bar, Android Chrome gesture area, etc.).
+const WEB_BOTTOM_BUFFER = 12;
 
 const getIconSize = (baseSize: number) => {
   const scaled = baseSize * Math.min(pixelRatio / 2, 1.2);
   return Math.round(scaled);
 };
+
+// ----------------------------------------------------------------
+// Web safe-area bottom helper
+//
+// react-native-safe-area-context does not compute CSS env(safe-area-
+// inset-bottom) on web, so on iOS Safari the tab bar can sit under
+// the home indicator. We read it directly via a DOM probe, falling
+// back to a sensible default when unavailable.
+//
+// Runs once and caches the result.
+// ----------------------------------------------------------------
+let cachedWebSafeBottom: number | null = null;
+
+function getWebSafeAreaBottom(): number {
+  if (Platform.OS !== 'web') return 0;
+  if (cachedWebSafeBottom !== null) return cachedWebSafeBottom;
+
+  if (typeof document === 'undefined') {
+    cachedWebSafeBottom = 0;
+    return 0;
+  }
+
+  try {
+    const probe = document.createElement('div');
+    probe.style.position = 'fixed';
+    probe.style.bottom = '0';
+    probe.style.left = '0';
+    probe.style.width = '0';
+    probe.style.height = 'env(safe-area-inset-bottom, 0px)';
+    probe.style.pointerEvents = 'none';
+    probe.style.visibility = 'hidden';
+    document.body.appendChild(probe);
+    const rect = probe.getBoundingClientRect();
+    const value = rect.height || 0;
+    document.body.removeChild(probe);
+    cachedWebSafeBottom = value;
+    return value;
+  } catch {
+    cachedWebSafeBottom = 0;
+    return 0;
+  }
+}
 
 // ----------------------------------------------------------------
 // Custom Pay button
@@ -91,6 +138,8 @@ const CustomTabBarButton = ({
           <Ionicons name="card" size={iconSize} color="#FFFFFF" />
         </LinearGradient>
       </View>
+
+
       {focused && <View style={styles.activeIndicator} />}
     </TouchableOpacity>
   );
@@ -180,6 +229,14 @@ const TabIcon = ({
 // ================================================================
 // Hook: unread message count
 // ================================================================
+//
+// ✅ Crash-proof against Supabase Realtime v2 rules.
+// ✅ Unique channel name per effect run.
+// ✅ userId read from a ref so fetchCount stays stable.
+// ✅ Poll fallback every 15s.
+// ✅ isMountedRef guard so async callbacks don't touch state after
+//    the component unmounts.
+//
 const useUnreadMessageCount = (): number => {
   const { user, isAuthenticated } = useAuth();
   const [count, setCount] = useState(0);
@@ -285,9 +342,19 @@ export const TabNavigator = () => {
   const insets = useSafeAreaInsets();
   const unreadCount = useUnreadMessageCount();
 
-  // ✅ Single shared source for the tab-bar height — same helper used
-  //    by ScreenShell to reserve space for the bar.
-  const tabBarHeight = useTabBarHeight();
+  // ---- Compute the effective bottom inset ----
+  // On native: use the safe-area inset (home indicator, gesture bar).
+  // On web:   the safe-area lib returns 0, so we add our own buffer
+  //           and, where the browser supports it, env(safe-area-
+  //           inset-bottom) via getWebSafeAreaBottom().
+  const webSafeBottom = useMemo(() => getWebSafeAreaBottom(), []);
+
+  const effectiveBottomInset =
+    Platform.OS === 'web'
+      ? Math.max(insets.bottom, webSafeBottom) + WEB_BOTTOM_BUFFER
+      : insets.bottom;
+
+  const tabBarHeight = BASE_TAB_HEIGHT + effectiveBottomInset;
 
   if (isDesktop) {
     return (
@@ -314,7 +381,7 @@ export const TabNavigator = () => {
           styles.tabBar,
           {
             height: tabBarHeight,
-            paddingBottom: insets.bottom + 6,
+            paddingBottom: effectiveBottomInset + 6,
             paddingTop: 8,
           },
         ],
@@ -422,6 +489,8 @@ const styles = StyleSheet.create({
         elevation: 12,
       },
       web: {
+        // Ensures the bar always sits above browser chrome overlays
+        // (mobile Safari URL bar, Chrome gesture area).
         zIndex: 1000,
       },
     }),
