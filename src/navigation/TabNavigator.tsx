@@ -464,8 +464,8 @@ const styles = StyleSheet.create({
     flex: 1,
     ...Platform.select({
       web: {
-        height: '100vh' as any,
-        maxHeight: '100vh' as any,
+        height: '100dvh' as any,
+        maxHeight: '100dvh' as any,
         overflow: 'hidden',
         position: 'relative' as any,
       },

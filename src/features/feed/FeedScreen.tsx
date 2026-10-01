@@ -33,6 +33,7 @@ import {
   ViewabilityConfig,
   ViewToken,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import {
   SafeAreaView,
@@ -155,6 +156,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const [contextPanelView, setContextPanelView] = useState<
     'details' | 'reviews' | 'directions' | null
   >(null);
+
+  // ✅ Pull-to-refresh state
+  const [refreshing, setRefreshing] = useState(false);
 
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
@@ -553,6 +557,105 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     },
     []
   );
+
+  // ============================================================
+  // ✅ PULL-TO-REFRESH
+  // ============================================================
+  //
+  // Re-fetches the raw opportunity list, re-applies the user's
+  // location + recommendation pass, and resets the feed to index 0.
+  // Uses the same data path as the initial load so distances,
+  // filters, and the recommender behave identically.
+  //
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+
+    try {
+      // Grab the user's current location so distances stay accurate.
+      let userCoords: { latitude: number; longitude: number } | undefined;
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch (err) {
+        if (__DEV__) console.log('⚠️ Refresh: no location, using fallback');
+      }
+
+      // Fetch a fresh batch.
+      const freshRaw = await feedService.getOpportunities(userCoords);
+
+      if (!freshRaw || freshRaw.length === 0) {
+        if (__DEV__) console.log('ℹ️ Refresh returned no data — keeping existing');
+        return;
+      }
+
+      // Run the recommendation pass so the ordering is fresh.
+      let result: Opportunity[] = freshRaw;
+      try {
+        if (user?.id) {
+          result = await recommendationService.getPersonalizedRecommendations(
+            freshRaw,
+            user.id
+          );
+          if (!result || result.length === 0) result = freshRaw;
+        } else {
+          const anon = recommendationService.getNewUserRecommendations(freshRaw);
+          if (anon && anon.length > 0) result = anon;
+        }
+      } catch (err) {
+        if (__DEV__) console.warn('⚠️ Refresh recommender failed:', err);
+        result = freshRaw;
+      }
+
+      // Apply distances if we have a location.
+      if (userCoords) {
+        result = result.map((opp) => {
+          if (opp.userLatitude != null && opp.userLongitude != null) {
+            return {
+              ...opp,
+              distance: calculateDistance(
+                userCoords!.latitude,
+                userCoords!.longitude,
+                opp.userLatitude,
+                opp.userLongitude
+              ),
+            };
+          }
+          return opp;
+        });
+      }
+
+      // Swap the store contents and jump back to the top.
+      setOpportunities(result);
+      setCurrentIndex(0);
+      setContextPanelView(null);
+
+      // Reset the viewability tracker so the new first item is logged.
+      lastOpenOpportunityIdRef.current = null;
+      trackedViewRef.current = '';
+
+      // Scroll the FlatList back to index 0 without animation so the
+      // pull feels instant and doesn't fight the refresh gesture.
+      try {
+        flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      } catch {
+        /* noop */
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      if (__DEV__) console.error('❌ Refresh failed:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [
+    refreshing,
+    user?.id,
+    setOpportunities,
+    setCurrentIndex,
+  ]);
 
   // ============================================================
   // SILENT RECOMMENDATION PASS
@@ -1564,6 +1667,19 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               windowSize={isDesktop ? 5 : 3}
               onScrollToIndexFailed={handleScrollToIndexFailed}
               scrollEventThrottle={32}
+              overScrollMode="always"
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  tintColor="#4A7DFF"
+                  colors={['#4A7DFF']}
+                  progressBackgroundColor="#1A2A4F"
+                  progressViewOffset={
+                    Platform.OS === 'web' ? 0 : insets.top + 56
+                  }
+                />
+              }
               // ✅ Push content above the fixed tab bar
               contentContainerStyle={{ paddingBottom: tabBarHeight }}
               style={styles.flatList}

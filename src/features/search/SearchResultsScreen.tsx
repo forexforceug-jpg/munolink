@@ -15,6 +15,7 @@ import {
   FlatList,
   Dimensions,
   StatusBar,
+  Platform,
   Image,
   useWindowDimensions,
   ScrollView,
@@ -950,7 +951,14 @@ const SearchResultsContent = ({
 
   if (!memoizedResults) {
     return (
-      <SafeAreaView style={styles.centered}>
+      <SafeAreaView
+  style={[
+    styles.container,
+    styles.centered,
+    Platform.OS === 'web' && styles.containerWeb,
+  ]}
+  edges={['top']}
+>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading results...</Text>
@@ -960,7 +968,13 @@ const SearchResultsContent = ({
 
   if (memoizedResults.length === 0) {
     return (
-      <SafeAreaView style={styles.emptyContainer}>
+      <SafeAreaView
+  style={[
+    styles.emptyContainer,
+    Platform.OS === 'web' && styles.containerWeb,
+  ]}
+  edges={['top']}
+>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <TouchableOpacity
           style={styles.emptyBackButton}
@@ -984,7 +998,13 @@ const SearchResultsContent = ({
     return (
       <GestureHandlerRootView style={styles.container}>
         <BottomSheetModalProvider>
-          <SafeAreaView style={styles.container}>
+          <SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' && styles.containerWeb,
+  ]}
+  edges={['top']}
+>
             <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
             <TouchableOpacity
@@ -1179,9 +1199,13 @@ const SearchResultsContent = ({
 
   return (
     <SafeAreaView
-      style={[styles.container, isDesktop && styles.containerDesktop]}
-      edges={['top']}
-    >
+  style={[
+    styles.container,
+    Platform.OS === 'web' && styles.containerWeb,
+    isDesktop && styles.containerDesktop,
+  ]}
+  edges={['top']}
+>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
@@ -1388,6 +1412,14 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 12,
   },
+  containerWeb: {
+  flex: 1,
+  backgroundColor: '#0D0D1A',
+  height: '100dvh' as any,
+  maxHeight: '100dvh' as any,
+  overflow: 'hidden',
+  position: 'relative' as any,
+},
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -26,6 +26,7 @@ import {
   ListRenderItem,
   ViewToken,
   ViewabilityConfig,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -546,6 +547,9 @@ const ExploreContent = ({ navigation }: any) => {
 
   const [fullscreenIndex, setFullscreenIndex] = useState(0);
 
+  // ✅ Pull-to-refresh state
+  const [refreshing, setRefreshing] = useState(false);
+
   const [selectedOpportunity, setSelectedOpportunity] =
     useState<Opportunity | null>(null);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
@@ -594,7 +598,8 @@ const ExploreContent = ({ navigation }: any) => {
     setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
   }, []);
 
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlatList>(null);        // fullscreen carousel
+  const gridListRef = useRef<FlatList>(null);        // grid list (for refresh scroll)
   const searchInputRef = useRef<TextInput>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
 
@@ -684,6 +689,104 @@ const ExploreContent = ({ navigation }: any) => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // ============================================================
+  // ✅ PULL-TO-REFRESH
+  // ============================================================
+  //
+  // Re-fetches the opportunity list, re-shuffles, re-applies the
+  // current filter/sort, and scrolls back to the top.
+  //
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+
+    try {
+      let userCoords: { latitude: number; longitude: number } | undefined;
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch (err) {
+        if (__DEV__) console.log('⚠️ Explore refresh: no location');
+      }
+
+      const opportunities: Opportunity[] = await feedService.getOpportunities(
+        userCoords
+      );
+
+      if (!opportunities || opportunities.length === 0) {
+        if (__DEV__) console.log('ℹ️ Explore refresh returned no data');
+        return;
+      }
+
+      // Rebuild the ExplorePost list exactly like fetchData does.
+      const posts: ExplorePost[] = opportunities.map((opp) => {
+        const images = opp.catalogImages || [];
+        const specs = (opp as any).specifications || {};
+        const rawPriceType =
+          (opp as any).price_type ?? specs.price_type ?? null;
+
+        return {
+          id: opp.id,
+          user_id: opp.userId || '',
+          name: opp.title || 'Untitled',
+          description: opp.description || null,
+          price: opp.price ?? null,
+          currency: opp.currency || 'UGX',
+          images: images,
+          video: opp.video || null,
+          video_thumbnail: opp.video_thumbnail || null,
+          video_duration: opp.video_duration || null,
+          video_size: opp.video_size || null,
+          hashtags: opp.hashtags || [],
+          location: opp.area || null,
+          category: opp.category || null,
+          status: 'active',
+          like_count: opp.likeCount || 0,
+          view_count: opp.viewCount || 0,
+          share_count: opp.shareCount || 0,
+          comment_count: opp.commentCount || 0,
+          created_at: opp.createdAt || new Date().toISOString(),
+          updated_at: opp.createdAt || new Date().toISOString(),
+          user_full_name: opp.userFullName || 'User',
+          user_avatar: opp.userAvatar || null,
+          detected_category: opp.category || null,
+          detected_intent: null,
+          detected_tags: opp.hashtags || [],
+          userId: opp.userId || '',
+          userFullName: opp.userFullName || 'User',
+          userAvatar: opp.userAvatar || null,
+          imageUrl: images[0] || opp.video_thumbnail || '',
+          catalogImages: images,
+          user_cover_url: null,
+          distance: opp.distance,
+          saveCount: opp.saveCount || 0,
+          isSaved: opp.isSaved || false,
+          specifications: specs,
+          price_type: rawPriceType,
+        };
+      });
+
+      const shuffled = posts.sort(() => Math.random() - 0.5);
+      setItems(shuffled);
+      setFilteredItems(shuffled);
+
+      // Scroll the grid back to the top.
+      try {
+        gridListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      } catch {
+        /* noop */
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      if (__DEV__) console.error('❌ Explore refresh failed:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing]);
 
   const applyFilters = useCallback(() => {
     let result = [...items];
@@ -1060,13 +1163,13 @@ const ExploreContent = ({ navigation }: any) => {
   if (isLoading) {
     return (
       <SafeAreaView
-  style={[
-    styles.container,
-    styles.centered,
-    Platform.OS === 'web' && styles.containerWeb,
-  ]}
-  edges={['top']}
->
+        style={[
+          styles.container,
+          styles.centered,
+          Platform.OS === 'web' && styles.containerWeb,
+        ]}
+        edges={['top']}
+      >
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading explore...</Text>
@@ -1289,14 +1392,14 @@ const ExploreContent = ({ navigation }: any) => {
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
 
   return (
-<SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' && styles.containerWeb,
-    isDesktop && styles.containerDesktop,
-  ]}
-  edges={['top']}
->
+    <SafeAreaView
+      style={[
+        styles.container,
+        Platform.OS === 'web' && styles.containerWeb,
+        isDesktop && styles.containerDesktop,
+      ]}
+      edges={['top']}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
@@ -1351,18 +1454,28 @@ const ExploreContent = ({ navigation }: any) => {
       )}
 
       <FlatList
+        ref={gridListRef}
         key={gridKey}
         data={filteredItems}
         renderItem={renderGridItem}
         keyExtractor={(item, index) => `explore-${item.id}-${index}`}
         numColumns={numColumns}
         showsVerticalScrollIndicator={false}
-contentContainerStyle={[styles.gridContainer, { paddingBottom: 100 }]}
+        contentContainerStyle={[styles.gridContainer, { paddingBottom: 100 }]}
         removeClippedSubviews={true}
         maxToRenderPerBatch={10}
         windowSize={5}
         initialNumToRender={8}
         ListHeaderComponent={ListHeader}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#4A7DFF"
+            colors={['#4A7DFF']}
+            progressBackgroundColor="#1A2A4F"
+          />
+        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="search-outline" size={48} color="#8A8AAE" />
@@ -1653,15 +1766,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.03)',
   },
-  containerWeb: {
-  flex: 1,
-  backgroundColor: '#0D0D1A',
-  height: '100dvh' as any,
-  maxHeight: '100dvh' as any,
-  overflow: 'hidden',
-  position: 'relative' as any,
-},
   sortOptionActive: { backgroundColor: 'rgba(74, 125, 255, 0.08)' },
   sortOptionText: { color: '#E8ECF4', fontSize: 16 },
   sortOptionTextActive: { color: '#4A7DFF', fontWeight: '500' },
+
+  // ✅ Viewport-locked container for web
+  containerWeb: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+    height: '100dvh' as any,
+    maxHeight: '100dvh' as any,
+    overflow: 'hidden',
+    position: 'relative' as any,
+  },
 });

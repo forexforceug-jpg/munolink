@@ -26,6 +26,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -803,6 +805,29 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
 };
 
 // ============================================================
+// SAFE TAB BAR HEIGHT HOOK
+// ============================================================
+//
+// `useBottomTabBarHeight()` throws if called outside a bottom tab
+// navigator. SceneRenderer is mounted both inside tab screens
+// (Feed, Explore, Inbox, Account) AND inside fullscreen modals
+// rendered from AccountScreen / ExploreScreen / SearchResultsScreen
+// / UserProfileScreen. We must handle both cases.
+//
+// React's rules of hooks prevent calling it conditionally, so we
+// wrap it in a try/catch. When it throws, we treat the height as 0
+// and rely on the safe-area inset.
+//
+function useSafeTabBarHeight(): number {
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useBottomTabBarHeight();
+  } catch {
+    return 0;
+  }
+}
+
+// ============================================================
 // MAIN COMPONENT
 // ============================================================
 export function SceneRenderer({
@@ -864,6 +889,28 @@ export function SceneRenderer({
   const lastScrollIndexRef = useRef(0);
   const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ✅ Compute the info panel bottom offset from real measurements.
+  //
+  //   - insets.bottom: the device's home indicator / gesture bar.
+  //   - tabBarHeight:  the actual height of the bottom tab bar if we're
+  //                    inside a tab navigator, 0 otherwise.
+  //   - SCENE_INFO_GAP: minimum gap between the info panel and whatever
+  //                     is below it, so it never looks glued.
+  //
+  //   Inside a tab navigator  → sit gap above the tab bar.
+  //   Outside a tab navigator → sit gap + inset above the bottom edge.
+  //
+  //   Plus any caller-supplied `bottomOffset` on top.
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = useSafeTabBarHeight();
+
+  const SCENE_INFO_GAP = 16;
+
+  const infoPanelBottomOffset =
+    (tabBarHeight > 0
+      ? tabBarHeight + SCENE_INFO_GAP
+      : insets.bottom + 40) + bottomOffset;
+
   const safeMedia =
     media && media.length > 0
       ? media
@@ -899,11 +946,6 @@ export function SceneRenderer({
   const priceBadge = getPriceBadge();
   const timeAgo = formatTimeAgo(createdAt);
   const displayName = userName || 'User';
-
-  // The parent ScreenShell has already reserved space for the tab
-  // bar and safe areas. We just sit at the bottom of our content
-  // area with a small visual buffer.
-  const infoPanelBottomOffset = 80 + bottomOffset;
 
   // Reset natural-size cache when media changes
   useEffect(() => {
