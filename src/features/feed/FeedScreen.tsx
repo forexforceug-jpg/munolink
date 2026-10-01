@@ -33,7 +33,10 @@ import {
   ViewabilityConfig,
   ViewToken,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { FloatingActionRail } from './components/FloatingActionRail';
 import { useFeedStore } from '../../store/feedStore';
@@ -59,6 +62,7 @@ import { locationService, UserLocation } from '../../services/location.service';
 import { LocationPicker } from './components/LocationPicker';
 import { useIsFocused } from '@react-navigation/native';
 import { StyledAlert } from './components/StyledAlert';
+import { sharePost } from '../../utils/share';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -69,6 +73,11 @@ type FeedScreenNavigationProp = NativeStackNavigationProp<
 
 interface FeedScreenProps {
   navigation: FeedScreenNavigationProp;
+  route?: {
+    params?: {
+      openPostId?: string;
+    };
+  };
 }
 
 const FEATURED_COUNT = 14;
@@ -96,7 +105,7 @@ const ItemMediaLoadingSpinner: React.FC = () => {
   );
 };
 
-export const FeedScreen = ({ navigation }: FeedScreenProps) => {
+export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
   const { isAuthenticated, isGuest, user } = useAuth();
@@ -194,9 +203,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   const oppOpenTimeRef = useRef<number>(Date.now());
   const lastOpenOpportunityIdRef = useRef<string | null>(null);
 
-  // ✅ Tracks whether we've ever received a settled response from the
-  //    query. Used to suppress the empty state on first render.
+  // Tracks whether the query has settled at least once.
   const hasFetchedOnceRef = useRef(false);
+
+  // Tracks the last deep-linked post we scrolled to, so we don't re-scroll.
+  const lastHandledPostIdRef = useRef<string | null>(null);
 
   const {
     opportunities,
@@ -234,8 +245,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     },
   });
 
-  // Mark the very first settled response so we know when it's safe
-  // to show the empty state.
   useEffect(() => {
     if (queryStatus === 'success' || queryStatus === 'error') {
       hasFetchedOnceRef.current = true;
@@ -376,7 +385,40 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   }, [queryError, queryLoading, setError, setLoading]);
 
   // ============================================================
-  // ✅ PREFETCH THE CURRENT USER'S LIKES
+  // ✅ DEEP LINK: scroll to the post passed via route.params.openPostId
+  // ============================================================
+  useEffect(() => {
+    const openPostId = route?.params?.openPostId;
+    if (!openPostId) return;
+    if (lastHandledPostIdRef.current === openPostId) return;
+    if (uniqueOpportunities.length === 0) return;
+
+    const index = uniqueOpportunities.findIndex((o) => o.id === openPostId);
+    if (index === -1) {
+      if (__DEV__) console.log('⚠️ Deep-linked post not found in feed:', openPostId);
+      return;
+    }
+
+    lastHandledPostIdRef.current = openPostId;
+
+    setTimeout(() => {
+      try {
+        flatListRef.current?.scrollToIndex({ index, animated: false });
+        setCurrentIndex(index);
+        // Clear the param so a later remount doesn't re-scroll.
+        try {
+          navigation.setParams({ openPostId: undefined } as any);
+        } catch {
+          /* older RN versions may not support setParams on unmount */
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('Deep link scrollToIndex failed:', e);
+      }
+    }, 400);
+  }, [route?.params?.openPostId, uniqueOpportunities, navigation, setCurrentIndex]);
+
+  // ============================================================
+  // PREFETCH LIKES
   // ============================================================
   useEffect(() => {
     if (!user?.id) return;
@@ -410,7 +452,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   }, [user?.id, uniqueOpportunities]);
 
   // ============================================================
-  // ✅ INITIALISE loadingItemsMap
+  // INITIALISE loadingItemsMap
   // ============================================================
   useEffect(() => {
     if (uniqueOpportunities.length === 0) return;
@@ -439,7 +481,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   );
 
   // ============================================================
-  // ✅ SILENT RECOMMENDATION PASS
+  // SILENT RECOMMENDATION PASS
   // ============================================================
   useEffect(() => {
     if (!data || data.length === 0) return;
@@ -522,7 +564,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   }, [swipeCount, isAuthenticated, isGuest]);
 
   // ============================================================
-  // ✅ STABLE VIEWABILITY HANDLER
+  // STABLE VIEWABILITY HANDLER
   // ============================================================
   const onViewableItemsChangedRef = useRef<
     | ((info: {
@@ -625,6 +667,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
     [isDesktop]
   );
 
+  // ✅ Uses the shared sharePost helper so the URL is the Vercel-served
+  //    OG page (https://munolink.com/s/<id>) with a proper preview card.
   const handleSharePress = useCallback(
     async (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -637,16 +681,20 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
             mapItemType(opportunity.type)
           );
         }
-        const userDisplayName = opportunity.userFullName || 'User';
-        const message = `🛍️ Check out ${opportunity.title}\n\n👤 ${userDisplayName}\n💰 UGX ${opportunity.price.toLocaleString()}\n📍 ${
-          opportunity.area || 'Available nearby'
-        }\n\nDownload Munolink to discover more!`;
-        await Share.share({
-          message,
+      } catch (error) {
+        console.error('Error tracking share:', error);
+      }
+
+      try {
+        await sharePost({
+          id: opportunity.id,
           title: opportunity.title,
+          price: opportunity.price,
+          currency: opportunity.currency,
+          sellerName: opportunity.userFullName,
         });
       } catch (error) {
-        console.error('Error sharing:', error);
+        console.error('Share error:', error);
       }
     },
     [user?.id]
@@ -712,7 +760,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           icon: 'lock-closed',
           iconColor: '#4A7DFF',
           buttons: [
-            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Continue Browsing',
+              style: 'cancel',
+              onPress: hideStyledAlert,
+            },
             {
               text: 'Join Now',
               style: 'primary',
@@ -752,7 +804,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           icon: 'lock-closed',
           iconColor: '#4A7DFF',
           buttons: [
-            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Continue Browsing',
+              style: 'cancel',
+              onPress: hideStyledAlert,
+            },
             {
               text: 'Join Now',
               style: 'primary',
@@ -787,7 +843,14 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           .catch(() => {});
       }
     },
-    [isAuthenticated, navigation, user?.id, savedItemsMap, showStyledAlert, hideStyledAlert]
+    [
+      isAuthenticated,
+      navigation,
+      user?.id,
+      savedItemsMap,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
   );
 
   const handleLikePress = useCallback(
@@ -799,7 +862,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
           icon: 'lock-closed',
           iconColor: '#4A7DFF',
           buttons: [
-            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Continue Browsing',
+              style: 'cancel',
+              onPress: hideStyledAlert,
+            },
             {
               text: 'Join Now',
               style: 'primary',
@@ -893,7 +960,11 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         icon: 'lock-closed',
         iconColor: '#4A7DFF',
         buttons: [
-          { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+          {
+            text: 'Continue Browsing',
+            style: 'cancel',
+            onPress: hideStyledAlert,
+          },
           {
             text: 'Join Now',
             style: 'primary',
@@ -914,7 +985,13 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
       userId: targetUserId,
       userName: targetUserName,
     });
-  }, [currentOpportunity, isAuthenticated, navigation, showStyledAlert, hideStyledAlert]);
+  }, [
+    currentOpportunity,
+    isAuthenticated,
+    navigation,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   const scrollToIndex = useCallback(
     (index: number) => {
@@ -1037,7 +1114,6 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
         }
       }
 
-      // Only force 'free' when the type isn't already a non-priced type.
       if (
         (price === 0 || price === null || price === undefined) &&
         priceType !== 'free' &&
@@ -1132,7 +1208,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
               if (!isAuthenticated) {
                 showStyledAlert({
                   title: '🔒 Join Munolink',
-                  message: 'Create a free account to message sellers and providers.',
+                  message:
+                    'Create a free account to message sellers and providers.',
                   icon: 'lock-closed',
                   iconColor: '#4A7DFF',
                   buttons: [
@@ -1239,11 +1316,8 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
   );
 
   // ============================================================
-  // ✅ FIX: never flash the empty state during the very first fetch
+  // Loading / error / empty states
   // ============================================================
-  // Only treat the query as "loading" if it has genuinely not settled
-  // yet. React Query's `isLoading` is true on first mount and false
-  // after data arrives (or errors).
   const isInitialLoading = !hasFetchedOnceRef.current && queryLoading;
 
   if (isInitialLoading || (isLoading && uniqueOpportunities.length === 0)) {
@@ -1332,10 +1406,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
                 locations={[0, 0.25, 0.5, 1]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
-                style={[
-                  styles.topBarGradient,
-                  { paddingTop: insets.top + 12 },
-                ]}
+                style={[styles.topBarGradient, { paddingTop: insets.top + 12 }]}
               >
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
@@ -1362,11 +1433,7 @@ export const FeedScreen = ({ navigation }: FeedScreenProps) => {
                     >
                       {getLocationDisplay()}
                     </Text>
-                    <Ionicons
-                      name="chevron-down"
-                      size={14}
-                      color="#4A7DFF"
-                    />
+                    <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
                   </TouchableOpacity>
 
                   <TouchableOpacity

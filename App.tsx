@@ -2,12 +2,16 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { navigationRef } from './src/navigation/navigationRef';
 import { AuthProvider } from './src/context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -18,9 +22,11 @@ import {
   StyleSheet,
   Animated,
   Easing,
+  Platform,
 } from 'react-native';
 import * as Updates from 'expo-updates';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Linking from 'expo-linking';
 
 // Keep splash screen visible while we initialize.
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -42,7 +48,6 @@ const queryClient = new QueryClient({
 function LoadingScreen() {
   const insets = useSafeAreaInsets();
 
-  // Load the splash icon once
   let SplashIcon: any = null;
   try {
     SplashIcon = require('./assets/favicon.png');
@@ -50,13 +55,11 @@ function LoadingScreen() {
     SplashIcon = null;
   }
 
-  // ---- Animated values ----
-  const opacity = useRef(new Animated.Value(0)).current;      // fades in
-  const scale = useRef(new Animated.Value(0.85)).current;     // grows in
-  const pulseScale = useRef(new Animated.Value(1)).current;   // breathing loop
+  const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.85)).current;
+  const pulseScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    // 1. Entrance: fade in + scale up simultaneously
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
@@ -71,7 +74,6 @@ function LoadingScreen() {
         useNativeDriver: true,
       }),
     ]).start(() => {
-      // 2. Breathing loop: gentle 1.0 → 1.05 → 1.0 forever
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseScale, {
@@ -126,6 +128,27 @@ function LoadingScreen() {
 }
 
 // ============================================================
+// NAVIGATE HELPER — retries until the navigator is ready
+// ============================================================
+function navigateToPost(postId: string) {
+  const attempt = (tries = 0) => {
+    if (navigationRef.isReady()) {
+      (navigationRef as any).navigate('MainTabs', {
+        screen: 'Discover',
+        params: { openPostId: postId },
+      });
+      return;
+    }
+    if (tries < 20) {
+      setTimeout(() => attempt(tries + 1), 100);
+    } else if (__DEV__) {
+      console.log('⚠️ Navigator never became ready for deep link');
+    }
+  };
+  attempt();
+}
+
+// ============================================================
 // APP
 // ============================================================
 export default function App() {
@@ -137,12 +160,81 @@ export default function App() {
   const didCheckForUpdates = useRef(false);
 
   // ============================================================
+  // DEEP LINK HANDLER (native + web)
+  //
+  // Handles three kinds of URLs:
+  //   1. Native scheme:   munolink://post/<postId>
+  //   2. Native scheme:   munolink:///post/<postId>
+  //   3. Web query:       https://www.munolink.com/?post=<postId>
+  //
+  // All three end up navigating to that post in the Feed.
+  // ============================================================
+  useEffect(() => {
+    const handleNativeUrl = (event: { url: string }) => {
+      try {
+        const url = event.url;
+        const parsed = Linking.parse(url);
+
+        let rawPath = parsed.path || '';
+        const host = parsed.hostname || '';
+
+        // munolink://post/<id> — the scheme parses `post` as hostname.
+        if (host === 'post') {
+          rawPath = rawPath ? `/${rawPath.replace(/^\/+/, '')}` : '';
+        }
+
+        const postId = rawPath.replace(/^\/+/, '').split('/')[0];
+
+        if (!postId) {
+          if (__DEV__) console.log('⚠️ Deep link without a post id:', url);
+          return;
+        }
+
+        if (__DEV__) console.log('🔗 Native deep link to post:', postId);
+        navigateToPost(postId);
+      } catch (err) {
+        if (__DEV__) console.warn('Native deep link parse error:', err);
+      }
+    };
+
+    // ---- Native path: Linking events ----
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url) handleNativeUrl({ url });
+      })
+      .catch(() => {
+        /* noop */
+      });
+
+    const sub = Linking.addEventListener('url', handleNativeUrl);
+
+    // ---- Web path: ?post=<id> in the current URL ----
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const postIdFromQuery = params.get('post');
+
+        if (postIdFromQuery) {
+          if (__DEV__) {
+            console.log('🌐 Web deep link to post:', postIdFromQuery);
+          }
+          navigateToPost(postIdFromQuery);
+        }
+      } catch (err) {
+        if (__DEV__) console.warn('Web URL parse error:', err);
+      }
+    }
+
+    return () => sub.remove();
+  }, []);
+
+  // ============================================================
   // RESET AUTH DATA
   // ============================================================
   const resetAuth = useCallback(async () => {
     try {
       await AsyncStorage.multiRemove(['authToken', 'userData']);
-      console.log('🗑️ All auth data cleared');
+      if (__DEV__) console.log('🗑️ All auth data cleared');
     } catch (error) {
       console.error('Error clearing auth:', error);
     }
@@ -159,11 +251,11 @@ export default function App() {
       const update = await Updates.checkForUpdateAsync();
 
       if (!update.isAvailable) {
-        console.log('✅ App is up to date');
+        if (__DEV__) console.log('✅ App is up to date');
         return;
       }
 
-      console.log('📦 Update available!');
+      if (__DEV__) console.log('📦 Update available!');
       setUpdateAvailable(true);
 
       setTimeout(() => {
@@ -192,7 +284,7 @@ export default function App() {
               },
             },
           ],
-          { cancelable: false },
+          { cancelable: false }
         );
       }, 1000);
     } catch (error) {
@@ -205,7 +297,6 @@ export default function App() {
   // ============================================================
   const loadResources = useCallback(async () => {
     try {
-      // Minimum splash duration so the brand animation is visible
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await resetAuth();
       await checkForUpdates();
@@ -286,7 +377,7 @@ export default function App() {
           <AuthProvider>
             <BottomSheetModalProvider>
               <StatusBar style="light" />
-              <NavigationContainer>
+              <NavigationContainer ref={navigationRef}>
                 <RootNavigator />
               </NavigationContainer>
             </BottomSheetModalProvider>
