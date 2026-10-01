@@ -2836,10 +2836,14 @@ const AccountContent = ({ navigation }: any) => {
 
   if (loading) {
     return (
-      <SafeAreaView
-        style={[styles.container, isDesktop && styles.desktopContainer]}
-        edges={['top']}
-      >
+   <SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' ? styles.containerWeb : undefined,
+    isDesktop && styles.desktopContainer,
+  ]}
+  edges={['top']}
+>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4A7DFF" />
@@ -3025,10 +3029,14 @@ const AccountContent = ({ navigation }: any) => {
   }
 
   return (
-    <SafeAreaView
-      style={[styles.container, isDesktop && styles.desktopContainer]}
-      edges={['top']}
-    >
+ <SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' ? styles.containerWeb : undefined,
+    isDesktop && styles.desktopContainer,
+  ]}
+  edges={['top']}
+>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={styles.header}>
@@ -3746,6 +3754,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 4,
   },
+  containerWeb: {
+  flex: 1,
+  backgroundColor: '#0D0D1A',
+  height: '100dvh' as any,
+  maxHeight: '100dvh' as any,
+  overflow: 'hidden',
+  position: 'relative' as any,
+},
   settingsOption: {
     flexDirection: 'row',
     justifyContent: 'space-between',

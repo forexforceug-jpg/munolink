@@ -13,6 +13,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Keyboard,
+  Platform,
   Alert,
   useWindowDimensions,
   FlatList,
@@ -882,7 +883,13 @@ const SearchContent = ({ navigation }: any) => {
 
   if (isLoadingCatalog) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+<SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' && styles.containerWeb,
+  ]}
+  edges={['top']}
+>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading search data...</Text>
@@ -895,7 +902,14 @@ const SearchContent = ({ navigation }: any) => {
   // ============================================================
 
   return (
-    <SafeAreaView style={[styles.container, isDesktop && styles.containerDesktop]} edges={['top']}>
+    <SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' && styles.containerWeb,
+    isDesktop && styles.containerDesktop,
+  ]}
+  edges={['top']}
+>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={styles.headerContainer}>
@@ -1299,7 +1313,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 12,
   },
-
+containerWeb: {
+  flex: 1,
+  backgroundColor: '#0D0D1A',
+  height: '100dvh' as any,
+  maxHeight: '100dvh' as any,
+  overflow: 'hidden',
+  position: 'relative' as any,
+},
   bottomSpacer: {
     height: 40,
   },

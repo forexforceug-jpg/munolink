@@ -1059,7 +1059,14 @@ const ExploreContent = ({ navigation }: any) => {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]} edges={['top']}>
+      <SafeAreaView
+  style={[
+    styles.container,
+    styles.centered,
+    Platform.OS === 'web' && styles.containerWeb,
+  ]}
+  edges={['top']}
+>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading explore...</Text>
@@ -1282,10 +1289,14 @@ const ExploreContent = ({ navigation }: any) => {
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
 
   return (
-    <SafeAreaView
-      style={[styles.container, isDesktop && styles.containerDesktop]}
-      edges={['top']}
-    >
+<SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' && styles.containerWeb,
+    isDesktop && styles.containerDesktop,
+  ]}
+  edges={['top']}
+>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
@@ -1346,7 +1357,7 @@ const ExploreContent = ({ navigation }: any) => {
         keyExtractor={(item, index) => `explore-${item.id}-${index}`}
         numColumns={numColumns}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.gridContainer}
+contentContainerStyle={[styles.gridContainer, { paddingBottom: 100 }]}
         removeClippedSubviews={true}
         maxToRenderPerBatch={10}
         windowSize={5}
@@ -1642,6 +1653,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.03)',
   },
+  containerWeb: {
+  flex: 1,
+  backgroundColor: '#0D0D1A',
+  height: '100dvh' as any,
+  maxHeight: '100dvh' as any,
+  overflow: 'hidden',
+  position: 'relative' as any,
+},
   sortOptionActive: { backgroundColor: 'rgba(74, 125, 255, 0.08)' },
   sortOptionText: { color: '#E8ECF4', fontSize: 16 },
   sortOptionTextActive: { color: '#4A7DFF', fontWeight: '500' },

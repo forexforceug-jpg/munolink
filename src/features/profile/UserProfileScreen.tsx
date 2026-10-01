@@ -16,6 +16,7 @@ import {
   Image,
   Dimensions,
   StatusBar,
+  Platform,
   ActivityIndicator,
   RefreshControl,
   FlatList,
@@ -1245,7 +1246,13 @@ const UserProfileContent = ({
   // ============================================================
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]} edges={['top']}>
+      <SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' ? styles.containerWeb : { height },
+  ]}
+  edges={['top']}
+>
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading profile...</Text>
@@ -1255,7 +1262,13 @@ const UserProfileContent = ({
 
   if (!userProfile) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]} edges={['top']}>
+     <SafeAreaView
+  style={[
+    styles.container,
+    Platform.OS === 'web' ? styles.containerWeb : { height },
+  ]}
+  edges={['top']}
+>
         <Text style={styles.errorText}>User not found</Text>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.goBackText}>Go Back</Text>
@@ -1907,4 +1920,12 @@ const styles = StyleSheet.create({
     transform: [{ translateY: -150 }],
     zIndex: 50,
   },
+  containerWeb: {
+  flex: 1,
+  backgroundColor: '#0D0D1A',       // match each screen's bg
+  height: '100dvh' as any,
+  maxHeight: '100dvh' as any,
+  overflow: 'hidden',
+  position: 'relative' as any,
+},
 });
