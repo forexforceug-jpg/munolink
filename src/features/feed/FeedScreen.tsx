@@ -32,6 +32,7 @@ import {
   FlatList,
   ViewabilityConfig,
   ViewToken,
+  Platform,
 } from 'react-native';
 import {
   SafeAreaView,
@@ -63,6 +64,7 @@ import { LocationPicker } from './components/LocationPicker';
 import { useIsFocused } from '@react-navigation/native';
 import { StyledAlert } from './components/StyledAlert';
 import { sharePost } from '../../utils/share';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -111,6 +113,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const { isAuthenticated, isGuest, user } = useAuth();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
+  const tabBarHeight = useBottomTabBarHeight();
   const flatListRef = useRef<FlatList>(null);
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
@@ -207,8 +210,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const hasFetchedOnceRef = useRef(false);
 
   // ✅ Deep-link tracking
-  // pendingOpenPostIdRef: the post id waiting to be scrolled to.
-  // lastHandledPostIdRef: the post id we've already scrolled to.
   const pendingOpenPostIdRef = useRef<string | null>(null);
   const lastHandledPostIdRef = useRef<string | null>(null);
 
@@ -411,13 +412,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     if (index === -1) {
       if (__DEV__) {
         console.log('⚠️ Deep-linked post not found in feed:', openPostId);
-        console.log(
-          'Feed IDs:',
-          uniqueOpportunities.slice(0, 5).map((o) => o.id),
-          '...'
-        );
       }
-      // Clear the pending value so we don't retry forever.
       pendingOpenPostIdRef.current = null;
       lastHandledPostIdRef.current = openPostId;
       return;
@@ -438,11 +433,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         flatListRef.current?.scrollToIndex({ index, animated: false });
         setCurrentIndex(index);
 
-        // Success — remember we handled it.
         lastHandledPostIdRef.current = openPostId;
         pendingOpenPostIdRef.current = null;
 
-        // Clear the param so remounting doesn't re-scroll.
         try {
           navigation.setParams({ openPostId: undefined } as any);
         } catch {
@@ -1471,7 +1464,16 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     >
       <GestureHandlerRootView style={{ flex: 1 }}>
         <BottomSheetModalProvider>
-          <SafeAreaView style={[styles.container, { height }]}>
+          <SafeAreaView
+            style={[
+              styles.container,
+              // ✅ On web, don't force a fixed pixel height — let the
+              // viewport-locked parent handle it.
+              Platform.OS === 'web'
+                ? styles.containerWeb
+                : { height },
+            ]}
+          >
             <StatusBar barStyle="light-content" />
 
             {!isDesktop && (
@@ -1485,7 +1487,15 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 locations={[0, 0.25, 0.5, 1]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 0, y: 1 }}
-                style={[styles.topBarGradient, { paddingTop: insets.top + 12 }]}
+                style={[
+                  styles.topBarGradient,
+                  {
+                    paddingTop:
+                      Platform.OS === 'web'
+                        ? ('calc(env(safe-area-inset-top, 0px) + 12px)' as any)
+                        : insets.top + 12,
+                  },
+                ]}
               >
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
@@ -1554,7 +1564,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               windowSize={isDesktop ? 5 : 3}
               onScrollToIndexFailed={handleScrollToIndexFailed}
               scrollEventThrottle={32}
-              style={{ flex: 1, backgroundColor: '#0D0D1A' }}
+              // ✅ Push content above the fixed tab bar
+              contentContainerStyle={{ paddingBottom: tabBarHeight }}
+              style={styles.flatList}
             />
 
             <ReviewsBottomSheet
@@ -1630,6 +1642,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#05070f',
   },
+  // ✅ On web, lock to viewport so `position: fixed` children anchor correctly.
+  containerWeb: {
+    flex: 1,
+    backgroundColor: '#05070f',
+    height: '100vh' as any,
+    maxHeight: '100vh' as any,
+    overflow: 'hidden',
+    position: 'relative' as any,
+  },
+  flatList: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+  },
   centered: {
     flex: 1,
     backgroundColor: '#000000',
@@ -1657,11 +1682,22 @@ const styles = StyleSheet.create({
     zIndex: 100,
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
+  // ✅ Fixed on web so it stays pinned while the feed scrolls
   topBarGradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    ...Platform.select({
+      web: {
+        position: 'fixed' as any,
+        top: 0,
+        left: 0,
+        right: 0,
+      },
+      default: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+      },
+    }),
     zIndex: 20,
     paddingHorizontal: 16,
     paddingBottom: 12,

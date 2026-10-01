@@ -104,7 +104,6 @@ const CustomTabBarButton = ({
 
   const circleSize = isSmallDevice ? 34 : isMediumDevice ? 36 : 38;
   const iconSize = isSmallDevice ? getIconSize(18) : getIconSize(20);
-  const labelSize = isSmallDevice ? 9 : 10;
 
   return (
     <TouchableOpacity
@@ -112,7 +111,7 @@ const CustomTabBarButton = ({
       onPress={onPress}
       activeOpacity={0.85}
       accessibilityRole="button"
-      accessibilityLabel="Pay"
+      accessibilityLabel=""
       accessibilityState={accessibilityState}
     >
       <View
@@ -138,8 +137,6 @@ const CustomTabBarButton = ({
           <Ionicons name="card" size={iconSize} color="#FFFFFF" />
         </LinearGradient>
       </View>
-
-
       {focused && <View style={styles.activeIndicator} />}
     </TouchableOpacity>
   );
@@ -229,14 +226,6 @@ const TabIcon = ({
 // ================================================================
 // Hook: unread message count
 // ================================================================
-//
-// ✅ Crash-proof against Supabase Realtime v2 rules.
-// ✅ Unique channel name per effect run.
-// ✅ userId read from a ref so fetchCount stays stable.
-// ✅ Poll fallback every 15s.
-// ✅ isMountedRef guard so async callbacks don't touch state after
-//    the component unmounts.
-//
 const useUnreadMessageCount = (): number => {
   const { user, isAuthenticated } = useAuth();
   const [count, setCount] = useState(0);
@@ -342,11 +331,6 @@ export const TabNavigator = () => {
   const insets = useSafeAreaInsets();
   const unreadCount = useUnreadMessageCount();
 
-  // ---- Compute the effective bottom inset ----
-  // On native: use the safe-area inset (home indicator, gesture bar).
-  // On web:   the safe-area lib returns 0, so we add our own buffer
-  //           and, where the browser supports it, env(safe-area-
-  //           inset-bottom) via getWebSafeAreaBottom().
   const webSafeBottom = useMemo(() => getWebSafeAreaBottom(), []);
 
   const effectiveBottomInset =
@@ -374,95 +358,99 @@ export const TabNavigator = () => {
   }
 
   return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: [
-          styles.tabBar,
-          {
-            height: tabBarHeight,
-            paddingBottom: effectiveBottomInset + 6,
-            paddingTop: 8,
-          },
-        ],
-        tabBarActiveTintColor: '#4A7DFF',
-        tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
-        tabBarShowLabel: false,
-        tabBarBackground: () => (
-          <View style={[styles.tabBarBackground, { height: tabBarHeight }]} />
-        ),
-      }}
-    >
-      <Tab.Screen
-        name="Discover"
-        component={FeedScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              focused={focused}
-              icon="home"
-              label="Home"
-              iconType="Ionicons"
-            />
+    // ✅ Wrapper gives the tab bar a positioned, height-constrained ancestor
+    // so `position: fixed` on web anchors it to the viewport, not the document.
+    <View style={styles.navigatorWrapper}>
+      <Tab.Navigator
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: [
+            styles.tabBar,
+            {
+              height: tabBarHeight,
+              paddingBottom: effectiveBottomInset + 6,
+              paddingTop: 8,
+            },
+          ],
+          tabBarActiveTintColor: '#4A7DFF',
+          tabBarInactiveTintColor: 'rgba(255,255,255,0.5)',
+          tabBarShowLabel: false,
+          tabBarBackground: () => (
+            <View style={[styles.tabBarBackground, { height: tabBarHeight }]} />
           ),
         }}
-      />
+      >
+        <Tab.Screen
+          name="Discover"
+          component={FeedScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon
+                focused={focused}
+                icon="home"
+                label="Home"
+                iconType="Ionicons"
+              />
+            ),
+          }}
+        />
 
-      <Tab.Screen
-        name="Explore"
-        component={ExploreScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              focused={focused}
-              icon="grid-outline"
-              label="Explore"
-              iconType="Ionicons"
-            />
-          ),
-        }}
-      />
+        <Tab.Screen
+          name="Explore"
+          component={ExploreScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon
+                focused={focused}
+                icon="grid-outline"
+                label="Explore"
+                iconType="Ionicons"
+              />
+            ),
+          }}
+        />
 
-      <Tab.Screen
-        name="Pay"
-        component={PayScreen}
-        options={{
-          tabBarButton: (props) => <CustomTabBarButton {...props} />,
-          tabBarIcon: () => null,
-        }}
-      />
+        <Tab.Screen
+          name="Pay"
+          component={PayScreen}
+          options={{
+            tabBarButton: (props) => <CustomTabBarButton {...props} />,
+            tabBarIcon: () => null,
+          }}
+        />
 
-      <Tab.Screen
-        name="Inbox"
-        component={InboxScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              focused={focused}
-              icon="chatbubbles"
-              label="Inbox"
-              iconType="Ionicons"
-              badgeCount={unreadCount}
-            />
-          ),
-        }}
-      />
+        <Tab.Screen
+          name="Inbox"
+          component={InboxScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon
+                focused={focused}
+                icon="chatbubbles"
+                label="Inbox"
+                iconType="Ionicons"
+                badgeCount={unreadCount}
+              />
+            ),
+          }}
+        />
 
-      <Tab.Screen
-        name="Account"
-        component={AccountScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              focused={focused}
-              icon="person"
-              label="Account"
-              iconType="Ionicons"
-            />
-          ),
-        }}
-      />
-    </Tab.Navigator>
+        <Tab.Screen
+          name="Account"
+          component={AccountScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon
+                focused={focused}
+                icon="person"
+                label="Account"
+                iconType="Ionicons"
+              />
+            ),
+          }}
+        />
+      </Tab.Navigator>
+    </View>
   );
 };
 
@@ -470,6 +458,21 @@ export const TabNavigator = () => {
 // Styles
 // ----------------------------------------------------------------
 const styles = StyleSheet.create({
+  // ✅ Critical on web: give the navigator a positioned, height-bound parent
+  // so the tab bar's `position: fixed` anchors to the viewport.
+  navigatorWrapper: {
+    flex: 1,
+    ...Platform.select({
+      web: {
+        height: '100vh' as any,
+        maxHeight: '100vh' as any,
+        overflow: 'hidden',
+        position: 'relative' as any,
+      },
+      default: {},
+    }),
+  },
+
   tabBar: {
     position: 'absolute',
     bottom: 0,
@@ -489,8 +492,8 @@ const styles = StyleSheet.create({
         elevation: 12,
       },
       web: {
-        // Ensures the bar always sits above browser chrome overlays
-        // (mobile Safari URL bar, Chrome gesture area).
+        // ✅ Pin to viewport on web so it never scrolls with content
+        position: 'fixed' as any,
         zIndex: 1000,
       },
     }),

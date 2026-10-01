@@ -1,5 +1,7 @@
+// src/layouts/MobileLayout.tsx
+
 import React, { ReactNode } from 'react';
-import { SafeAreaView, StyleSheet, View } from 'react-native';
+import { SafeAreaView, StyleSheet, View, Platform } from 'react-native';
 
 interface Props {
   children: ReactNode;
@@ -9,9 +11,7 @@ interface Props {
 export function MobileLayout({ children, floatingActions }: Props) {
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {children}
-      </View>
+      <View style={styles.content}>{children}</View>
       {floatingActions && (
         <View style={styles.floatingActionsContainer} pointerEvents="box-none">
           {floatingActions}
@@ -25,10 +25,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#1F2F5F',
+    // ✅ On web, lock the layout to the viewport so `position: absolute`
+    // children (top bar, tab bar) are positioned relative to the screen,
+    // not the scrolling document.
+    ...Platform.select({
+      web: {
+        height: '100vh' as any,
+        maxHeight: '100vh' as any,
+        overflow: 'hidden',
+        position: 'relative' as any,
+      },
+      default: {},
+    }),
   },
   content: {
     flex: 1,
     position: 'relative',
+    // ✅ Prevent the FlatList from growing the parent past the viewport.
+    ...Platform.select({
+      web: {
+        minHeight: 0,
+        overflow: 'hidden',
+      },
+      default: {},
+    }),
   },
   floatingActionsContainer: {
     position: 'absolute',
@@ -38,10 +58,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 999,
     pointerEvents: 'box-none',
-    // ✅ Add flex to position items at bottom-right
-    justifyContent: 'flex-end',  // Push content to bottom
-    alignItems: 'flex-end',      // Push content to right
-    paddingBottom: 120,          // Adjust this value to move up/down
-    paddingRight: 16,            // Distance from right edge
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    paddingBottom: 120,
+    paddingRight: 16,
   },
 });
