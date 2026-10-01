@@ -44,22 +44,60 @@
     </script>
 
     <style>
+      /* ============================================================
+         ✅ LOCK THE VIEWPORT
+         ------------------------------------------------------------
+         The whole app must fit exactly the visible viewport and
+         must NOT grow taller than it, otherwise `position: fixed`
+         children anchor to the document and scroll with content.
+         ============================================================ */
+
       html,
       body {
         margin: 0;
         padding: 0;
-        background-color: #ffffff;
+        background-color: #0d0d1a;
         color: #ffffff;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
           sans-serif;
         height: 100%;
+        width: 100%;
+        /* ✅ Critical: prevent the page itself from scrolling. The
+           FlatList is the only scrollable thing. */
+        overflow: hidden;
+        overscroll-behavior: none;
+        /* Disable pinch-zoom artefacts on mobile */
+        touch-action: manipulation;
       }
+
+      /* ✅ Root becomes a positioned, height-bound ancestor.
+         No more min-height: 100vh (that made it grow with content). */
       #root {
         display: flex;
-        min-height: 100vh;
+        flex-direction: column;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        position: relative;
       }
+
       #root > * {
         flex: 1;
+        min-height: 0; /* allow flex children to shrink below content size */
+        overflow: hidden;
+        position: relative;
+      }
+
+      /* ✅ Prefer dynamic viewport height on browsers that support it.
+         On mobile Safari, `100vh` includes the collapsed URL bar area,
+         so fixed bars would sit under the browser chrome. `dvh` tracks
+         the actual visible area. */
+      @supports (height: 100dvh) {
+        html,
+        body,
+        #root {
+          height: 100dvh;
+        }
       }
 
       #splash-loader {
@@ -79,7 +117,8 @@
       }
 
       @keyframes munolink-pulse {
-        0%, 100% {
+        0%,
+        100% {
           transform: scale(1);
           opacity: 0.9;
         }
