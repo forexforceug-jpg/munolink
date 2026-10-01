@@ -138,8 +138,7 @@ serve(async (req: Request) => {
     const title = post.name || 'Munolink Post';
     const description = post.description
       ? String(post.description).slice(0, 140)
-      : `${priceStr} · from ${sellerName}`;
-
+: `${priceStr} - from ${sellerName}`;
     // ---------- Deep link back into the app ----------
     const targetUrl = `${APP_SCHEME}post/${post.id}`;
 
@@ -172,14 +171,8 @@ serve(async (req: Request) => {
  */
 function transformToOgImage(rawUrl: string): string {
   if (!rawUrl) return FALLBACK_IMAGE;
-
-  const marker = '/storage/v1/object/public/';
-  if (rawUrl.indexOf(marker) === -1) return rawUrl;
-
-  return (
-    rawUrl.replace(marker, '/storage/v1/render/image/public/') +
-    '?width=1200&height=630&resize=cover&quality=80&format=jpeg'
-  );
+  // No transformation on the Free plan — serve the original image.
+  return rawUrl;
 }
 
 function htmlResponse(html: string, status = 200): Response {
@@ -226,8 +219,6 @@ function buildHtml(opts: {
   <meta property="og:description" content="${d}" />
   <meta property="og:image" content="${i}" />
   <meta property="og:image:secure_url" content="${i}" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
   <meta property="og:image:type" content="image/jpeg" />
 
   <!-- Twitter / X -->
