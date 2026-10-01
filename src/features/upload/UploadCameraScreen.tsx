@@ -37,6 +37,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { captureRef } from 'react-native-view-shot';
 import { StyledAlert } from '../feed/components/StyledAlert';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -145,11 +146,6 @@ const TRASH_ZONE_HEIGHT = 120;
 // ============================================================
 // HELPERS
 // ============================================================
-/**
- * Compute the visible rectangle of an image that has been
- * `resizeMode="contain"`'d inside a wrapper of `wrapperW × wrapperH`.
- * Overlays anchor to *this* rect, not to the wrapper.
- */
 function computeContainedRect(
   wrapperW: number,
   wrapperH: number,
@@ -167,11 +163,9 @@ function computeContainedRect(
   let drawH: number;
 
   if (imageAspect > wrapperAspect) {
-    // Image is wider than the wrapper → constrained by width, letterboxed vertically.
     drawW = wrapperW;
     drawH = wrapperW / imageAspect;
   } else {
-    // Image is taller than the wrapper → constrained by height, pillarboxed horizontally.
     drawH = wrapperH;
     drawW = wrapperH * imageAspect;
   }
@@ -214,7 +208,6 @@ const makeDefaultOverlay = (
 
 // ============================================================
 // DRAGGABLE TEXT OVERLAY
-// Positions itself INSIDE the visible image rect, not the wrapper.
 // ============================================================
 interface DraggableTextProps {
   overlay: TextOverlay;
@@ -315,7 +308,6 @@ const DraggableText: React.FC<DraggableTextProps> = ({
 
           const touches = evt.nativeEvent.touches;
 
-          // ---- Pinch to scale ----
           if (touches.length >= 2) {
             isPinchingRef.current = true;
             const [a, b] = touches;
@@ -343,12 +335,10 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             return;
           }
 
-          // ---- Drag ----
           const start = gestureStart.current;
           const nextInImageX = start.posInImageX + g.dx;
           const nextInImageY = start.posInImageY + g.dy;
 
-          // Trash detection uses absolute screen Y of the overlay top edge.
           const screenY = start.imageTop + nextInImageY;
           const overTrash = screenY < TRASH_ZONE_HEIGHT;
           if (overTrash !== isOverTrashRef.current) {
@@ -359,7 +349,6 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             } catch {}
           }
 
-          // Clamp to [0, 1] in image-fraction space.
           const fracX = start.imageW > 0 ? nextInImageX / start.imageW : 0;
           const fracY = start.imageH > 0 ? nextInImageY / start.imageH : 0;
           const clampedX = Math.max(0, Math.min(1, fracX));
@@ -379,7 +368,6 @@ const DraggableText: React.FC<DraggableTextProps> = ({
             return;
           }
 
-          // Double-tap to edit text
           if (!hasMovedRef.current && !isPinchingRef.current) {
             const now = Date.now();
             if (now - lastTapRef.current < 300) {
@@ -409,7 +397,6 @@ const DraggableText: React.FC<DraggableTextProps> = ({
   const isDarkText = overlay.color === '#000000';
   const showShadow = overlay.shadow && !overlay.backgroundColor;
 
-  // ✅ Anchor to the visible image rect.
   return (
     <View
       style={[
@@ -472,6 +459,7 @@ interface ThumbnailStripProps {
   onRemove: (idx: number) => void;
   onAdd: () => void;
   bottomInset: number;
+  processingIndex: number | null;
 }
 
 const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
@@ -481,6 +469,7 @@ const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
   onRemove,
   onAdd,
   bottomInset,
+  processingIndex,
 }) => {
   return (
     <View style={[styles.thumbnailStripWrap, { bottom: bottomInset + 16 }]}>
@@ -506,15 +495,21 @@ const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
             }}
             delayLongPress={400}
             activeOpacity={0.8}
+            disabled={processingIndex !== null}
           >
             <Image
               source={{ uri }}
               style={styles.thumbnailImage}
               resizeMode="cover"
             />
-            {idx === activeIndex && (
+            {idx === activeIndex && processingIndex === null && (
               <View style={styles.thumbnailActiveBadge}>
                 <Ionicons name="eye" size={10} color="#FFFFFF" />
+              </View>
+            )}
+            {processingIndex === idx && (
+              <View style={styles.thumbnailProcessingOverlay}>
+                <ActivityIndicator size="small" color="#FFFFFF" />
               </View>
             )}
           </TouchableOpacity>
@@ -525,6 +520,7 @@ const ThumbnailStrip: React.FC<ThumbnailStripProps> = ({
             style={styles.thumbnailAdd}
             onPress={onAdd}
             activeOpacity={0.8}
+            disabled={processingIndex !== null}
           >
             <Ionicons name="add" size={22} color="#FFFFFF" />
             <Text style={styles.thumbnailAddText}>{images.length}/10</Text>
@@ -1157,6 +1153,16 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     height: number;
   } | null>(null);
 
+  // ---- Flattened images (text + stickers baked in) ----
+  // null means "not yet captured for this index".
+  const [flattenedImages, setFlattenedImages] = useState<(string | null)[]>([]);
+  const [processingIndex, setProcessingIndex] = useState<number | null>(null);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+
+  // Ref to the container we capture. It's the same ref for every image
+  // because we only ever render one image at a time.
+  const captureViewRef = useRef<View | null>(null);
+
   const imageRect = useMemo<ImageRect>(
     () =>
       computeContainedRect(
@@ -1202,7 +1208,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
   }, []);
 
-  // Overlays visible on the currently-active image
   const visibleOverlays = useMemo(
     () => textOverlays.filter((o) => o.imageIndex === activeImageIndex),
     [textOverlays, activeImageIndex]
@@ -1225,7 +1230,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setNaturalSize(null);
   }, [activeImageIndex, editImages.length]);
 
-  // Trash pulse animation
   const trashPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isOverTrash) {
@@ -1247,7 +1251,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     }
   }, [isOverTrash, trashPulse]);
 
-  // Auto-request permission on mount
   useEffect(() => {
     (async () => {
       if (!cameraPermission?.granted && cameraPermission?.canAskAgain !== false) {
@@ -1273,7 +1276,74 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setDraftText('');
     setEditingOverlayId(null);
     setNaturalSize(null);
+    setFlattenedImages(uris.map(() => null));
+    setProcessingIndex(null);
+    setIsFinalizing(false);
   }, []);
+
+  // ============================================================
+  // FLATTEN CURRENT IMAGE
+  // Captures the current preview (image + filter + overlays) into a
+  // single JPG file URI. Returns null on failure.
+  // ============================================================
+  const captureCurrentImage = useCallback(async (): Promise<string | null> => {
+    if (!captureViewRef.current) return null;
+    try {
+      const uri = await captureRef(captureViewRef, {
+        format: 'jpg',
+        quality: 0.9,
+        result: 'tmpfile',
+      });
+      return uri;
+    } catch (err) {
+      console.warn('[flatten] capture failed:', err);
+      return null;
+    }
+  }, []);
+
+  // ============================================================
+  // SWITCH IMAGE — captures current first, then switches
+  // ============================================================
+  const handleThumbnailSelect = useCallback(
+    async (idx: number) => {
+      if (idx === activeImageIndex) return;
+      if (processingIndex !== null) return;
+
+      // If the current image has been modified (any overlays or a filter),
+      // bake those changes now so we don't lose them when we switch.
+      const hasChanges =
+        textOverlays.some((o) => o.imageIndex === activeImageIndex) ||
+        activeFilter !== 'none';
+
+      if (hasChanges) {
+        setProcessingIndex(activeImageIndex);
+        // Give React a tick to hide selection chrome before capture.
+        setSelectedOverlayId(null);
+        setActiveTool(null);
+        await new Promise((r) => setTimeout(r, 60));
+
+        const captured = await captureCurrentImage();
+        if (captured) {
+          setFlattenedImages((prev) => {
+            const next = [...prev];
+            next[activeImageIndex] = captured;
+            return next;
+          });
+        }
+        setProcessingIndex(null);
+      }
+
+      setActiveImageIndex(idx);
+      setSelectedOverlayId(null);
+    },
+    [
+      activeImageIndex,
+      processingIndex,
+      textOverlays,
+      activeFilter,
+      captureCurrentImage,
+    ]
+  );
 
   // ============================================================
   // CAPTURE PHOTO
@@ -1346,9 +1416,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
       if (result.canceled || !result.assets?.length) return;
 
       const newUris = result.assets.map((a) => a.uri);
-      const nextIndex = editImages.length;
       setEditImages((prev) => [...prev, ...newUris]);
-      setActiveImageIndex(nextIndex);
+      setFlattenedImages((prev) => [...prev, ...newUris.map(() => null)]);
+      setActiveImageIndex(editImages.length);
       setSelectedOverlayId(null);
     } catch (err: any) {
       showStyledAlert({
@@ -1390,6 +1460,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             onPress: () => {
               hideStyledAlert();
               setEditImages((prev) => prev.filter((_, i) => i !== index));
+              setFlattenedImages((prev) =>
+                prev.filter((_, i) => i !== index)
+              );
               setTextOverlays((prev) =>
                 prev
                   .filter((o) => o.imageIndex !== index)
@@ -1426,7 +1499,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }, []);
 
   // ============================================================
-  // TEXT TOOL — opens live inline editor immediately
+  // TEXT TOOL
   // ============================================================
   const openTextTool = useCallback(() => {
     Haptics.selectionAsync();
@@ -1449,9 +1522,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setTimeout(() => textInputRef.current?.focus(), 80);
   }, [selectedOverlay, activeImageIndex]);
 
-  // ============================================================
-  // EDIT EXISTING OVERLAY
-  // ============================================================
   const editOverlayText = useCallback((overlay: TextOverlay) => {
     setEditingOverlayId(overlay.id);
     setDraftText(overlay.text);
@@ -1460,9 +1530,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     setTimeout(() => textInputRef.current?.focus(), 80);
   }, []);
 
-  // ============================================================
-  // UPDATE DRAFT TEXT (live)
-  // ============================================================
   const updateDraftText = useCallback(
     (value: string) => {
       setDraftText(value);
@@ -1477,9 +1544,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     [editingOverlayId]
   );
 
-  // ============================================================
-  // FINISH TEXT EDITING
-  // ============================================================
   const finishTextEditing = useCallback(() => {
     if (editingOverlayId) {
       const overlay = textOverlays.find((o) => o.id === editingOverlayId);
@@ -1496,9 +1560,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [editingOverlayId, textOverlays]);
 
-  // ============================================================
-  // ADD STICKER OVERLAY
-  // ============================================================
   const addStickerOverlay = useCallback(
     (emoji: string) => {
       const overlay = makeDefaultOverlay(emoji, activeImageIndex);
@@ -1511,9 +1572,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     [activeImageIndex]
   );
 
-  // ============================================================
-  // UPDATE SELECTED OVERLAY
-  // ============================================================
   const updateSelectedOverlay = useCallback(
     (patch: Partial<TextOverlay>) => {
       if (!selectedOverlayId) return;
@@ -1524,9 +1582,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     [selectedOverlayId]
   );
 
-  // ============================================================
-  // DELETE SELECTED OVERLAY
-  // ============================================================
   const deleteSelectedOverlay = useCallback(() => {
     if (!selectedOverlayId) return;
     setTextOverlays((prev) => prev.filter((o) => o.id !== selectedOverlayId));
@@ -1536,9 +1591,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [selectedOverlayId]);
 
-  // ============================================================
-  // COPY SELECTED OVERLAY TO ALL IMAGES
-  // ============================================================
   const copyOverlayToAll = useCallback(() => {
     if (!selectedOverlay) return;
     if (editImages.length <= 1) return;
@@ -1557,9 +1609,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }, [selectedOverlay, editImages.length]);
 
-  // ============================================================
-  // HANDLE PREVIEW TAP
-  // ============================================================
   const handlePreviewTap = useCallback(() => {
     if (isEditingText) return;
     if (activeTool) {
@@ -1597,6 +1646,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             setEditingOverlayId(null);
             setDraftText('');
             setNaturalSize(null);
+            setFlattenedImages([]);
+            setProcessingIndex(null);
+            setIsFinalizing(false);
           },
         },
       ],
@@ -1604,26 +1656,85 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }, [showStyledAlert, hideStyledAlert]);
 
   // ============================================================
-  // GO TO POST DETAILS
+  // GO TO POST DETAILS — bakes every image then navigates
   // ============================================================
-  const goToPostDetails = useCallback(() => {
+  const goToPostDetails = useCallback(async () => {
     if (editImages.length === 0) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (isFinalizing) return;
+    setIsFinalizing(true);
 
-    navigation.navigate('UploadEditor', {
-      editResult: {
-        uri: editImages[0],
-        type: 'image',
-        trimStart: 0,
-        trimEnd: 0,
-        videoThumbnail: null,
-        fileSize: null,
-        textOverlays,
-        extraImages: editImages.slice(1),
-        filter: activeFilter,
-      },
-    });
-  }, [editImages, textOverlays, activeFilter, navigation]);
+    try {
+      // Deselect chrome so it isn't captured.
+      setSelectedOverlayId(null);
+      setIsEditingText(false);
+      setActiveTool(null);
+
+      // Give React a moment to clear selection outlines.
+      await new Promise((r) => setTimeout(r, 80));
+
+      // Build the final flattened list.
+      const finalFlattened: string[] = [];
+
+      for (let i = 0; i < editImages.length; i++) {
+        const alreadyCaptured = flattenedImages[i];
+        const isCurrent = i === activeImageIndex;
+
+        if (alreadyCaptured) {
+          finalFlattened.push(alreadyCaptured);
+          continue;
+        }
+
+        if (isCurrent) {
+          const captured = await captureCurrentImage();
+          finalFlattened.push(captured || editImages[i]);
+        } else {
+          // An image we never visited. There are no overlays/filters
+          // for it, so the raw URI is exactly what we want.
+          finalFlattened.push(editImages[i]);
+        }
+      }
+
+      const primaryUri = finalFlattened[0];
+      const extras = finalFlattened.slice(1);
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      navigation.navigate('UploadEditor', {
+        editResult: {
+          uri: primaryUri,
+          type: 'image',
+          trimStart: 0,
+          trimEnd: 0,
+          videoThumbnail: null,
+          fileSize: null,
+          // ✅ No textOverlays — they're baked into the flattened images.
+          extraImages: extras,
+          // ✅ No filter — also baked in now.
+          filter: 'none',
+        },
+      });
+    } catch (err) {
+      console.warn('[flatten] finalize failed:', err);
+      showStyledAlert({
+        title: 'Could not save edits',
+        message: 'Please try again.',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
+    } finally {
+      setIsFinalizing(false);
+    }
+  }, [
+    editImages,
+    flattenedImages,
+    activeImageIndex,
+    captureCurrentImage,
+    navigation,
+    isFinalizing,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
 
   // ============================================================
   // RENDER: PERMISSION LOADING
@@ -1674,7 +1785,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
       >
         <StatusBar barStyle="light-content" translucent />
 
-        {/* Full-screen preview + overlay layer */}
+        {/* Full-screen preview + overlay layer (captured by view-shot) */}
         <Pressable
           style={styles.editPreviewWrapper}
           onPress={handlePreviewTap}
@@ -1683,72 +1794,83 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             setWrapperH(e.nativeEvent.layout.height);
           }}
         >
-          <Image
-            source={{ uri: editImages[activeImageIndex] }}
-            style={styles.editImage}
-            resizeMode="contain"
-            onLoad={(e: any) => {
-              const src = e?.nativeEvent?.source;
-              if (src?.width && src?.height) {
-                setNaturalSize({ width: src.width, height: src.height });
-              }
-            }}
-          />
-
-          {activeFilterObj?.overlay && (
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: activeFilterObj.overlay },
-              ]}
-              pointerEvents="none"
+          <View
+            ref={captureViewRef}
+            collapsable={false}
+            style={{ flex: 1, backgroundColor: '#000' }}
+          >
+            <Image
+              source={{ uri: editImages[activeImageIndex] }}
+              style={styles.editImage}
+              resizeMode="contain"
+              onLoad={(e: any) => {
+                const src = e?.nativeEvent?.source;
+                if (src?.width && src?.height) {
+                  setNaturalSize({ width: src.width, height: src.height });
+                }
+              }}
             />
-          )}
 
-          {visibleOverlays.map((overlay) => {
-            if (isEditingText && overlay.id === editingOverlayId) return null;
-
-            return (
-              <DraggableText
-                key={overlay.id}
-                overlay={overlay}
-                imageRect={imageRect}
-                isSelected={overlay.id === selectedOverlayId}
-                isEditable={!isEditingText}
-                onSelect={() => setSelectedOverlayId(overlay.id)}
-                onDoubleTap={() => editOverlayText(overlay)}
-                onMove={(x, y) =>
-                  setTextOverlays((prev) =>
-                    prev.map((o) => (o.id === overlay.id ? { ...o, x, y } : o))
-                  )
-                }
-                onScale={(scale) =>
-                  setTextOverlays((prev) =>
-                    prev.map((o) =>
-                      o.id === overlay.id ? { ...o, scale } : o
-                    )
-                  )
-                }
-                onDragToTrash={() => {
-                  setTextOverlays((prev) =>
-                    prev.filter((o) => o.id !== overlay.id)
-                  );
-                  if (selectedOverlayId === overlay.id)
-                    setSelectedOverlayId(null);
-                  if (editingOverlayId === overlay.id) {
-                    setIsEditingText(false);
-                    setEditingOverlayId(null);
-                  }
-                }}
-                onDragStateChange={(dragging, overTrash) => {
-                  setIsDraggingOverlay(dragging);
-                  setIsOverTrash(overTrash);
-                }}
+            {activeFilterObj?.overlay && (
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  { backgroundColor: activeFilterObj.overlay },
+                ]}
+                pointerEvents="none"
               />
-            );
-          })}
+            )}
 
-          {/* INLINE TEXT INPUT — anchored to the image rect */}
+            {visibleOverlays.map((overlay) => {
+              if (isEditingText && overlay.id === editingOverlayId) return null;
+
+              return (
+                <DraggableText
+                  key={overlay.id}
+                  overlay={overlay}
+                  imageRect={imageRect}
+                  isSelected={
+                    overlay.id === selectedOverlayId && !isFinalizing
+                  }
+                  isEditable={!isEditingText}
+                  onSelect={() => setSelectedOverlayId(overlay.id)}
+                  onDoubleTap={() => editOverlayText(overlay)}
+                  onMove={(x, y) =>
+                    setTextOverlays((prev) =>
+                      prev.map((o) =>
+                        o.id === overlay.id ? { ...o, x, y } : o
+                      )
+                    )
+                  }
+                  onScale={(scale) =>
+                    setTextOverlays((prev) =>
+                      prev.map((o) =>
+                        o.id === overlay.id ? { ...o, scale } : o
+                      )
+                    )
+                  }
+                  onDragToTrash={() => {
+                    setTextOverlays((prev) =>
+                      prev.filter((o) => o.id !== overlay.id)
+                    );
+                    if (selectedOverlayId === overlay.id)
+                      setSelectedOverlayId(null);
+                    if (editingOverlayId === overlay.id) {
+                      setIsEditingText(false);
+                      setEditingOverlayId(null);
+                    }
+                  }}
+                  onDragStateChange={(dragging, overTrash) => {
+                    setIsDraggingOverlay(dragging);
+                    setIsOverTrash(overTrash);
+                  }}
+                />
+              );
+            })}
+          </View>
+
+          {/* Inline text editor — OUTSIDE the capture view so the input
+              chrome (cursor, caret) never ends up in the flattened image. */}
           {isEditingText && selectedOverlay && (
             <View
               style={[
@@ -1785,20 +1907,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                     borderRadius: selectedOverlay.backgroundColor ? 8 : 0,
                     paddingHorizontal: selectedOverlay.backgroundColor ? 8 : 6,
                     paddingVertical: 4,
-                    textShadowColor:
-                      selectedOverlay.shadow && !selectedOverlay.backgroundColor
-                        ? selectedOverlay.color === '#000000'
-                          ? 'rgba(255,255,255,0.7)'
-                          : 'rgba(0,0,0,0.65)'
-                        : 'transparent',
-                    textShadowRadius:
-                      selectedOverlay.shadow && !selectedOverlay.backgroundColor
-                        ? 6
-                        : 0,
-                    textShadowOffset:
-                      selectedOverlay.shadow && !selectedOverlay.backgroundColor
-                        ? { width: 0, height: 2 }
-                        : { width: 0, height: 0 },
                   },
                 ]}
                 value={draftText}
@@ -1816,18 +1924,16 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           )}
         </Pressable>
 
-        {/* Image thumbnail strip — hidden while editing text */}
+        {/* Thumbnail strip */}
         {!isEditingText && (
           <ThumbnailStrip
             images={editImages}
             activeIndex={activeImageIndex}
-            onSelect={(idx) => {
-              setActiveImageIndex(idx);
-              setSelectedOverlayId(null);
-            }}
+            onSelect={handleThumbnailSelect}
             onRemove={handleRemoveImage}
             onAdd={handleAddMoreImages}
             bottomInset={insets.bottom}
+            processingIndex={processingIndex}
           />
         )}
 
@@ -1865,6 +1971,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
             style={styles.iconButton}
             onPress={discardEdit}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            disabled={isFinalizing}
           >
             <Ionicons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
@@ -1876,9 +1983,19 @@ export const UploadCameraScreen = ({ navigation }: any) => {
                 : ''}
             </Text>
           </View>
-          <TouchableOpacity style={styles.nextButton} onPress={goToPostDetails}>
-            <Text style={styles.nextButtonText}>Next</Text>
-            <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+          <TouchableOpacity
+            style={styles.nextButton}
+            onPress={goToPostDetails}
+            disabled={isFinalizing}
+          >
+            {isFinalizing ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Text style={styles.nextButtonText}>Next</Text>
+                <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -1905,7 +2022,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           </View>
         )}
 
-        {/* LIVE TEXT EDITOR PANEL */}
+        {/* Live text editor panel */}
         {isEditingText && selectedOverlay && (
           <LiveTextEditor
             overlay={selectedOverlay}
@@ -1919,10 +2036,9 @@ export const UploadCameraScreen = ({ navigation }: any) => {
           />
         )}
 
-        {/* Tool sheet (stickers / filters / sound) */}
+        {/* Tool sheet */}
         {!isEditingText && activeTool && (
           <View style={[styles.toolSheet, { paddingBottom: insets.bottom + 12 }]}>
-            {/* STICKERS */}
             {activeTool === 'stickers' && (
               <>
                 <View style={styles.toolSheetHeader}>
@@ -1970,7 +2086,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               </>
             )}
 
-            {/* FILTERS */}
             {activeTool === 'filters' && (
               <>
                 <View style={styles.toolSheetHeader}>
@@ -2019,7 +2134,6 @@ export const UploadCameraScreen = ({ navigation }: any) => {
               </>
             )}
 
-            {/* SOUND */}
             {activeTool === 'sound' && (
               <View style={styles.toolSheetHeader}>
                 <Text style={styles.toolSheetTitle}>Sound</Text>
@@ -2045,7 +2159,7 @@ export const UploadCameraScreen = ({ navigation }: any) => {
   }
 
   // ============================================================
-  // RENDER: CAMERA MODE (image-only)
+  // RENDER: CAMERA MODE
   // ============================================================
   return (
     <View style={styles.container}>
@@ -2296,6 +2410,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+    minWidth: 70,
+    justifyContent: 'center',
   },
   nextButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 
@@ -2637,6 +2753,12 @@ const styles = StyleSheet.create({
     height: 16,
     borderRadius: 8,
     backgroundColor: '#4A7DFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  thumbnailProcessingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center',
     alignItems: 'center',
   },

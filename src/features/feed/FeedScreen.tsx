@@ -206,7 +206,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   // Tracks whether the query has settled at least once.
   const hasFetchedOnceRef = useRef(false);
 
-  // Tracks the last deep-linked post we scrolled to, so we don't re-scroll.
+  // ✅ Deep-link tracking
+  // pendingOpenPostIdRef: the post id waiting to be scrolled to.
+  // lastHandledPostIdRef: the post id we've already scrolled to.
+  const pendingOpenPostIdRef = useRef<string | null>(null);
   const lastHandledPostIdRef = useRef<string | null>(null);
 
   const {
@@ -385,37 +388,115 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [queryError, queryLoading, setError, setLoading]);
 
   // ============================================================
-  // ✅ DEEP LINK: scroll to the post passed via route.params.openPostId
+  // ✅ DEEP LINK: capture the incoming post id into a ref
   // ============================================================
   useEffect(() => {
     const openPostId = route?.params?.openPostId;
+    if (openPostId) {
+      pendingOpenPostIdRef.current = openPostId;
+      if (__DEV__) console.log('📌 Pending deep-linked post:', openPostId);
+    }
+  }, [route?.params?.openPostId]);
+
+  // ============================================================
+  // ✅ DEEP LINK: scroll to the pending post once the feed loads
+  // ============================================================
+  useEffect(() => {
+    const openPostId = pendingOpenPostIdRef.current;
     if (!openPostId) return;
-    if (lastHandledPostIdRef.current === openPostId) return;
     if (uniqueOpportunities.length === 0) return;
+    if (lastHandledPostIdRef.current === openPostId) return;
 
     const index = uniqueOpportunities.findIndex((o) => o.id === openPostId);
     if (index === -1) {
-      if (__DEV__) console.log('⚠️ Deep-linked post not found in feed:', openPostId);
+      if (__DEV__) {
+        console.log('⚠️ Deep-linked post not found in feed:', openPostId);
+        console.log(
+          'Feed IDs:',
+          uniqueOpportunities.slice(0, 5).map((o) => o.id),
+          '...'
+        );
+      }
+      // Clear the pending value so we don't retry forever.
+      pendingOpenPostIdRef.current = null;
+      lastHandledPostIdRef.current = openPostId;
       return;
     }
 
-    lastHandledPostIdRef.current = openPostId;
+    if (__DEV__) {
+      console.log('✅ Scrolling to deep-linked post:', openPostId, 'index:', index);
+    }
 
-    setTimeout(() => {
+    let cancelled = false;
+    let attempts = 0;
+
+    const tryScroll = () => {
+      if (cancelled) return;
+      attempts++;
+
       try {
         flatListRef.current?.scrollToIndex({ index, animated: false });
         setCurrentIndex(index);
-        // Clear the param so a later remount doesn't re-scroll.
+
+        // Success — remember we handled it.
+        lastHandledPostIdRef.current = openPostId;
+        pendingOpenPostIdRef.current = null;
+
+        // Clear the param so remounting doesn't re-scroll.
         try {
           navigation.setParams({ openPostId: undefined } as any);
         } catch {
-          /* older RN versions may not support setParams on unmount */
+          /* older RN versions may not support setParams */
         }
-      } catch (e) {
-        if (__DEV__) console.warn('Deep link scrollToIndex failed:', e);
+
+        if (__DEV__) console.log('🎯 Scrolled to post on attempt', attempts);
+      } catch (err) {
+        if (attempts < 20) {
+          setTimeout(tryScroll, 150);
+        } else if (__DEV__) {
+          console.warn(
+            '❌ Gave up scrolling to post after',
+            attempts,
+            'attempts:',
+            err
+          );
+        }
       }
-    }, 400);
-  }, [route?.params?.openPostId, uniqueOpportunities, navigation, setCurrentIndex]);
+    };
+
+    const timer = setTimeout(tryScroll, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [uniqueOpportunities, navigation, setCurrentIndex]);
+
+  // ============================================================
+  // ✅ FlatList scrollToIndex failure handler
+  // ============================================================
+  const handleScrollToIndexFailed = useCallback(
+    (info: {
+      index: number;
+      highestMeasuredFrameIndex: number;
+      averageItemLength: number;
+    }) => {
+      if (__DEV__) console.log('⚠️ scrollToIndex failed, retrying:', info);
+
+      setTimeout(() => {
+        try {
+          flatListRef.current?.scrollToIndex({
+            index: info.index,
+            animated: false,
+            viewPosition: 0,
+          });
+        } catch (err) {
+          if (__DEV__) console.warn('Retry scrollToIndex also failed:', err);
+        }
+      }, 200);
+    },
+    []
+  );
 
   // ============================================================
   // PREFETCH LIKES
@@ -667,8 +748,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     [isDesktop]
   );
 
-  // ✅ Uses the shared sharePost helper so the URL is the Vercel-served
-  //    OG page (https://munolink.com/s/<id>) with a proper preview card.
   const handleSharePress = useCallback(
     async (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1473,7 +1552,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               removeClippedSubviews={false}
               maxToRenderPerBatch={isDesktop ? 3 : 2}
               windowSize={isDesktop ? 5 : 3}
-              onScrollToIndexFailed={() => {}}
+              onScrollToIndexFailed={handleScrollToIndexFailed}
               scrollEventThrottle={32}
               style={{ flex: 1, backgroundColor: '#0D0D1A' }}
             />

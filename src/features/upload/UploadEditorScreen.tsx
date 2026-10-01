@@ -26,28 +26,6 @@ const { height } = Dimensions.get('window');
 
 type PostType = 'fixed' | 'negotiable' | 'free' | 'showcase';
 
-type TextOverlayData = {
-  id: string;
-  text: string;
-  x: number;
-  y: number;
-  color: string;
-  fontSize: number;
-  fontFamily?: string;
-  fontWeight?: 'normal' | 'bold';
-  fontStyle?: 'normal' | 'italic';
-  textDecorationLine?: 'none' | 'underline';
-  backgroundColor?: string | null;
-  opacity?: number;
-  letterSpacing?: number;
-  lineHeight?: number;
-  shadow?: boolean;
-  scale?: number;
-  rotation?: number;
-  textAlign?: 'left' | 'center' | 'right';
-  imageIndex?: number;
-};
-
 type EditResult = {
   uri: string;
   type: 'image' | 'video';
@@ -55,7 +33,6 @@ type EditResult = {
   trimEnd: number;
   videoThumbnail: string | null;
   fileSize: number | null;
-  textOverlays?: TextOverlayData[];
   extraImages?: string[];
   filter?: string;
 };
@@ -147,18 +124,15 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
 
   const editResult: EditResult | undefined = route?.params?.editResult;
 
-  // Post fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [postType, setPostType] = useState<PostType>('fixed');
   const [saving, setSaving] = useState(false);
 
-  // Cache of uploaded URLs so we don't re-upload on Post if already done
   const uploadedImagesRef = useRef<string[] | null>(null);
   const uploadedCoverRef = useRef<string | null>(null);
 
-  // StyledAlert
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -200,7 +174,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
 
   const isFree = postType === 'free';
   const isShowcase = postType === 'showcase';
-  const isVideo = editResult?.type === 'video';
 
   // ============================================================
   // PUBLISH
@@ -340,7 +313,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
 
       const specifications: Record<string, any> = {};
 
-      // Post type / price type
       specifications.price_type = postType;
       if (postType === 'fixed' || postType === 'negotiable') {
         specifications.price = finalPrice;
@@ -355,11 +327,9 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
         specifications.trim_end = editResult.trimEnd;
       }
 
-      specifications.text_overlays = editResult.textOverlays ?? [];
-
-      if (editResult.filter && editResult.filter !== 'none') {
-        specifications.filter = editResult.filter;
-      }
+      // NOTE: text_overlays and filter are NOT saved anymore.
+      // The text, stickers, and filter tint are permanently baked
+      // into the flattened images at edit time.
 
       // ==========================================================
       // 5. Insert payload
@@ -486,7 +456,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* TITLE */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Title</Text>
           <TextInput
@@ -500,7 +469,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
           />
         </View>
 
-        {/* DESCRIPTION */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Description</Text>
           <TextInput
@@ -516,7 +484,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
           <Text style={styles.helperText}>{description.length} / 500</Text>
         </View>
 
-        {/* POST TYPE */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Post Type</Text>
           <View style={styles.priceChipRow}>
@@ -572,7 +539,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
             })}
           </View>
 
-          {/* Hint for showcase */}
           {isShowcase && (
             <View style={styles.hintRow}>
               <Ionicons
@@ -581,8 +547,8 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
                 color="#6A7A9E"
               />
               <Text style={styles.hintText}>
-                Perfect for sharing ideas, inspiration, or things that aren't for
-                sale.
+                Perfect for sharing ideas, inspiration, or things that aren't
+                for sale.
               </Text>
             </View>
           )}
@@ -600,7 +566,6 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
           )}
         </View>
 
-        {/* PRICE — only for fixed / negotiable */}
         {(postType === 'fixed' || postType === 'negotiable') && (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>
