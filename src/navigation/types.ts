@@ -9,8 +9,8 @@ export type RootStackParamList = {
   ShopProfile: { shopId: string; shopName?: string };
   Search: undefined;
   PrivacyPolicy: undefined;
-  ForgotPassword: undefined;
-TermsOfService: undefined;
+  ForgotPassword: { email?: string } | undefined;
+  TermsOfService: undefined;
   SearchResults: {
     results: any[];
     query: string;
