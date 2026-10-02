@@ -40,8 +40,16 @@ export const RootNavigator = () => {
       {/* Auth */}
       <Stack.Screen name="Join" component={JoinScreen} />
       <Stack.Screen name="SignIn" component={SignInScreen} />
-<Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
-<Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} />
+      <Stack.Screen
+        name="ForgotPassword"
+        component={ForgotPasswordScreen}
+        options={{ headerShown: false }}
+      />
+
+      {/* Legal */}
+      <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
+      <Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} />
+
       {/* Pay */}
       <Stack.Screen name="PayScreen" component={PayScreen} />
 
@@ -82,13 +90,7 @@ export const RootNavigator = () => {
           animation: 'slide_from_right',
         }}
       />
-      <Stack.Screen name="Join" component={JoinScreen} />
-      <Stack.Screen name="SignIn" component={SignInScreen} />
-      <Stack.Screen
-        name="ForgotPassword"
-        component={ForgotPasswordScreen}
-        options={{ headerShown: false }}
-      />
+
       {/* Placeholders */}
       <Stack.Screen
         name="Notifications"
