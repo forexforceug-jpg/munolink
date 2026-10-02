@@ -22,7 +22,10 @@ import {
   ViewToken,
   ViewabilityConfig,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -44,6 +47,7 @@ import { locationService } from '../../services/location.service';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { useIsFocused } from '@react-navigation/native';
+import { getTabBarHeight } from '../../navigation/TabNavigator';
 
 const { width, height } = Dimensions.get('window');
 
@@ -78,6 +82,16 @@ const PRICE_TYPE_OPTIONS: {
 // ============================================================
 // HELPERS
 // ============================================================
+
+// Strip the Ugandan country code for display in the phone input.
+// Stored values are E.164 (+256XXXXXXXXX). Display values are 9 digits.
+const stripCountryCode = (raw: string | null | undefined): string => {
+  if (!raw) return '';
+  const digits = String(raw).replace(/\D/g, '');
+  if (digits.startsWith('256')) return digits.slice(3);
+  if (digits.startsWith('0')) return digits.slice(1);
+  return digits;
+};
 
 async function uriToBlob(uri: string): Promise<Blob> {
   if (Platform.OS === 'web') {
@@ -273,7 +287,6 @@ const getPriceFromItem = (item: CatalogItem): number | null => {
   return price;
 };
 
-// ✅ Robust price_type resolution
 const getPriceTypeFromItem = (item: CatalogItem): PriceType => {
   const candidates: unknown[] = [
     item.price_type,
@@ -748,13 +761,18 @@ const AccountContent = ({ navigation }: any) => {
   const { user, isAuthenticated, logout } = useAuth();
   const { isDesktop } = useBreakpoint();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
+
+  // FAB position: tab bar height + gap, so it never slides under the
+  // system nav bar / gesture bar.
+  const tabBarHeight = getTabBarHeight(insets);
+  const FAB_BOTTOM_OFFSET = tabBarHeight + 16;
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
 
-  // ✅ NEW: separate arrays for the "Saved" and "Liked" tabs
   const [savedItems, setSavedItems] = useState<CatalogItem[]>([]);
   const [likedItems, setLikedItems] = useState<CatalogItem[]>([]);
 
@@ -882,7 +900,6 @@ const AccountContent = ({ navigation }: any) => {
     async (rows: any[]): Promise<CatalogItem[]> => {
       if (!rows || rows.length === 0) return [];
 
-      // --- comment counts ---
       let commentCounts: Record<string, number> = {};
       try {
         const { data: commentData, error: commentError } = await supabase
@@ -901,7 +918,6 @@ const AccountContent = ({ navigation }: any) => {
         /* ignore */
       }
 
-      // --- save counts ---
       let saveCounts: Record<string, number> = {};
       try {
         const { data: saveData, error: saveError } = await supabase
@@ -920,7 +936,6 @@ const AccountContent = ({ navigation }: any) => {
         /* ignore */
       }
 
-      // --- distance ---
       let userCoords: { latitude: number; longitude: number } | undefined;
       try {
         const loc = await locationService.getCurrentLocation();
@@ -1067,13 +1082,13 @@ const AccountContent = ({ navigation }: any) => {
   );
 
   // ============================================================
-  // FETCH — saved posts (joined through `saves`)
+  // FETCH — saved posts
   // ============================================================
   const fetchSavedItems = useCallback(async () => {
     if (!user?.id) return [];
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('saves')
         .select(
           `
@@ -1098,17 +1113,13 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user, shapeCatalogRows]);
 
-   // ============================================================
-  // FETCH — liked posts (joined through `likes`)
+  // ============================================================
+  // FETCH — liked posts
   // ============================================================
   const fetchLikedItems = useCallback(async () => {
     if (!user?.id) return [];
 
     try {
-      // Cast the client to `any` for this query because the local
-      // Supabase generated types don't yet include the `likes` table.
-      // Once `supabase gen types typescript` is re-run against the
-      // live schema, this cast can be removed.
       const { data, error } = await (supabase as any)
         .from('likes')
         .select(
@@ -1133,6 +1144,7 @@ const AccountContent = ({ navigation }: any) => {
       return [];
     }
   }, [user, shapeCatalogRows]);
+
   // ============================================================
   // FETCH — follow stats
   // ============================================================
@@ -1294,7 +1306,7 @@ const AccountContent = ({ navigation }: any) => {
   }, [user?.id, catalogItems]);
 
   // ============================================================
-  // ✅ FETCH SAVED / LIKED WHEN TABS BECOME ACTIVE
+  // FETCH SAVED / LIKED WHEN TABS BECOME ACTIVE
   // ============================================================
   useEffect(() => {
     if (!user?.id) return;
@@ -1331,7 +1343,6 @@ const AccountContent = ({ navigation }: any) => {
     setRefreshing(true);
     try {
       await loadAllData();
-      // Refresh whichever secondary tab is active
       if (activeTab === 'saved') {
         setSavedItems(await fetchSavedItems());
       } else if (activeTab === 'liked') {
@@ -1343,7 +1354,7 @@ const AccountContent = ({ navigation }: any) => {
   }, [loadAllData, activeTab, fetchSavedItems, fetchLikedItems]);
 
   // ============================================================
-  // ✅ WHICH ITEMS TO RENDER IN THE GRID
+  // WHICH ITEMS TO RENDER IN THE GRID
   // ============================================================
   const activeItems = useMemo(() => {
     switch (activeTab) {
@@ -1562,9 +1573,15 @@ const AccountContent = ({ navigation }: any) => {
       if (editForm.full_name.trim()) {
         updateData.full_name = editForm.full_name.trim();
       }
+
+      // ✅ Persist phone number as E.164 (+256XXXXXXXXX)
       if (editForm.phone_number.trim()) {
-        updateData.phone_number = editForm.phone_number.trim();
+        const digits = editForm.phone_number.replace(/\D/g, '');
+        updateData.phone_number = digits.startsWith('256')
+          ? `+${digits}`
+          : `+256${digits}`;
       }
+
       updateData.bio = editForm.bio.trim() || null;
       updateData.location_city = editForm.location_city.trim() || null;
       updateData.location_region = editForm.location_region.trim() || null;
@@ -1585,7 +1602,8 @@ const AccountContent = ({ navigation }: any) => {
           ? {
               ...prev,
               full_name: editForm.full_name.trim() || prev.full_name,
-              phone_number: editForm.phone_number.trim() || prev.phone_number,
+              phone_number:
+                updateData.phone_number || prev.phone_number,
               bio: editForm.bio.trim() || null,
               avatar_url: avatarUrl,
               cover_url: coverUrl,
@@ -2375,29 +2393,90 @@ const AccountContent = ({ navigation }: any) => {
 
   const handleSettingsPress = () => setShowSettings(true);
 
+  // Opens the edit-profile modal, pre-filled with the current profile.
+  // Used both by "Profile Settings" and "Change Location".
+  const openEditProfileModal = useCallback(() => {
+    setShowEditProfile(true);
+    if (userProfile) {
+      setEditForm({
+        full_name: userProfile.full_name || '',
+        // ✅ Show only the local part (no +256)
+        phone_number: stripCountryCode(userProfile.phone_number),
+        bio: userProfile.bio || '',
+        location_city: userProfile.location_city || '',
+        location_region: userProfile.location_region || '',
+        location_country: userProfile.location_country || '',
+      });
+      setEditAvatar(null);
+      setEditCover(null);
+    }
+  }, [userProfile]);
+
   const handleSettingsAction = (action: string) => {
     setShowSettings(false);
     switch (action) {
       case 'profile':
-        setShowEditProfile(true);
-        if (userProfile) {
-          setEditForm({
-            full_name: userProfile.full_name || '',
-            phone_number: userProfile.phone_number || '',
-            bio: userProfile.bio || '',
-            location_city: userProfile.location_city || '',
-            location_region: userProfile.location_region || '',
-            location_country: userProfile.location_country || '',
-          });
-          setEditAvatar(null);
-          setEditCover(null);
-        }
+      case 'location':
+        // Both open the same modal; the modal already contains the
+        // location fields, so "Change Location" is a shortcut to them.
+        openEditProfileModal();
         break;
       case 'help':
         navigation.navigate('HelpSupport');
         break;
       case 'wallet':
         navigation.navigate('Pay');
+        break;
+      case 'privacy':
+        navigation.navigate('PrivacyPolicy');
+        break;
+      case 'terms':
+        navigation.navigate('TermsOfService');
+        break;
+      case 'addAccount':
+        // Note: Supabase only supports one active session at a time.
+        // "Add Account" therefore signs the current user out and takes
+        // them to Sign In to log into a different account. The previous
+        // session is replaced when the new login completes.
+        showStyledAlert({
+          title: 'Add Account',
+          message:
+            'Signing in with a different account will replace the current session. Continue?',
+          icon: 'person-add-outline',
+          iconColor: '#4A7DFF',
+          buttons: [
+            { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Continue',
+              style: 'primary',
+              onPress: async () => {
+                hideStyledAlert();
+                try {
+                  await logout();
+                  setCatalogItems([]);
+                  setSavedItems([]);
+                  setLikedItems([]);
+                  navigation.replace('SignIn');
+                } catch (err) {
+                  console.error('Add account error:', err);
+                  showStyledAlert({
+                    title: 'Error',
+                    message: 'Could not switch accounts. Please try again.',
+                    icon: 'alert-circle-outline',
+                    iconColor: '#E74C3C',
+                    buttons: [
+                      {
+                        text: 'OK',
+                        style: 'primary',
+                        onPress: hideStyledAlert,
+                      },
+                    ],
+                  });
+                }
+              },
+            },
+          ],
+        });
         break;
       case 'logout':
         showStyledAlert({
@@ -2414,7 +2493,6 @@ const AccountContent = ({ navigation }: any) => {
                 hideStyledAlert();
                 try {
                   await logout();
-                  // Clear local state so the next user doesn't see stale data
                   setCatalogItems([]);
                   setSavedItems([]);
                   setLikedItems([]);
@@ -2558,17 +2636,27 @@ const AccountContent = ({ navigation }: any) => {
 
                 <View style={styles.formGroup}>
                   <Text style={styles.formLabel}>Phone Number</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="+256 700 000 000"
-                    placeholderTextColor="#6A7A9E"
-                    keyboardType="phone-pad"
-                    value={editForm.phone_number}
-                    onChangeText={(text) =>
-                      setEditForm((prev) => ({ ...prev, phone_number: text }))
-                    }
-                    returnKeyType="next"
-                  />
+                  {/* ✅ Fixed +256 country code, only the local part is editable */}
+                  <View style={styles.phoneInput}>
+                    <View style={styles.countryCode}>
+                      <Text style={styles.countryCodeText}>+256</Text>
+                    </View>
+                    <TextInput
+                      style={styles.phoneInputField}
+                      placeholder="700 000 000"
+                      placeholderTextColor="#6A7A9E"
+                      keyboardType="phone-pad"
+                      value={editForm.phone_number}
+                      onChangeText={(text) =>
+                        setEditForm((prev) => ({
+                          ...prev,
+                          phone_number: text.replace(/\D/g, ''),
+                        }))
+                      }
+                      maxLength={9}
+                      returnKeyType="next"
+                    />
+                  </View>
                 </View>
 
                 <View style={styles.formGroup}>
@@ -2875,7 +2963,7 @@ const AccountContent = ({ navigation }: any) => {
                 </View>
               </View>
 
-              {/* PRICE — only for fixed / negotiable */}
+              {/* PRICE */}
               {priceEditable && (
                 <View style={styles.formGroup}>
                   <Text style={styles.formLabel}>
@@ -2927,9 +3015,26 @@ const AccountContent = ({ navigation }: any) => {
   const renderSettingsModal = () => {
     const settingsOptions = [
       { key: 'profile', icon: 'person-outline', label: 'Profile Settings' },
+      { key: 'location', icon: 'location-outline', label: 'Change Location' },
       { key: 'wallet', icon: 'wallet-outline', label: 'Wallet' },
+      { key: 'addAccount', icon: 'person-add-outline', label: 'Add Account' },
       { key: 'help', icon: 'help-circle-outline', label: 'Help & Support' },
-      { key: 'logout', icon: 'log-out-outline', label: 'Log Out', danger: true },
+      {
+        key: 'privacy',
+        icon: 'shield-checkmark-outline',
+        label: 'Privacy Policy',
+      },
+      {
+        key: 'terms',
+        icon: 'document-text-outline',
+        label: 'Terms of Service',
+      },
+      {
+        key: 'logout',
+        icon: 'log-out-outline',
+        label: 'Log Out',
+        danger: true,
+      },
     ];
 
     return (
@@ -3254,7 +3359,7 @@ const AccountContent = ({ navigation }: any) => {
 
           <TouchableOpacity
             style={styles.editProfileButton}
-            onPress={() => setShowEditProfile(true)}
+            onPress={openEditProfileModal}
           >
             <Text style={styles.editProfileButtonText}>Edit Profile</Text>
           </TouchableOpacity>
@@ -3336,8 +3441,9 @@ const AccountContent = ({ navigation }: any) => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
+      {/* ✅ FAB anchored above the tab bar */}
       <TouchableOpacity
-        style={[styles.fab, { bottom: 90 }]}
+        style={[styles.fab, { bottom: FAB_BOTTOM_OFFSET }]}
         onPress={openUploadCamera}
         activeOpacity={0.8}
       >
@@ -3550,7 +3656,6 @@ const styles = StyleSheet.create({
   tabLabel: { color: '#8A8AAE', fontSize: 12, fontWeight: '500' },
   tabLabelActive: { color: '#FFFFFF' },
 
-  // ✅ Manual posts grid
   postsGridWrap: {
     width: '100%',
   },
@@ -3698,7 +3803,6 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 90,
     right: 24,
     borderRadius: 30,
     overflow: 'hidden',
@@ -3755,6 +3859,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
+
+  // ✅ Phone input with hardcoded country code (matches Join/SignIn)
+  phoneInput: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  countryCode: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(74,125,255,0.15)',
+    justifyContent: 'center',
+  },
+  countryCodeText: { color: '#FFFFFF', fontSize: 15, fontWeight: '500' },
+  phoneInputField: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+
   formInputDisabled: { opacity: 0.5 },
   formTextArea: { height: 80, textAlignVertical: 'top' },
 
