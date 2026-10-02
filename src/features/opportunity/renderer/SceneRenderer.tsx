@@ -111,6 +111,14 @@ interface Props {
   resetKey?: string | number;
   isDesktop?: boolean;
   bottomOffset?: number;
+  /**
+   * When true, `bottomOffset` is used verbatim for the info panel's
+   * bottom offset, and SceneRenderer skips its internal tab-bar
+   * computation. Use this from screens that already know the exact
+   * tab-bar height (e.g. FeedScreen, which sits inside the tab
+   * navigator and reads `useBottomTabBarHeight()` itself).
+   */
+  useExplicitBottomOffset?: boolean;
   title?: string;
   price?: number;
   priceType?: PriceType | string | null;
@@ -848,6 +856,7 @@ export function SceneRenderer({
   resetKey,
   isDesktop = false,
   bottomOffset = 0,
+  useExplicitBottomOffset = false,
   title = 'Product',
   price = 0,
   priceType = 'fixed',
@@ -889,27 +898,33 @@ export function SceneRenderer({
   const lastScrollIndexRef = useRef(0);
   const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ✅ Compute the info panel bottom offset from real measurements.
+  // ✅ Compute the info panel bottom offset.
   //
-  //   - insets.bottom: the device's home indicator / gesture bar.
-  //   - tabBarHeight:  the actual height of the bottom tab bar if we're
-  //                    inside a tab navigator, 0 otherwise.
-  //   - SCENE_INFO_GAP: minimum gap between the info panel and whatever
-  //                     is below it, so it never looks glued.
+  //   Two modes:
   //
-  //   Inside a tab navigator  → sit gap above the tab bar.
-  //   Outside a tab navigator → sit gap + inset above the bottom edge.
+  //   1. useExplicitBottomOffset = true
+  //      → Use `bottomOffset` verbatim. Callers that already know the
+  //        exact tab-bar height (FeedScreen) use this so the info
+  //        panel clears the tab bar precisely.
   //
-  //   Plus any caller-supplied `bottomOffset` on top.
+  //   2. useExplicitBottomOffset = false (default)
+  //      → Compute it from:
+  //        - insets.bottom: device home indicator / gesture bar.
+  //        - tabBarHeight:  actual tab-bar height if inside a tab
+  //                         navigator, 0 otherwise.
+  //        - SCENE_INFO_GAP: minimum visual gap.
+  //      → Plus any caller-supplied `bottomOffset` on top.
+  //
   const insets = useSafeAreaInsets();
   const tabBarHeight = useSafeTabBarHeight();
 
   const SCENE_INFO_GAP = 16;
 
-  const infoPanelBottomOffset =
-    (tabBarHeight > 0
-      ? tabBarHeight + SCENE_INFO_GAP
-      : insets.bottom + 40) + bottomOffset;
+  const computedBottomOffset = useExplicitBottomOffset
+    ? bottomOffset
+    : (tabBarHeight > 0
+        ? tabBarHeight + SCENE_INFO_GAP
+        : insets.bottom + 40) + bottomOffset;
 
   const safeMedia =
     media && media.length > 0
@@ -947,7 +962,6 @@ export function SceneRenderer({
   const timeAgo = formatTimeAgo(createdAt);
   const displayName = userName || 'User';
 
-  // Reset natural-size cache when media changes
   useEffect(() => {
     setActiveImageNaturalSize(null);
   }, [currentIndex, resetKey]);
@@ -1316,7 +1330,7 @@ export function SceneRenderer({
       />
 
       <View
-        style={[styles.bottomContainer, { bottom: infoPanelBottomOffset }]}
+        style={[styles.bottomContainer, { bottom: computedBottomOffset }]}
       >
         {showInbox && (
           <TouchableOpacity

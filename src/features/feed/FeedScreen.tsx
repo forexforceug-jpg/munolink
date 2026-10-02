@@ -34,6 +34,7 @@ import {
   ViewToken,
   Platform,
   RefreshControl,
+  Linking,
 } from 'react-native';
 import {
   SafeAreaView,
@@ -68,6 +69,9 @@ import { sharePost } from '../../utils/share';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
+
+// Link shown by the "Open in App" button on web.
+const APP_DEEP_LINK = 'https://www.munolink.com/app';
 
 type FeedScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -157,11 +161,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     'details' | 'reviews' | 'directions' | null
   >(null);
 
-  // ✅ Pull-to-refresh state
   const [refreshing, setRefreshing] = useState(false);
-
-  // ✅ Bumping this forces the FlatList to remount after a refresh so
-  // iOS paging FlatList picks up the new data at index 0.
   const [feedVersion, setFeedVersion] = useState(0);
 
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
@@ -214,10 +214,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const oppOpenTimeRef = useRef<number>(Date.now());
   const lastOpenOpportunityIdRef = useRef<string | null>(null);
 
-  // Tracks whether the query has settled at least once.
   const hasFetchedOnceRef = useRef(false);
 
-  // ✅ Deep-link tracking
   const pendingOpenPostIdRef = useRef<string | null>(null);
   const lastHandledPostIdRef = useRef<string | null>(null);
 
@@ -264,7 +262,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [queryStatus]);
 
   // ============================================================
-  // LOCATION HANDLING
+  // LOCATION HANDLING (state only — no UI trigger anymore)
   // ============================================================
   useEffect(() => {
     const getLocation = async () => {
@@ -291,18 +289,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     };
     getLocation();
   }, []);
-
-  const getLocationDisplay = useCallback(() => {
-    if (isLocationLoading) {
-      return 'Detecting...';
-    }
-    if (selectedLocation) {
-      const details =
-        locationService.getDetailedLocationDisplay(selectedLocation);
-      return details.primary || userLocation;
-    }
-    return userLocation || 'Jinja, Uganda';
-  }, [isLocationLoading, selectedLocation, userLocation]);
 
   const handleLocationSelect = useCallback(
     (location: UserLocation | null, label: string) => {
@@ -388,7 +374,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     return uniqueOpportunities.slice(0, FEATURED_COUNT);
   }, [uniqueOpportunities]);
 
-  // --- Sync query state into store ---
   useEffect(() => {
     if (queryError) {
       setError(queryError.message);
@@ -397,7 +382,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [queryError, queryLoading, setError, setLoading]);
 
   // ============================================================
-  // ✅ DEEP LINK: capture the incoming post id into a ref
+  // DEEP LINK
   // ============================================================
   useEffect(() => {
     const openPostId = route?.params?.openPostId;
@@ -407,9 +392,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [route?.params?.openPostId]);
 
-  // ============================================================
-  // ✅ DEEP LINK: scroll to the pending post once the feed loads
-  // ============================================================
   useEffect(() => {
     const openPostId = pendingOpenPostIdRef.current;
     if (!openPostId) return;
@@ -418,16 +400,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
     const index = uniqueOpportunities.findIndex((o) => o.id === openPostId);
     if (index === -1) {
-      if (__DEV__) {
-        console.log('⚠️ Deep-linked post not found in feed:', openPostId);
-      }
       pendingOpenPostIdRef.current = null;
       lastHandledPostIdRef.current = openPostId;
       return;
-    }
-
-    if (__DEV__) {
-      console.log('✅ Scrolling to deep-linked post:', openPostId, 'index:', index);
     }
 
     let cancelled = false;
@@ -447,20 +422,11 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         try {
           navigation.setParams({ openPostId: undefined } as any);
         } catch {
-          /* older RN versions may not support setParams */
+          /* noop */
         }
-
-        if (__DEV__) console.log('🎯 Scrolled to post on attempt', attempts);
       } catch (err) {
         if (attempts < 20) {
           setTimeout(tryScroll, 150);
-        } else if (__DEV__) {
-          console.warn(
-            '❌ Gave up scrolling to post after',
-            attempts,
-            'attempts:',
-            err
-          );
         }
       }
     };
@@ -473,17 +439,12 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     };
   }, [uniqueOpportunities, navigation, setCurrentIndex]);
 
-  // ============================================================
-  // ✅ FlatList scrollToIndex failure handler
-  // ============================================================
   const handleScrollToIndexFailed = useCallback(
     (info: {
       index: number;
       highestMeasuredFrameIndex: number;
       averageItemLength: number;
     }) => {
-      if (__DEV__) console.log('⚠️ scrollToIndex failed, retrying:', info);
-
       setTimeout(() => {
         try {
           flatListRef.current?.scrollToIndex({
@@ -492,7 +453,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             viewPosition: 0,
           });
         } catch (err) {
-          if (__DEV__) console.warn('Retry scrollToIndex also failed:', err);
+          /* noop */
         }
       }, 200);
     },
@@ -563,18 +524,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   );
 
   // ============================================================
-  // ✅ PULL-TO-REFRESH
+  // PULL-TO-REFRESH
   // ============================================================
-  //
-  // Re-fetches the raw opportunity list, re-applies the user's
-  // location + recommendation pass, and resets the feed to index 0.
-  //
-  // Ordering matters on iOS paging FlatLists:
-  //   1. swap the store contents
-  //   2. reset currentIndex
-  //   3. bump feedVersion → forces a clean remount at index 0
-  //   4. scroll to offset 0
-  //
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -592,14 +543,11 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
       const freshRaw = await feedService.getOpportunities(userCoords);
 
-      // If the fetch failed outright, keep the old feed but still stop
-      // the spinner so the user isn't stuck in a refresh state.
       if (!freshRaw || freshRaw.length === 0) {
         if (__DEV__) console.log('ℹ️ Refresh returned no data — keeping existing');
         return;
       }
 
-      // Recommendation pass (best-effort).
       let result: Opportunity[] = freshRaw;
       try {
         if (user?.id) {
@@ -620,7 +568,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         if (__DEV__) console.warn('⚠️ Refresh recommender failed:', err);
       }
 
-      // Apply distances if we have a location.
       if (userCoords) {
         result = result.map((opp) => {
           if (opp.userLatitude != null && opp.userLongitude != null) {
@@ -638,22 +585,15 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         });
       }
 
-      // 1. Swap the store contents.
       setOpportunities(result);
-
-      // 2. Reset the index to the top.
       setCurrentIndex(0);
       setContextPanelView(null);
 
-      // Reset trackers so the new first item gets logged.
       lastOpenOpportunityIdRef.current = null;
       trackedViewRef.current = '';
 
-      // 3. Remount the FlatList so it starts at index 0 with the new
-      //    data. Without this, iOS keeps the previously visible page.
       setFeedVersion((v) => v + 1);
 
-      // 4. Scroll to top on the next frame (after remount).
       requestAnimationFrame(() => {
         try {
           flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -714,12 +654,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         }
 
         if (result && result.length > 0) {
-          if (__DEV__)
-            console.log(`✅ Applied ${result.length} personalized opportunities`);
           setOpportunities(result);
-        } else {
-          if (__DEV__)
-            console.log('ℹ️ Recommender returned empty — keeping raw feed');
         }
       } catch (error) {
         console.error('❌ Error applying recommendations:', error);
@@ -896,7 +831,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const handleDirectionsPress = useCallback(
     (userName: string, area: string) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      console.log(`📍 Directions to ${userName} in ${area}`);
       setShowDirectionsModal(true);
     },
     []
@@ -905,7 +839,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const handleAIPress = useCallback(
     (opportunity: Opportunity) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      console.log('🤖 AI Pressed for opportunity:', opportunity.title);
       setSelectedOpportunity(opportunity);
       setAiContextHint('');
 
@@ -1127,20 +1060,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     ]
   );
 
-  const handleFollowPress = useCallback(
-    (opportunity: Opportunity) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      navigation.navigate('Inbox', {
-        userId: opportunity.userId,
-        userName: opportunity.userFullName || 'User',
-      });
-    },
-    [navigation]
-  );
-
   const handleInboxPress = useCallback(() => {
     if (!currentOpportunity) {
-      console.warn('⚠️ No current opportunity');
       return;
     }
 
@@ -1442,7 +1363,11 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             autoPlay={true}
             autoPlayInterval={5000}
             resetKey={item.id}
-            bottomOffset={0}
+            // ✅ Feed sits inside the actual tab navigator, so we pass
+            // the exact tab-bar height. SceneRenderer will skip its own
+            // tab-bar computation and use this directly.
+            useExplicitBottomOffset={true}
+            bottomOffset={tabBarHeight}
             isVisible={isVisible}
           />
 
@@ -1467,7 +1392,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 handleReviewsPress(productId, item.title)
               }
               onDirectionsPress={(userName, area) => {
-                console.log(`📍 Directions to ${userName} in ${area}`);
                 setShowDirectionsModal(true);
               }}
               onSharePress={handleSharePress}
@@ -1492,6 +1416,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       isFocused,
       isAuthenticated,
       navigation,
+      tabBarHeight,
       savedItemsMap,
       likedItemsMap,
       likeCountMap,
@@ -1588,8 +1513,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           <SafeAreaView
             style={[
               styles.container,
-              // ✅ On web, don't force a fixed pixel height — let the
-              // viewport-locked parent handle it.
               Platform.OS === 'web'
                 ? styles.containerWeb
                 : { height },
@@ -1627,24 +1550,29 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                     />
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.locationContainer}
-                    onPress={() => setShowLocationPicker(true)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name="location-outline"
-                      size={16}
-                      color="#4A7DFF"
-                    />
-                    <Text
-                      style={[styles.locationText, { fontSize: 13 }]}
-                      numberOfLines={1}
+                  {/* ✅ Middle slot: only shown on web. Opens the app. */}
+                  {Platform.OS === 'web' && (
+                    <TouchableOpacity
+                      style={styles.openInAppButton}
+                      onPress={() => {
+                        try {
+                          Linking.openURL(APP_DEEP_LINK);
+                        } catch (err) {
+                          if (__DEV__) console.log('Open in App failed:', err);
+                        }
+                      }}
+                      activeOpacity={0.7}
                     >
-                      {getLocationDisplay()}
-                    </Text>
-                    <Ionicons name="chevron-down" size={14} color="#4A7DFF" />
-                  </TouchableOpacity>
+                      <Image
+                        source={require('../../../assets/favicon.png')}
+                        style={styles.openInAppIcon}
+                        resizeMode="contain"
+                      />
+                      <Text style={styles.openInAppText} numberOfLines={1}>
+                        Open in App
+                      </Text>
+                    </TouchableOpacity>
+                  )}
 
                   <TouchableOpacity
                     style={styles.searchContainer}
@@ -1699,13 +1627,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   }
                 />
               }
-              // ✅ Push content above the fixed tab bar
               contentContainerStyle={{ paddingBottom: tabBarHeight }}
               style={styles.flatList}
             />
 
-            {/* ✅ Web-only fallback refresh button (RefreshControl
-                doesn't respond to pull gestures on web). */}
             {Platform.OS === 'web' && currentIndex === 0 && !isDesktop && (
               <TouchableOpacity
                 style={styles.webRefreshButton}
@@ -1795,7 +1720,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#05070f',
   },
-  // ✅ On web, lock to viewport so `position: fixed` children anchor correctly.
   containerWeb: {
     flex: 1,
     backgroundColor: '#05070f',
@@ -1835,7 +1759,6 @@ const styles = StyleSheet.create({
     zIndex: 100,
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  // ✅ Fixed on web so it stays pinned while the feed scrolls
   topBarGradient: {
     ...Platform.select({
       web: {
@@ -1860,35 +1783,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
+    gap: 8,
   },
   logoContainer: {
-    flex: 1,
+    flexShrink: 0,
   },
   logoImage: {
     width: 53,
     height: 33,
   },
-  locationContainer: {
+
+  // ✅ Web-only "Open in App" button — replaces the location button on web.
+  openInAppButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    backgroundColor: '#4A7DFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 16,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    gap: 6,
+    flex: 1,
     maxWidth: 180,
+    justifyContent: 'center',
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  locationText: {
+  openInAppIcon: {
+    width: 16,
+    height: 16,
+    tintColor: '#FFFFFF',
+  },
+  openInAppText: {
     color: '#FFFFFF',
-    fontWeight: '500',
-    fontSize: 13,
-    maxWidth: 100,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
+
   searchContainer: {
     padding: 6,
     borderRadius: 20,
+    flexShrink: 0,
   },
   guestPromptOverlay: {
     position: 'absolute',
@@ -1943,7 +1881,6 @@ const styles = StyleSheet.create({
     transform: [{ translateY: -150 }],
     zIndex: 50,
   },
-  // ✅ Web-only refresh button — bottom-center, sits above the tab bar
   webRefreshButton: {
     position: 'absolute',
     bottom: 90,
