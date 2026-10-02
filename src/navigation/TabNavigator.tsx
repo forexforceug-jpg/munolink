@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, EdgeInsets } from 'react-native-safe-area-context';
 
 import { FeedScreen } from '../features/feed/FeedScreen';
 import { ExploreScreen } from '../features/explore/ExploreScreen';
@@ -40,6 +40,12 @@ export const BASE_TAB_HEIGHT = 60;
 // on web (Safari URL bar, Android Chrome gesture area, etc.).
 const WEB_BOTTOM_BUFFER = 12;
 
+// Extra vertical padding baked into the tab bar's rendered style.
+// These are used by getTabBarHeight() so consumers get the exact
+// rendered height, not an approximation.
+const TAB_BAR_PADDING_TOP = 8;
+const TAB_BAR_PADDING_BOTTOM_EXTRA = 6;
+
 const getIconSize = (baseSize: number) => {
   const scaled = baseSize * Math.min(pixelRatio / 2, 1.2);
   return Math.round(scaled);
@@ -47,13 +53,6 @@ const getIconSize = (baseSize: number) => {
 
 // ----------------------------------------------------------------
 // Web safe-area bottom helper
-//
-// react-native-safe-area-context does not compute CSS env(safe-area-
-// inset-bottom) on web, so on iOS Safari the tab bar can sit under
-// the home indicator. We read it directly via a DOM probe, falling
-// back to a sensible default when unavailable.
-//
-// Runs once and caches the result.
 // ----------------------------------------------------------------
 let cachedWebSafeBottom: number | null = null;
 
@@ -85,6 +84,30 @@ function getWebSafeAreaBottom(): number {
     cachedWebSafeBottom = 0;
     return 0;
   }
+}
+
+// ----------------------------------------------------------------
+// getTabBarHeight — single source of truth
+//
+// Returns the EXACT rendered height of the tab bar for the current
+// platform + device. Any screen that needs to clear the tab bar
+// (e.g. FeedScreen's info panel) should call this with the same
+// `insets` from `useSafeAreaInsets()`.
+// ----------------------------------------------------------------
+export function getTabBarHeight(insets: EdgeInsets): number {
+  const webSafeBottom = getWebSafeAreaBottom();
+
+  const effectiveBottomInset =
+    Platform.OS === 'web'
+      ? Math.max(insets.bottom, webSafeBottom) + WEB_BOTTOM_BUFFER
+      : insets.bottom;
+
+  return (
+    BASE_TAB_HEIGHT +
+    effectiveBottomInset +
+    TAB_BAR_PADDING_TOP +
+    TAB_BAR_PADDING_BOTTOM_EXTRA
+  );
 }
 
 // ----------------------------------------------------------------
@@ -338,7 +361,14 @@ export const TabNavigator = () => {
       ? Math.max(insets.bottom, webSafeBottom) + WEB_BOTTOM_BUFFER
       : insets.bottom;
 
-  const tabBarHeight = BASE_TAB_HEIGHT + effectiveBottomInset;
+  // The tab bar's rendered height includes the top padding and the
+  // extra bottom padding baked into the style below. Keep this in
+  // sync with getTabBarHeight().
+  const tabBarHeight =
+    BASE_TAB_HEIGHT +
+    effectiveBottomInset +
+    TAB_BAR_PADDING_TOP +
+    TAB_BAR_PADDING_BOTTOM_EXTRA;
 
   if (isDesktop) {
     return (
@@ -358,8 +388,6 @@ export const TabNavigator = () => {
   }
 
   return (
-    // ✅ Wrapper gives the tab bar a positioned, height-constrained ancestor
-    // so `position: fixed` on web anchors it to the viewport, not the document.
     <View style={styles.navigatorWrapper}>
       <Tab.Navigator
         screenOptions={{
@@ -368,8 +396,8 @@ export const TabNavigator = () => {
             styles.tabBar,
             {
               height: tabBarHeight,
-              paddingBottom: effectiveBottomInset + 6,
-              paddingTop: 8,
+              paddingBottom: effectiveBottomInset + TAB_BAR_PADDING_BOTTOM_EXTRA,
+              paddingTop: TAB_BAR_PADDING_TOP,
             },
           ],
           tabBarActiveTintColor: '#4A7DFF',
@@ -458,8 +486,6 @@ export const TabNavigator = () => {
 // Styles
 // ----------------------------------------------------------------
 const styles = StyleSheet.create({
-  // ✅ Critical on web: give the navigator a positioned, height-bound parent
-  // so the tab bar's `position: fixed` anchors to the viewport.
   navigatorWrapper: {
     flex: 1,
     ...Platform.select({
@@ -492,7 +518,6 @@ const styles = StyleSheet.create({
         elevation: 12,
       },
       web: {
-        // ✅ Pin to viewport on web so it never scrolls with content
         position: 'fixed' as any,
         zIndex: 1000,
       },

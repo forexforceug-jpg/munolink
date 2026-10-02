@@ -102,6 +102,20 @@ const SignInContent = ({ navigation }: any) => {
     }
   };
 
+  const handleForgotPassword = () => {
+    // The reset flow currently supports email addresses only, since
+    // Supabase's OTP reset channel is email-based by default.
+    if (method === 'phone') {
+      Alert.alert(
+        'Reset Password',
+        'Password reset is available for email accounts. Please switch to the Email tab and tap "Forgot password?" there.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    navigation.navigate('ForgotPassword', { email: email.trim().toLowerCase() });
+  };
+
   return (
     <SafeAreaView
       style={[styles.container, isDesktop && styles.containerDesktop]}
@@ -254,6 +268,15 @@ const SignInContent = ({ navigation }: any) => {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* ✅ Forgot password link */}
+          <TouchableOpacity
+            style={styles.forgotPasswordButton}
+            onPress={handleForgotPassword}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={[
@@ -467,6 +490,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   eyeButton: { paddingHorizontal: 14 },
+
+  // ✅ Forgot password link
+  forgotPasswordButton: {
+    alignSelf: 'flex-end',
+    marginTop: -4,
+    marginBottom: 16,
+  },
+  forgotPasswordText: {
+    color: COLORS.accent,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+
   signInButton: {
     borderRadius: 12,
     overflow: 'hidden',
@@ -486,7 +522,6 @@ const styles = StyleSheet.create({
   },
   signInButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 
-  // ✅ Divider + Google button
   dividerContainer: {
     flexDirection: 'row',
     alignItems: 'center',

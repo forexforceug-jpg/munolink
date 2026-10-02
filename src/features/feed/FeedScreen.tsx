@@ -66,12 +66,16 @@ import { LocationPicker } from './components/LocationPicker';
 import { useIsFocused } from '@react-navigation/native';
 import { StyledAlert } from './components/StyledAlert';
 import { sharePost } from '../../utils/share';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { getTabBarHeight } from '../../navigation/TabNavigator';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
 // Link shown by the "Open in App" button on web.
-const APP_DEEP_LINK = 'https://expo.dev/accounts/forexforceug/projects/munolink/builds/affe04a9-726f-4d71-877f-c83907ba7414';
+const APP_DEEP_LINK =
+  'https://expo.dev/accounts/forexforceug/projects/munolink/builds/affe04a9-726f-4d71-877f-c83907ba7414';
+
+// Gap between the info panel's bottom edge and the tab bar's top edge.
+const SCENE_INFO_GAP = 16;
 
 type FeedScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -118,7 +122,16 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const { isAuthenticated, isGuest, user } = useAuth();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const tabBarHeight = useBottomTabBarHeight();
+
+  // Use the SAME height the tab bar actually renders with. This comes
+  // from TabNavigator's single source of truth, not from a hook that
+  // may report a slightly different value.
+  const tabBarHeight = getTabBarHeight(insets);
+
+  // Visible area above the tab bar. Feed items use this so nothing
+  // renders underneath the tab bar.
+  const visibleHeight = Math.max(0, height - tabBarHeight);
+
   const flatListRef = useRef<FlatList>(null);
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
@@ -262,7 +275,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [queryStatus]);
 
   // ============================================================
-  // LOCATION HANDLING (state only — no UI trigger anymore)
+  // LOCATION HANDLING (state only — no UI trigger)
   // ============================================================
   useEffect(() => {
     const getLocation = async () => {
@@ -1283,7 +1296,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       return (
         <View
           style={{
-            height: isDesktop ? height : height,
+            height: isDesktop ? height : visibleHeight,
             justifyContent: 'center',
             alignItems: 'center',
             position: 'relative',
@@ -1307,7 +1320,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             createdAt={item.createdAt}
             isDesktop={isDesktop}
             width={isDesktop ? 420 : width}
-            height={isDesktop ? height : height}
+            height={isDesktop ? height : visibleHeight}
             onShowMore={() => handleShowMorePress(item)}
             onShare={() => handleSharePress(item)}
             onSave={() => handleSavePress(item)}
@@ -1363,11 +1376,11 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             autoPlay={true}
             autoPlayInterval={5000}
             resetKey={item.id}
-            // ✅ Feed sits inside the actual tab navigator, so we pass
-            // the exact tab-bar height. SceneRenderer will skip its own
-            // tab-bar computation and use this directly.
+            // ✅ The item is now sized to `visibleHeight`, so its bottom
+            // edge is exactly the top of the tab bar. We just need a
+            // small gap above that edge.
             useExplicitBottomOffset={true}
-            bottomOffset={tabBarHeight}
+            bottomOffset={SCENE_INFO_GAP}
             isVisible={isVisible}
           />
 
@@ -1412,6 +1425,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       isDesktop,
       height,
       width,
+      visibleHeight,
       currentIndex,
       isFocused,
       isAuthenticated,
@@ -1440,7 +1454,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   if (isInitialLoading || (isLoading && uniqueOpportunities.length === 0)) {
     return (
-      <View style={[styles.container, { height }]}>
+      <View style={[styles.container, { height: visibleHeight }]}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
         <TikTokLoadingSkeleton />
       </View>
@@ -1449,7 +1463,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   if (error) {
     return (
-      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+      <SafeAreaView
+        style={[styles.centered, { height: visibleHeight }]}
+        edges={['top']}
+      >
         <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>
           Error loading feed
         </Text>
@@ -1464,7 +1481,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   if (uniqueOpportunities.length === 0) {
     return (
-      <SafeAreaView style={[styles.centered, { height }]} edges={['top']}>
+      <SafeAreaView
+        style={[styles.centered, { height: visibleHeight }]}
+        edges={['top']}
+      >
         <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>
           No opportunities found
         </Text>
@@ -1515,7 +1535,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               styles.container,
               Platform.OS === 'web'
                 ? styles.containerWeb
-                : { height },
+                : { height: visibleHeight },
             ]}
           >
             <StatusBar barStyle="light-content" />
@@ -1550,7 +1570,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                     />
                   </TouchableOpacity>
 
-                  {/* ✅ Middle slot: only shown on web. Opens the app. */}
                   {Platform.OS === 'web' && (
                     <TouchableOpacity
                       style={styles.openInAppButton}
@@ -1598,16 +1617,19 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               keyExtractor={(item, index) => `item-${item.id}-${index}`}
               pagingEnabled={!isDesktop}
               showsVerticalScrollIndicator={false}
-              snapToInterval={isDesktop ? undefined : height}
+              snapToInterval={isDesktop ? undefined : visibleHeight}
               snapToAlignment="start"
               decelerationRate="fast"
               viewabilityConfig={VIEWABILITY_CONFIG}
               onViewableItemsChanged={handleViewableItemsChanged}
-              getItemLayout={(data, index) => ({
-                length: height,
-                offset: height * index,
-                index,
-              })}
+              getItemLayout={(data, index) => {
+                const itemHeight = isDesktop ? height : visibleHeight;
+                return {
+                  length: itemHeight,
+                  offset: itemHeight * index,
+                  index,
+                };
+              }}
               initialScrollIndex={currentIndex}
               removeClippedSubviews={false}
               maxToRenderPerBatch={isDesktop ? 3 : 2}
@@ -1627,7 +1649,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   }
                 />
               }
-              contentContainerStyle={{ paddingBottom: tabBarHeight }}
+              // Items are already sized to `visibleHeight`, which stops
+              // exactly at the tab bar's top edge. No extra padding needed.
+              contentContainerStyle={{ paddingBottom: 0 }}
               style={styles.flatList}
             />
 
@@ -1793,7 +1817,6 @@ const styles = StyleSheet.create({
     height: 33,
   },
 
-  // ✅ Web-only "Open in App" button — matches the old location chip styling.
   openInAppButton: {
     flexDirection: 'row',
     alignItems: 'center',

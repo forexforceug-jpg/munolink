@@ -28,7 +28,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
 
-  // ✅ fullName is now optional on all signup/verify flows
+  // ✅ fullName is optional on all signup/verify flows
   signUpWithEmail: (
     email: string,
     password: string,
@@ -57,6 +57,11 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   logout: () => Promise<void>;
   joinAsGuest: () => void;
+
+  // ✅ Password reset flow
+  requestPasswordReset: (email: string) => Promise<void>;
+  verifyPasswordResetOtp: (email: string, token: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -366,6 +371,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
+  // PASSWORD RESET
+  // ============================================================
+  //
+  // Three-step flow:
+  //
+  //   1. requestPasswordReset(email)
+  //      → sends a "Reset password" email containing `{{ .Token }}`
+  //        (a 6-digit code) to the user.
+  //
+  //   2. verifyPasswordResetOtp(email, token)
+  //      → exchanges the code for a short-lived recovery session.
+  //        After this succeeds, supabase.auth.updateUser({ password })
+  //        is authorized on the current client.
+  //
+  //   3. updatePassword(newPassword)
+  //      → sets the new password using the recovery session.
+  //
+  // NOTE: The Supabase project's "Reset password" email template
+  // MUST include {{ .Token }} for step 2 to work. If it only
+  // contains {{ .ConfirmationURL }}, no OTP is generated and
+  // verifyPasswordResetOtp will fail with an "invalid token" error.
+  // ============================================================
+
+  const requestPasswordReset = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      // No redirect needed for the OTP flow. If you later build a
+      // web-hosted reset page, set this to that URL instead.
+      redirectTo: undefined,
+    });
+    if (error) throw error;
+  };
+
+  const verifyPasswordResetOtp = async (email: string, token: string) => {
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'recovery',
+    });
+    if (error) throw error;
+  };
+
+  const updatePassword = async (newPassword: string) => {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    if (error) throw error;
+  };
+
+  // ============================================================
   // SIGN OUT / GUEST
   // ============================================================
   const signOut = async () => {
@@ -399,6 +453,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signOut,
       logout: signOut,
       joinAsGuest,
+      // ✅ Password reset flow
+      requestPasswordReset,
+      verifyPasswordResetOtp,
+      updatePassword,
     }),
     [isAuthenticated, isGuest, isLoading, user, session]
   );

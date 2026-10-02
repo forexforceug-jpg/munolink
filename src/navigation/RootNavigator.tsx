@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TabNavigator } from './TabNavigator';
 import { UserProfileScreen } from '../features/profile/UserProfileScreen';
 import { SearchScreen } from '../features/search/SearchScreen';
+import { ForgotPasswordScreen } from '../features/auth/ForgotPasswordScreen';
 import { SearchResultsScreen } from '../features/search/SearchResultsScreen';
 import { JoinScreen } from '../features/auth/JoinScreen';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -81,7 +82,13 @@ export const RootNavigator = () => {
           animation: 'slide_from_right',
         }}
       />
-
+      <Stack.Screen name="Join" component={JoinScreen} />
+      <Stack.Screen name="SignIn" component={SignInScreen} />
+      <Stack.Screen
+        name="ForgotPassword"
+        component={ForgotPasswordScreen}
+        options={{ headerShown: false }}
+      />
       {/* Placeholders */}
       <Stack.Screen
         name="Notifications"
