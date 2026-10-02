@@ -952,10 +952,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     },
     [isAuthenticated, navigation, user?.id, showStyledAlert, hideStyledAlert]
   );
-
   const handleSavePress = useCallback(
-    (opportunity: Opportunity) => {
-      if (!isAuthenticated) {
+    async (opportunity: Opportunity) => {
+      if (!isAuthenticated || !user?.id) {
         showStyledAlert({
           title: '🔒 Join Munolink',
           message: 'Create a free account to save items.',
@@ -982,23 +981,49 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      const currentSaved = savedItemsMap[opportunity.id] || false;
-      const newSaved = !currentSaved;
+      const currentlySaved = savedItemsMap[opportunity.id] || false;
+      const nextSaved = !currentlySaved;
 
+      // Optimistic UI
       setSavedItemsMap((prev) => ({
         ...prev,
-        [opportunity.id]: newSaved,
+        [opportunity.id]: nextSaved,
       }));
 
-      if (user?.id) {
+      try {
+        if (nextSaved) {
+          const { error } = await (supabase as any)
+            .from('saves')
+            .insert({ user_id: user.id, post_id: opportunity.id });
+
+          // Ignore unique-constraint violation (already saved)
+          if (error && (error as any).code !== '23505') throw error;
+        } else {
+          const { error } = await (supabase as any)
+            .from('saves')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('post_id', opportunity.id);
+
+          if (error) throw error;
+        }
+
+        // Best-effort tracking (non-fatal)
         recommendationService
           .trackInteraction(
             user.id,
             opportunity.id,
-            newSaved ? 'save' : 'unsave',
+            nextSaved ? 'save' : 'unsave',
             mapItemType(opportunity.type)
           )
           .catch(() => {});
+      } catch (err) {
+        // Rollback local state
+        console.error('Save toggle failed:', err);
+        setSavedItemsMap((prev) => ({
+          ...prev,
+          [opportunity.id]: currentlySaved,
+        }));
       }
     },
     [
@@ -1010,7 +1035,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       hideStyledAlert,
     ]
   );
-
   const handleLikePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!isAuthenticated || !user?.id) {
