@@ -275,7 +275,6 @@ const getPriceFromItem = (item: CatalogItem): number | null => {
 
 // ✅ Robust price_type resolution
 const getPriceTypeFromItem = (item: CatalogItem): PriceType => {
-  // Prefer the DB column, then the JSON spec, then infer.
   const candidates: unknown[] = [
     item.price_type,
     (item as any)?.specifications?.price_type,
@@ -383,7 +382,7 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
     <Pressable
       style={styles.gridPostItem}
       onPress={() => onPress(item)}
-      onLongPress={() => onLongPress?.(item)}
+      onLongPress={onLongPress ? () => onLongPress(item) : undefined}
       delayLongPress={350}
     >
       {imageUrl ? (
@@ -400,13 +399,15 @@ const GridPostItem = ({ item, onPress, onLongPress }: any) => {
         </View>
       )}
 
-      <Pressable
-        style={styles.gridMenuButton}
-        onPress={() => onLongPress?.(item)}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Ionicons name="ellipsis-horizontal" size={16} color="#FFFFFF" />
-      </Pressable>
+      {onLongPress && (
+        <Pressable
+          style={styles.gridMenuButton}
+          onPress={() => onLongPress(item)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="ellipsis-horizontal" size={16} color="#FFFFFF" />
+        </Pressable>
+      )}
 
       <View style={styles.gridPostOverlay} pointerEvents="none">
         <LinearGradient
@@ -693,7 +694,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
 interface PostsGridProps {
   items: CatalogItem[];
   onPress: (item: CatalogItem) => void;
-  onLongPress: (item: CatalogItem) => void;
+  onLongPress?: (item: CatalogItem) => void;
   isDesktop: boolean;
 }
 
@@ -705,7 +706,6 @@ const PostsGrid: React.FC<PostsGridProps> = ({
 }) => {
   const NUM_COLUMNS = 3;
 
-  // Pad the last row with empty placeholders so items keep their width
   const rows: (CatalogItem | null)[][] = useMemo(() => {
     const out: (CatalogItem | null)[][] = [];
     for (let i = 0; i < items.length; i += NUM_COLUMNS) {
@@ -753,6 +753,11 @@ const AccountContent = ({ navigation }: any) => {
   const [refreshing, setRefreshing] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+
+  // ✅ NEW: separate arrays for the "Saved" and "Liked" tabs
+  const [savedItems, setSavedItems] = useState<CatalogItem[]>([]);
+  const [likedItems, setLikedItems] = useState<CatalogItem[]>([]);
+
   const [uploading, setUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('posts');
   const [showSettings, setShowSettings] = useState(false);
@@ -871,9 +876,113 @@ const AccountContent = ({ navigation }: any) => {
   const flatListRef = useRef<FlatList>(null);
 
   // ============================================================
-  // FETCH
+  // SHAPER — converts raw catalog rows to CatalogItem[]
   // ============================================================
+  const shapeCatalogRows = useCallback(
+    async (rows: any[]): Promise<CatalogItem[]> => {
+      if (!rows || rows.length === 0) return [];
 
+      // --- comment counts ---
+      let commentCounts: Record<string, number> = {};
+      try {
+        const { data: commentData, error: commentError } = await supabase
+          .from('comments')
+          .select('post_id')
+          .in(
+            'post_id',
+            rows.map((r: any) => r.id)
+          );
+        if (!commentError && commentData) {
+          commentData.forEach((c: any) => {
+            commentCounts[c.post_id] = (commentCounts[c.post_id] || 0) + 1;
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // --- save counts ---
+      let saveCounts: Record<string, number> = {};
+      try {
+        const { data: saveData, error: saveError } = await supabase
+          .from('saves')
+          .select('post_id')
+          .in(
+            'post_id',
+            rows.map((r: any) => r.id)
+          );
+        if (!saveError && saveData) {
+          saveData.forEach((s: any) => {
+            saveCounts[s.post_id] = (saveCounts[s.post_id] || 0) + 1;
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // --- distance ---
+      let userCoords: { latitude: number; longitude: number } | undefined;
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch {
+        /* ignore */
+      }
+
+      return rows.map((item: any) => {
+        let distance: number | undefined;
+        if (
+          userCoords &&
+          userProfile?.latitude != null &&
+          userProfile?.longitude != null
+        ) {
+          distance = calculateDistance(
+            userCoords.latitude,
+            userCoords.longitude,
+            userProfile.latitude,
+            userProfile.longitude
+          );
+        }
+
+        return {
+          id: item.id,
+          name: item.name || 'Untitled',
+          category: item.category || 'Uncategorized',
+          subcategory: item.subcategory || null,
+          brand: item.brand || null,
+          description: item.description || null,
+          specifications: item.specifications || {},
+          images: item.images || null,
+          tags: item.tags || null,
+          is_active: item.is_active || null,
+          created_at: item.created_at || null,
+          updated_at: item.updated_at || null,
+          category_id: item.category_id || null,
+          user_id: item.user_id || null,
+          like_count: item.like_count || 0,
+          view_count: item.view_count || 0,
+          share_count: item.share_count || 0,
+          comment_count: commentCounts[item.id] || 0,
+          price: item.price || null,
+          price_type: (item.price_type as PriceType) || null,
+          video: item.video || null,
+          video_thumbnail: item.video_thumbnail || null,
+          video_duration: item.video_duration || null,
+          video_size: item.video_size || null,
+          distance,
+          saveCount: saveCounts[item.id] || 0,
+          isSaved: false,
+        } as CatalogItem;
+      });
+    },
+    [userProfile]
+  );
+
+  // ============================================================
+  // FETCH — user profile
+  // ============================================================
   const fetchUserProfile = useCallback(async () => {
     if (!user?.id) return null;
 
@@ -932,8 +1041,11 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user]);
 
+  // ============================================================
+  // FETCH — user's own catalog
+  // ============================================================
   const fetchUserCatalog = useCallback(
-    async (profile: UserProfile | null) => {
+    async (_profile: UserProfile | null) => {
       if (!user?.id) return [];
 
       try {
@@ -945,105 +1057,85 @@ const AccountContent = ({ navigation }: any) => {
 
         if (error) throw error;
 
-        const rows = data || [];
-
-        let commentCounts: Record<string, number> = {};
-        try {
-          const { data: commentData, error: commentError } = await supabase
-            .from('comments')
-            .select('post_id')
-            .in(
-              'post_id',
-              rows.map((r: any) => r.id)
-            );
-          if (!commentError && commentData) {
-            commentData.forEach((c: any) => {
-              commentCounts[c.post_id] = (commentCounts[c.post_id] || 0) + 1;
-            });
-          }
-        } catch (e) {
-          console.log('Comment counts unavailable');
-        }
-
-        let saveCounts: Record<string, number> = {};
-        try {
-          const { data: saveData, error: saveError } = await supabase
-            .from('saves')
-            .select('post_id')
-            .in(
-              'post_id',
-              rows.map((r: any) => r.id)
-            );
-          if (!saveError && saveData) {
-            saveData.forEach((s: any) => {
-              saveCounts[s.post_id] = (saveCounts[s.post_id] || 0) + 1;
-            });
-          }
-        } catch (e) {
-          console.log('Save counts unavailable');
-        }
-
-        let userCoords: { latitude: number; longitude: number } | undefined;
-        try {
-          const loc = await locationService.getCurrentLocation();
-          if (loc?.latitude != null && loc?.longitude != null) {
-            userCoords = { latitude: loc.latitude, longitude: loc.longitude };
-          }
-        } catch {}
-
-        return rows.map((item: any) => {
-          let distance: number | undefined;
-          if (
-            userCoords &&
-            profile?.latitude != null &&
-            profile?.longitude != null
-          ) {
-            distance = calculateDistance(
-              userCoords.latitude,
-              userCoords.longitude,
-              profile.latitude,
-              profile.longitude
-            );
-          }
-
-          return {
-            id: item.id,
-            name: item.name || 'Untitled',
-            category: item.category || 'Uncategorized',
-            subcategory: item.subcategory || null,
-            brand: item.brand || null,
-            description: item.description || null,
-            specifications: item.specifications || {},
-            images: item.images || null,
-            tags: item.tags || null,
-            is_active: item.is_active || null,
-            created_at: item.created_at || null,
-            updated_at: item.updated_at || null,
-            category_id: item.category_id || null,
-            user_id: item.user_id || null,
-            like_count: item.like_count || 0,
-            view_count: item.view_count || 0,
-            share_count: item.share_count || 0,
-            comment_count: commentCounts[item.id] || 0,
-            price: item.price || null,
-            price_type: (item.price_type as PriceType) || null,
-            video: item.video || null,
-            video_thumbnail: item.video_thumbnail || null,
-            video_duration: item.video_duration || null,
-            video_size: item.video_size || null,
-            distance,
-            saveCount: saveCounts[item.id] || 0,
-            isSaved: false,
-          } as CatalogItem;
-        });
+        return await shapeCatalogRows(data || []);
       } catch (error) {
         console.error('Error fetching catalog:', error);
         return [];
       }
     },
-    [user]
+    [user, shapeCatalogRows]
   );
 
+  // ============================================================
+  // FETCH — saved posts (joined through `saves`)
+  // ============================================================
+  const fetchSavedItems = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from('saves')
+        .select(
+          `
+          id,
+          created_at,
+          catalog:catalog!inner(*)
+        `
+        )
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const rows = (data || [])
+        .map((s: any) => s.catalog)
+        .filter(Boolean);
+
+      return await shapeCatalogRows(rows);
+    } catch (error) {
+      console.error('Error fetching saved items:', error);
+      return [];
+    }
+  }, [user, shapeCatalogRows]);
+
+   // ============================================================
+  // FETCH — liked posts (joined through `likes`)
+  // ============================================================
+  const fetchLikedItems = useCallback(async () => {
+    if (!user?.id) return [];
+
+    try {
+      // Cast the client to `any` for this query because the local
+      // Supabase generated types don't yet include the `likes` table.
+      // Once `supabase gen types typescript` is re-run against the
+      // live schema, this cast can be removed.
+      const { data, error } = await (supabase as any)
+        .from('likes')
+        .select(
+          `
+          id,
+          created_at,
+          catalog:catalog!inner(*)
+        `
+        )
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const rows = (data || [])
+        .map((l: any) => l.catalog)
+        .filter(Boolean);
+
+      return await shapeCatalogRows(rows);
+    } catch (error) {
+      console.error('Error fetching liked items:', error);
+      return [];
+    }
+  }, [user, shapeCatalogRows]);
+  // ============================================================
+  // FETCH — follow stats
+  // ============================================================
   const fetchFollowStats = useCallback(async () => {
     if (!user?.id) return { followers: 0, following: 0 };
 
@@ -1068,6 +1160,9 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
+  // ============================================================
+  // FETCH — total likes on user's own posts
+  // ============================================================
   const fetchLikeStats = useCallback(
     async (myCatalogIds: string[]) => {
       if (!user?.id || myCatalogIds.length === 0) return 0;
@@ -1088,6 +1183,9 @@ const AccountContent = ({ navigation }: any) => {
     [user?.id]
   );
 
+  // ============================================================
+  // LOAD ALL DATA
+  // ============================================================
   const loadAllData = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
@@ -1195,6 +1293,29 @@ const AccountContent = ({ navigation }: any) => {
     };
   }, [user?.id, catalogItems]);
 
+  // ============================================================
+  // ✅ FETCH SAVED / LIKED WHEN TABS BECOME ACTIVE
+  // ============================================================
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let cancelled = false;
+
+    (async () => {
+      if (activeTab === 'saved') {
+        const items = await fetchSavedItems();
+        if (!cancelled) setSavedItems(items);
+      } else if (activeTab === 'liked') {
+        const items = await fetchLikedItems();
+        if (!cancelled) setLikedItems(items);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, user?.id, fetchSavedItems, fetchLikedItems]);
+
   const handleMediaLoadStateChange = useCallback(
     (itemId: string, isLoading: boolean) => {
       setLoadingItemsMap((prev) => {
@@ -1205,11 +1326,36 @@ const AccountContent = ({ navigation }: any) => {
     []
   );
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setRefreshing(true);
-    loadAllData();
-  }, [loadAllData]);
+    try {
+      await loadAllData();
+      // Refresh whichever secondary tab is active
+      if (activeTab === 'saved') {
+        setSavedItems(await fetchSavedItems());
+      } else if (activeTab === 'liked') {
+        setLikedItems(await fetchLikedItems());
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadAllData, activeTab, fetchSavedItems, fetchLikedItems]);
+
+  // ============================================================
+  // ✅ WHICH ITEMS TO RENDER IN THE GRID
+  // ============================================================
+  const activeItems = useMemo(() => {
+    switch (activeTab) {
+      case 'saved':
+        return savedItems;
+      case 'liked':
+        return likedItems;
+      case 'posts':
+      default:
+        return catalogItems;
+    }
+  }, [activeTab, savedItems, likedItems, catalogItems]);
 
   // ============================================================
   // PROFILE IMAGE UPLOAD
@@ -1882,9 +2028,6 @@ const AccountContent = ({ navigation }: any) => {
     };
   };
 
-  // ============================================================
-  // ✅ UPDATE POST — still uses the modal
-  // ============================================================
   const updatePost = async () => {
     if (!user?.id || !editingPostId) {
       showStyledAlert({
@@ -2122,12 +2265,12 @@ const AccountContent = ({ navigation }: any) => {
   const handleItemPress = useCallback(
     (item: CatalogItem) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      const idx = catalogItems.findIndex((c) => c.id === item.id);
+      const idx = activeItems.findIndex((c) => c.id === item.id);
       setSelectedItem(item);
       setFullscreenIndex(idx >= 0 ? idx : 0);
       setViewMode('fullscreen');
     },
-    [catalogItems]
+    [activeItems]
   );
 
   const handleBackToGrid = useCallback(() => {
@@ -2271,6 +2414,10 @@ const AccountContent = ({ navigation }: any) => {
                 hideStyledAlert();
                 try {
                   await logout();
+                  // Clear local state so the next user doesn't see stale data
+                  setCatalogItems([]);
+                  setSavedItems([]);
+                  setLikedItems([]);
                   navigation.replace('Join');
                 } catch (error) {
                   console.error('Logout error:', error);
@@ -2836,14 +2983,14 @@ const AccountContent = ({ navigation }: any) => {
 
   if (loading) {
     return (
-   <SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' ? styles.containerWeb : undefined,
-    isDesktop && styles.desktopContainer,
-  ]}
-  edges={['top']}
->
+      <SafeAreaView
+        style={[
+          styles.container,
+          Platform.OS === 'web' ? styles.containerWeb : undefined,
+          isDesktop && styles.desktopContainer,
+        ]}
+        edges={['top']}
+      >
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4A7DFF" />
@@ -2858,7 +3005,7 @@ const AccountContent = ({ navigation }: any) => {
   }
 
   if (viewMode === 'fullscreen' && selectedItem) {
-    const allItems = catalogItems;
+    const allItems = activeItems;
     const currentIndex = allItems.findIndex((i) => i.id === selectedItem.id);
     const initialIndex = currentIndex !== -1 ? currentIndex : 0;
 
@@ -3029,14 +3176,14 @@ const AccountContent = ({ navigation }: any) => {
   }
 
   return (
- <SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' ? styles.containerWeb : undefined,
-    isDesktop && styles.desktopContainer,
-  ]}
-  edges={['top']}
->
+    <SafeAreaView
+      style={[
+        styles.container,
+        Platform.OS === 'web' ? styles.containerWeb : undefined,
+        isDesktop && styles.desktopContainer,
+      ]}
+      edges={['top']}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={styles.header}>
@@ -3141,28 +3288,47 @@ const AccountContent = ({ navigation }: any) => {
           ))}
         </View>
 
-        {catalogItems.length === 0 ? (
+        {activeItems.length === 0 ? (
           <View style={styles.emptyPosts}>
-            <Ionicons name="images-outline" size={48} color="#8A8AAE" />
-            <Text style={styles.emptyPostsTitle}>No posts yet</Text>
-            <Text style={styles.emptyPostsSubtext}>
-              Share your first post with the community
+            <Ionicons
+              name={
+                activeTab === 'saved'
+                  ? 'bookmark-outline'
+                  : activeTab === 'liked'
+                  ? 'heart-outline'
+                  : 'images-outline'
+              }
+              size={48}
+              color="#8A8AAE"
+            />
+            <Text style={styles.emptyPostsTitle}>
+              {activeTab === 'saved'
+                ? 'No saved posts'
+                : activeTab === 'liked'
+                ? 'No liked posts'
+                : 'No posts yet'}
             </Text>
-            <TouchableOpacity
-              style={styles.createPostButton}
-              onPress={openUploadCamera}
-            >
-              <Text style={styles.createPostButtonText}>Create Post</Text>
-            </TouchableOpacity>
+            <Text style={styles.emptyPostsSubtext}>
+              {activeTab === 'saved'
+                ? 'Posts you save will appear here'
+                : activeTab === 'liked'
+                ? 'Posts you like will appear here'
+                : 'Share your first post with the community'}
+            </Text>
+            {activeTab === 'posts' && (
+              <TouchableOpacity
+                style={styles.createPostButton}
+                onPress={openUploadCamera}
+              >
+                <Text style={styles.createPostButtonText}>Create Post</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
-          // ✅ Manual grid — no nested FlatList, so outer ScrollView
-          //    gets every touch. Fixes the "can't scroll when grid is
-          //    taller than the screen" bug.
           <PostsGrid
-            items={catalogItems}
+            items={activeItems}
             onPress={handleItemPress}
-            onLongPress={showPostActions}
+            onLongPress={activeTab === 'posts' ? showPostActions : undefined}
             isDesktop={isDesktop}
           />
         )}
@@ -3224,6 +3390,14 @@ export const AccountScreen = ({ navigation }: any) => {
 // ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0D0D1A' },
+  containerWeb: {
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+    height: '100dvh' as any,
+    maxHeight: '100dvh' as any,
+    overflow: 'hidden',
+    position: 'relative' as any,
+  },
   desktopContainer: { padding: 24 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { color: '#8A8AAE', fontSize: 14, marginTop: 12 },
@@ -3754,14 +3928,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 4,
   },
-  containerWeb: {
-  flex: 1,
-  backgroundColor: '#0D0D1A',
-  height: '100dvh' as any,
-  maxHeight: '100dvh' as any,
-  overflow: 'hidden',
-  position: 'relative' as any,
-},
   settingsOption: {
     flexDirection: 'row',
     justifyContent: 'space-between',
