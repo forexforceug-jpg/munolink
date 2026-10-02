@@ -33,18 +33,23 @@ const COLORS = {
   error: '#E74C3C',
 };
 
-type Step = 'email' | 'otp' | 'newPassword';
+type ResetMethod = 'email' | 'phone';
+type Step = 'method' | 'input' | 'otp' | 'newPassword';
 
 const ForgotPasswordContent = ({ navigation }: any) => {
   const {
     requestPasswordReset,
     verifyPasswordResetOtp,
     updatePassword,
+    requestPhonePasswordReset,
+    verifyPhonePasswordResetOtp,
   } = useAuth();
   const { isDesktop } = useBreakpoint();
 
-  const [step, setStep] = useState<Step>('email');
+  const [method, setMethod] = useState<ResetMethod>('email');
+  const [step, setStep] = useState<Step>('input');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [otpFocused, setOtpFocused] = useState(0);
   const [newPassword, setNewPassword] = useState('');
@@ -70,29 +75,47 @@ const ForgotPasswordContent = ({ navigation }: any) => {
   }, [resendTimer]);
 
   const isEmailValid = /\S+@\S+\.\S+/.test(email.trim());
+  const isPhoneValid = phoneNumber.replace(/\D/g, '').length >= 9;
   const isPasswordValid = newPassword.length >= 6;
   const passwordsMatch =
     newPassword.length > 0 &&
     confirmPassword.length > 0 &&
     newPassword === confirmPassword;
 
+  const displayTarget =
+    method === 'email'
+      ? email.trim().toLowerCase()
+      : `+256 ${phoneNumber.trim()}`;
+
   // ------------------------------------------------------------
-  // Step 1 — send the reset email
+  // Step 1 — request reset
   // ------------------------------------------------------------
   const handleRequestReset = async () => {
-    if (!isEmailValid) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address.');
-      return;
+    if (method === 'email') {
+      if (!isEmailValid) {
+        Alert.alert('Invalid Email', 'Please enter a valid email address.');
+        return;
+      }
+    } else {
+      if (!isPhoneValid) {
+        Alert.alert('Invalid Phone', 'Please enter a valid phone number.');
+        return;
+      }
     }
+
     setIsLoading(true);
     try {
-      await requestPasswordReset(email.trim().toLowerCase());
+      if (method === 'email') {
+        await requestPasswordReset(email.trim().toLowerCase());
+      } else {
+        await requestPhonePasswordReset(phoneNumber.trim());
+      }
       setStep('otp');
       setResendTimer(60);
     } catch (e: any) {
       Alert.alert(
-        'Error',
-        e?.message || 'Failed to send reset email. Please try again.'
+        'Could not send code',
+        e?.message || 'Please try again.'
       );
     } finally {
       setIsLoading(false);
@@ -108,13 +131,18 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       Alert.alert('Invalid Code', 'Please enter the 6-digit code.');
       return;
     }
+
     setIsLoading(true);
     try {
-      await verifyPasswordResetOtp(email.trim().toLowerCase(), code);
+      if (method === 'email') {
+        await verifyPasswordResetOtp(email.trim().toLowerCase(), code);
+      } else {
+        await verifyPhonePasswordResetOtp(phoneNumber.trim(), code);
+      }
       setStep('newPassword');
     } catch (e: any) {
       Alert.alert(
-        'Error',
+        'Verification failed',
         e?.message || 'Invalid or expired code. Please try again.'
       );
     } finally {
@@ -126,10 +154,14 @@ const ForgotPasswordContent = ({ navigation }: any) => {
     if (resendTimer > 0) return;
     setResendTimer(60);
     try {
-      await requestPasswordReset(email.trim().toLowerCase());
-      Alert.alert('Sent', 'A new code has been sent to your email.');
+      if (method === 'email') {
+        await requestPasswordReset(email.trim().toLowerCase());
+      } else {
+        await requestPhonePasswordReset(phoneNumber.trim());
+      }
+      Alert.alert('Sent', 'A new code has been sent.');
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to resend code.');
+      Alert.alert('Could not resend', e?.message || 'Please try again.');
     }
   };
 
@@ -151,7 +183,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
   };
 
   // ------------------------------------------------------------
-  // Step 3 — set new password
+  // Step 3 — update password
   // ------------------------------------------------------------
   const handleUpdatePassword = async () => {
     if (!isPasswordValid) {
@@ -162,6 +194,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       Alert.alert('Error', 'Passwords do not match.');
       return;
     }
+
     setIsLoading(true);
     try {
       await updatePassword(newPassword);
@@ -176,16 +209,71 @@ const ForgotPasswordContent = ({ navigation }: any) => {
         ]
       );
     } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to update password.');
+      Alert.alert(
+        'Could not update password',
+        e?.message || 'Please try again.'
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   // ------------------------------------------------------------
-  // RENDER
+  // RENDER — METHOD SELECTOR
   // ------------------------------------------------------------
-  const renderEmailStep = () => (
+  const renderMethodToggle = () => (
+    <View style={styles.methodToggle}>
+      <TouchableOpacity
+        style={[
+          styles.methodOption,
+          method === 'email' && styles.methodOptionActive,
+        ]}
+        onPress={() => setMethod('email')}
+        disabled={step !== 'input'}
+      >
+        <Ionicons
+          name="mail-outline"
+          size={16}
+          color={method === 'email' ? COLORS.textPrimary : COLORS.textSecondary}
+        />
+        <Text
+          style={[
+            styles.methodText,
+            method === 'email' && styles.methodTextActive,
+          ]}
+        >
+          Email
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.methodOption,
+          method === 'phone' && styles.methodOptionActive,
+        ]}
+        onPress={() => setMethod('phone')}
+        disabled={step !== 'input'}
+      >
+        <Ionicons
+          name="call-outline"
+          size={16}
+          color={method === 'phone' ? COLORS.textPrimary : COLORS.textSecondary}
+        />
+        <Text
+          style={[
+            styles.methodText,
+            method === 'phone' && styles.methodTextActive,
+          ]}
+        >
+          Phone
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // ------------------------------------------------------------
+  // RENDER — STEP 1 (input)
+  // ------------------------------------------------------------
+  const renderInputStep = () => (
     <>
       <View style={styles.iconContainer}>
         <LinearGradient
@@ -197,32 +285,59 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       </View>
       <Text style={styles.title}>Reset your password</Text>
       <Text style={styles.subtitle}>
-        Enter the email you signed up with and we'll send you a 6-digit
-        verification code.
+        Choose how you'd like to receive your verification code.
       </Text>
 
-      <View style={styles.inputContainer}>
-        <Text style={styles.inputLabel}>Email</Text>
-        <TextInput
-          style={[styles.input, isEmailValid && email && styles.inputFilled]}
-          placeholder="your@email.com"
-          placeholderTextColor={COLORS.textMuted}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          value={email}
-          onChangeText={setEmail}
-          returnKeyType="done"
-          onSubmitEditing={handleRequestReset}
-        />
-      </View>
+      {renderMethodToggle()}
+
+      {method === 'email' ? (
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Email</Text>
+          <TextInput
+            style={[styles.input, isEmailValid && email && styles.inputFilled]}
+            placeholder="your@email.com"
+            placeholderTextColor={COLORS.textMuted}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={email}
+            onChangeText={setEmail}
+            returnKeyType="done"
+            onSubmitEditing={handleRequestReset}
+          />
+        </View>
+      ) : (
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Phone Number</Text>
+          <View style={styles.phoneInput}>
+            <View style={styles.countryCode}>
+              <Text style={styles.countryCodeText}>+256</Text>
+            </View>
+            <TextInput
+              style={styles.phoneInputField}
+              placeholder="700 000 000"
+              placeholderTextColor={COLORS.textMuted}
+              keyboardType="phone-pad"
+              value={phoneNumber}
+              onChangeText={setPhoneNumber}
+              maxLength={9}
+              returnKeyType="done"
+              onSubmitEditing={handleRequestReset}
+            />
+          </View>
+        </View>
+      )}
 
       <TouchableOpacity
         style={[
           styles.primaryButton,
-          (isLoading || !isEmailValid) && styles.primaryButtonDisabled,
+          (isLoading ||
+            (method === 'email' ? !isEmailValid : !isPhoneValid)) &&
+            styles.primaryButtonDisabled,
         ]}
         onPress={handleRequestReset}
-        disabled={isLoading || !isEmailValid}
+        disabled={
+          isLoading || (method === 'email' ? !isEmailValid : !isPhoneValid)
+        }
         activeOpacity={0.85}
       >
         <LinearGradient
@@ -241,6 +356,9 @@ const ForgotPasswordContent = ({ navigation }: any) => {
     </>
   );
 
+  // ------------------------------------------------------------
+  // RENDER — STEP 2 (OTP)
+  // ------------------------------------------------------------
   const renderOtpStep = () => (
     <>
       <View style={styles.iconContainer}>
@@ -254,7 +372,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       <Text style={styles.title}>Enter the code</Text>
       <Text style={styles.subtitle}>
         We sent a 6-digit code to{' '}
-        <Text style={styles.highlightText}>{email.trim().toLowerCase()}</Text>
+        <Text style={styles.highlightText}>{displayTarget}</Text>
       </Text>
 
       <View style={styles.otpContainer}>
@@ -307,31 +425,25 @@ const ForgotPasswordContent = ({ navigation }: any) => {
         disabled={resendTimer > 0}
       >
         <Text
-          style={[
-            styles.linkText,
-            resendTimer > 0 && styles.linkTextDisabled,
-          ]}
+          style={[styles.linkText, resendTimer > 0 && styles.linkTextDisabled]}
         >
-          {resendTimer > 0
-            ? `Resend code in ${resendTimer}s`
-            : 'Resend code'}
+          {resendTimer > 0 ? `Resend code in ${resendTimer}s` : 'Resend code'}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => setStep('email')}
+        onPress={() => setStep('input')}
       >
-        <Ionicons
-          name="arrow-back"
-          size={16}
-          color={COLORS.textSecondary}
-        />
-        <Text style={styles.backText}>Change email</Text>
+        <Ionicons name="arrow-back" size={16} color={COLORS.textSecondary} />
+        <Text style={styles.backText}>Change {method}</Text>
       </TouchableOpacity>
     </>
   );
 
+  // ------------------------------------------------------------
+  // RENDER — STEP 3 (new password)
+  // ------------------------------------------------------------
   const renderPasswordStep = () => (
     <>
       <View style={styles.iconContainer}>
@@ -444,11 +556,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
             onPress={() => navigation.goBack()}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
-            <Ionicons
-              name="arrow-back"
-              size={24}
-              color={COLORS.textPrimary}
-            />
+            <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Reset Password</Text>
           <View style={{ width: 24 }} />
@@ -462,7 +570,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {step === 'email' && renderEmailStep()}
+          {step === 'input' && renderInputStep()}
           {step === 'otp' && renderOtpStep()}
           {step === 'newPassword' && renderPasswordStep()}
         </ScrollView>
@@ -553,6 +661,33 @@ const styles = StyleSheet.create({
   },
   highlightText: { color: COLORS.accent, fontWeight: '600' },
 
+  methodToggle: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.bgInput,
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: 4,
+  },
+  methodOption: {
+    flex: 1,
+    flexDirection: 'row',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  methodOptionActive: {
+    backgroundColor: COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(74,125,255,0.4)',
+  },
+  methodText: { color: COLORS.textSecondary, fontSize: 14, fontWeight: '500' },
+  methodTextActive: { color: COLORS.textPrimary },
+
   inputContainer: { marginBottom: 16 },
   inputLabel: {
     color: COLORS.textPrimary,
@@ -572,6 +707,29 @@ const styles = StyleSheet.create({
   },
   inputFilled: { borderColor: COLORS.accent },
   inputError: { color: COLORS.error, fontSize: 12, marginTop: 4 },
+
+  phoneInput: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.bgInput,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  countryCode: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: COLORS.accentSoft,
+    justifyContent: 'center',
+  },
+  countryCodeText: { color: COLORS.textPrimary, fontSize: 16, fontWeight: '500' },
+  phoneInputField: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: COLORS.textPrimary,
+    fontSize: 16,
+  },
 
   passwordInput: {
     flexDirection: 'row',

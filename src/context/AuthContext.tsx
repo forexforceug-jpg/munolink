@@ -28,7 +28,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
 
-  // ✅ fullName is optional on all signup/verify flows
+  // Email signup / verify / sign in
   signUpWithEmail: (
     email: string,
     password: string,
@@ -41,6 +41,7 @@ interface AuthContextType {
   ) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
 
+  // Phone signup / verify / sign in
   signUpWithPhone: (
     phone: string,
     password: string,
@@ -53,15 +54,20 @@ interface AuthContextType {
   ) => Promise<void>;
   signInWithPhonePassword: (phone: string, password: string) => Promise<void>;
 
+  // Google / signout / guest
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   logout: () => Promise<void>;
   joinAsGuest: () => void;
 
-  // ✅ Password reset flow
+  // ✅ EMAIL password reset (Supabase native)
   requestPasswordReset: (email: string) => Promise<void>;
   verifyPasswordResetOtp: (email: string, token: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
+
+  // ✅ PHONE password reset (Supabase SMS OTP)
+  requestPhonePasswordReset: (phone: string) => Promise<void>;
+  verifyPhonePasswordResetOtp: (phone: string, token: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -78,8 +84,6 @@ function generateNonce(length = 32): string {
 
 /**
  * Best-effort persist of the user's profile row.
- * Non-fatal: if RLS blocks it before email/phone confirmation,
- * we retry after OTP verification.
  */
 async function upsertUserProfile(params: {
   userId: string;
@@ -95,29 +99,31 @@ async function upsertUserProfile(params: {
   if (fullName && fullName.trim().length > 0) {
     patch.full_name = fullName.trim();
   }
-  if (email) {
-    patch.email = email;
-  }
-  if (phone) {
-    patch.phone_number = phone;
-  }
+  if (email) patch.email = email;
+  if (phone) patch.phone_number = phone;
 
-  // Nothing to write except the id
   if (Object.keys(patch).length <= 1) return;
 
   try {
     const { error } = await supabase
       .from('users')
       .upsert(patch, { onConflict: 'id' });
-    if (error) {
-      // Non-fatal; may fail if the users row doesn't exist yet or RLS blocks.
-      if (__DEV__) {
-        console.log('ℹ️ upsertUserProfile warning:', error.message);
-      }
+    if (error && __DEV__) {
+      console.log('ℹ️ upsertUserProfile warning:', error.message);
     }
   } catch (err) {
     if (__DEV__) console.log('ℹ️ upsertUserProfile threw:', err);
   }
+}
+
+/**
+ * Normalise a Ugandan phone number to E.164 (+256XXXXXXXXX).
+ */
+function normaliseUgandanPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.startsWith('256')) return `+${digits}`;
+  if (digits.startsWith('0')) return `+256${digits.slice(1)}`;
+  return `+256${digits}`;
 }
 
 // ============================================================
@@ -237,7 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
-  // EMAIL
+  // EMAIL SIGNUP / VERIFY / SIGNIN
   // ============================================================
   const signUpWithEmail = async (
     email: string,
@@ -250,15 +256,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       email,
       password,
       options: {
-        data: {
-          full_name: trimmedName,
-        },
+        data: { full_name: trimmedName },
       },
     });
     if (error) throw error;
 
-    // Best-effort: write to public.users now. If RLS or row-not-yet-
-    // created blocks it, verifyEmailOtp will retry.
     if (data?.user?.id) {
       await upsertUserProfile({
         userId: data.user.id,
@@ -280,7 +282,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     });
     if (error) throw error;
 
-    // Pull the name from anywhere we might have stashed it.
     const fromArgs = fullName?.trim() || null;
     const fromMeta =
       (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
@@ -304,7 +305,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
-  // PHONE
+  // PHONE SIGNUP / VERIFY / SIGNIN
   // ============================================================
   const signUpWithPhone = async (
     phone: string,
@@ -312,14 +313,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     fullName?: string
   ) => {
     const trimmedName = fullName?.trim() || null;
+    const e164 = normaliseUgandanPhone(phone);
 
     const { data, error } = await supabase.auth.signUp({
-      phone,
+      phone: e164,
       password,
       options: {
-        data: {
-          full_name: trimmedName,
-        },
+        data: { full_name: trimmedName },
       },
     });
     if (error) throw error;
@@ -328,7 +328,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       await upsertUserProfile({
         userId: data.user.id,
         fullName: trimmedName,
-        phone,
+        phone: e164,
       });
     }
   };
@@ -338,8 +338,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     token: string,
     fullName?: string
   ) => {
+    const e164 = normaliseUgandanPhone(phone);
+
     const { data, error } = await supabase.auth.verifyOtp({
-      phone,
+      phone: e164,
       token,
       type: 'sms',
     });
@@ -354,7 +356,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       await upsertUserProfile({
         userId: data.user.id,
         fullName: resolvedName,
-        phone,
+        phone: e164,
       });
     }
   };
@@ -363,41 +365,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     phone: string,
     password: string
   ) => {
+    const e164 = normaliseUgandanPhone(phone);
     const { error } = await supabase.auth.signInWithPassword({
-      phone,
+      phone: e164,
       password,
     });
     if (error) throw error;
   };
 
   // ============================================================
-  // PASSWORD RESET
+  // EMAIL PASSWORD RESET (native Supabase recovery)
   // ============================================================
-  //
-  // Three-step flow:
-  //
-  //   1. requestPasswordReset(email)
-  //      → sends a "Reset password" email containing `{{ .Token }}`
-  //        (a 6-digit code) to the user.
-  //
-  //   2. verifyPasswordResetOtp(email, token)
-  //      → exchanges the code for a short-lived recovery session.
-  //        After this succeeds, supabase.auth.updateUser({ password })
-  //        is authorized on the current client.
-  //
-  //   3. updatePassword(newPassword)
-  //      → sets the new password using the recovery session.
-  //
-  // NOTE: The Supabase project's "Reset password" email template
-  // MUST include {{ .Token }} for step 2 to work. If it only
-  // contains {{ .ConfirmationURL }}, no OTP is generated and
-  // verifyPasswordResetOtp will fail with an "invalid token" error.
-  // ============================================================
-
   const requestPasswordReset = async (email: string) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      // No redirect needed for the OTP flow. If you later build a
-      // web-hosted reset page, set this to that URL instead.
       redirectTo: undefined,
     });
     if (error) throw error;
@@ -412,7 +392,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     if (error) throw error;
   };
 
+  // ============================================================
+  // PHONE PASSWORD RESET (SMS OTP → session → updateUser)
+  // ============================================================
+  //
+  // Supabase does not have a dedicated "recover by phone" endpoint,
+  // so we reuse the phone sign-in OTP channel:
+  //
+  //   Step 1  signInWithOtp({ phone })           → sends SMS code
+  //   Step 2  verifyOtp({ phone, token, 'sms' }) → establishes session
+  //   Step 3  updateUser({ password })           → sets new password
+  //
+  // This is the standard and secure way to reset a password with
+  // only a phone number, and it works with the same Supabase SMS
+  // provider you already have configured.
+  //
+  const requestPhonePasswordReset = async (phone: string) => {
+    const e164 = normaliseUgandanPhone(phone);
+
+    if (!e164 || e164.length < 10) {
+      throw new Error('Please enter a valid phone number.');
+    }
+
+    const { error } = await supabase.auth.signInWithOtp({
+      phone: e164,
+      options: {
+        // If the user doesn't exist yet, don't silently create one —
+        // we want an explicit "account not found" error instead.
+        shouldCreateUser: false,
+      },
+    });
+    if (error) throw error;
+  };
+
+  const verifyPhonePasswordResetOtp = async (
+    phone: string,
+    token: string
+  ) => {
+    const e164 = normaliseUgandanPhone(phone);
+
+    const { error } = await supabase.auth.verifyOtp({
+      phone: e164,
+      token,
+      type: 'sms',
+    });
+    if (error) throw error;
+  };
+
+  // ============================================================
+  // UPDATE PASSWORD (used by both email + phone resets)
+  // ============================================================
   const updatePassword = async (newPassword: string) => {
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('Password must be at least 6 characters.');
+    }
+
+    // Requires an active session — Supabase enforces this.
+    const {
+      data: { session: active },
+    } = await supabase.auth.getSession();
+
+    if (!active) {
+      throw new Error(
+        'You must verify your code first before setting a new password.'
+      );
+    }
+
     const { error } = await supabase.auth.updateUser({
       password: newPassword,
     });
@@ -453,10 +498,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signOut,
       logout: signOut,
       joinAsGuest,
-      // ✅ Password reset flow
+      // Email reset
       requestPasswordReset,
       verifyPasswordResetOtp,
       updatePassword,
+      // Phone reset
+      requestPhonePasswordReset,
+      verifyPhonePasswordResetOtp,
     }),
     [isAuthenticated, isGuest, isLoading, user, session]
   );

@@ -66,14 +66,13 @@ const SignInContent = ({ navigation }: any) => {
         await signInWithPhonePassword(fullPhone, password);
         navigation.replace('MainTabs');
       } catch (e: any) {
-        Alert.alert('Error', e.message || 'Failed to sign in.');
+        Alert.alert('Sign in failed', e?.message || 'Please check your details.');
       } finally {
         setIsLoading(false);
       }
       return;
     }
 
-    // Email
     if (!email.trim() || !password) {
       Alert.alert('Error', 'Please enter your email and password.');
       return;
@@ -83,7 +82,7 @@ const SignInContent = ({ navigation }: any) => {
       await signInWithEmail(email.trim().toLowerCase(), password);
       navigation.replace('MainTabs');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to sign in.');
+      Alert.alert('Sign in failed', e?.message || 'Please check your details.');
     } finally {
       setIsLoading(false);
     }
@@ -93,27 +92,24 @@ const SignInContent = ({ navigation }: any) => {
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
-      // On native, onAuthStateChange in AuthContext handles navigation.
-      // On web, the redirect happens and the user comes back signed in.
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to sign in with Google.');
+      Alert.alert(
+        'Google Sign-In failed',
+        e?.message || 'Please try again.'
+      );
     } finally {
       setIsGoogleLoading(false);
     }
   };
 
   const handleForgotPassword = () => {
-    // The reset flow currently supports email addresses only, since
-    // Supabase's OTP reset channel is email-based by default.
-    if (method === 'phone') {
-      Alert.alert(
-        'Reset Password',
-        'Password reset is available for email accounts. Please switch to the Email tab and tap "Forgot password?" there.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    navigation.navigate('ForgotPassword', { email: email.trim().toLowerCase() });
+    // Works from both tabs. Pass the current method + any input so the
+    // reset screen can pre-fill it.
+    navigation.navigate('ForgotPassword', {
+      email: method === 'email' ? email.trim().toLowerCase() : '',
+      phone: method === 'phone' ? phoneNumber.trim() : '',
+      method,
+    });
   };
 
   return (
@@ -269,7 +265,6 @@ const SignInContent = ({ navigation }: any) => {
             </View>
           </View>
 
-          {/* ✅ Forgot password link */}
           <TouchableOpacity
             style={styles.forgotPasswordButton}
             onPress={handleForgotPassword}
@@ -301,7 +296,6 @@ const SignInContent = ({ navigation }: any) => {
             </LinearGradient>
           </TouchableOpacity>
 
-          {/* ✅ Continue with Google */}
           <View style={styles.dividerContainer}>
             <View style={styles.divider} />
             <Text style={styles.dividerText}>or continue with</Text>
@@ -491,7 +485,6 @@ const styles = StyleSheet.create({
   },
   eyeButton: { paddingHorizontal: 14 },
 
-  // ✅ Forgot password link
   forgotPasswordButton: {
     alignSelf: 'flex-end',
     marginTop: -4,
