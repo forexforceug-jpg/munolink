@@ -75,7 +75,9 @@ const APP_DEEP_LINK =
   'https://expo.dev/accounts/forexforceug/projects/munolink/builds/affe04a9-726f-4d71-877f-c83907ba7414';
 
 // Gap between the info panel's bottom edge and the tab bar's top edge.
-const SCENE_INFO_GAP = 16;
+// Larger than before so the panel floats clearly on top of the image
+// instead of hugging the tab bar.
+const SCENE_INFO_GAP = 40;
 
 type FeedScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -123,14 +125,31 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
 
-  // Use the SAME height the tab bar actually renders with. This comes
-  // from TabNavigator's single source of truth, not from a hook that
-  // may report a slightly different value.
+  // The tab bar's rendered height, from TabNavigator's single source of truth.
   const tabBarHeight = getTabBarHeight(insets);
 
-  // Visible area above the tab bar. Feed items use this so nothing
-  // renders underneath the tab bar.
-  const visibleHeight = Math.max(0, height - tabBarHeight);
+  // The maximum height a feed item can occupy without slipping under
+  // the tab bar. This is the arithmetic upper bound.
+  const computedMaxVisible = Math.max(0, height - tabBarHeight);
+
+  // ✅ Measured visible height, clamped.
+  //
+  // The outer SafeAreaView reports its own height via `onLayout`. That
+  // height is the space the navigator gives the screen — which on
+  // native is the FULL navigator height (the tab bar is absolutely
+  // positioned and overlays the bottom, it doesn't shrink the screen).
+  //
+  // So we clamp the measured value against `height - tabBarHeight`.
+  // That way the FlatList items can never be taller than the visible
+  // area above the tab bar, and the info panel always lands above it.
+  const [measuredVisibleHeight, setMeasuredVisibleHeight] = useState<
+    number | null
+  >(null);
+
+  const visibleHeight =
+    measuredVisibleHeight != null
+      ? Math.min(measuredVisibleHeight, computedMaxVisible)
+      : computedMaxVisible;
 
   const flatListRef = useRef<FlatList>(null);
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
@@ -1297,6 +1316,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         <View
           style={{
             height: isDesktop ? height : visibleHeight,
+            width: isDesktop ? '100%' : width,
             justifyContent: 'center',
             alignItems: 'center',
             position: 'relative',
@@ -1376,9 +1396,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             autoPlay={true}
             autoPlayInterval={5000}
             resetKey={item.id}
-            // ✅ The item is now sized to `visibleHeight`, so its bottom
-            // edge is exactly the top of the tab bar. We just need a
-            // small gap above that edge.
             useExplicitBottomOffset={true}
             bottomOffset={SCENE_INFO_GAP}
             isVisible={isVisible}
@@ -1533,10 +1550,15 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           <SafeAreaView
             style={[
               styles.container,
-              Platform.OS === 'web'
-                ? styles.containerWeb
-                : { height: visibleHeight },
+              Platform.OS === 'web' ? styles.containerWeb : { flex: 1 },
             ]}
+            edges={['top']}
+            onLayout={(e) => {
+              const h = e.nativeEvent.layout.height;
+              if (h && Math.abs(h - (measuredVisibleHeight ?? 0)) > 1) {
+                setMeasuredVisibleHeight(h);
+              }
+            }}
           >
             <StatusBar barStyle="light-content" />
 
@@ -1649,8 +1671,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   }
                 />
               }
-              // Items are already sized to `visibleHeight`, which stops
-              // exactly at the tab bar's top edge. No extra padding needed.
               contentContainerStyle={{ paddingBottom: 0 }}
               style={styles.flatList}
             />

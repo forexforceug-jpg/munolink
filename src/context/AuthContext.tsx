@@ -439,9 +439,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     if (error) throw error;
   };
 
-  // ============================================================
-  // UPDATE PASSWORD (used by both email + phone resets)
-  // ============================================================
   const updatePassword = async (newPassword: string) => {
     if (!newPassword || newPassword.length < 6) {
       throw new Error('Password must be at least 6 characters.');
@@ -461,9 +458,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     const { error } = await supabase.auth.updateUser({
       password: newPassword,
     });
-    if (error) throw error;
-  };
 
+    if (error) {
+      // Supabase returns `same_password` when the new password equals
+      // the current one. Surface a friendly message instead of the
+      // raw API error.
+      const raw = (error.message || '').toLowerCase();
+      const code = (error as any)?.code || '';
+
+      if (
+        code === 'same_password' ||
+        raw.includes('same_password') ||
+        raw.includes('should be different') ||
+        raw.includes('different from')
+      ) {
+        throw new Error(
+          'Your new password must be different from your current one. Please choose a different password.'
+        );
+      }
+
+      if (raw.includes('weak') || raw.includes('short')) {
+        throw new Error(
+          'Please choose a stronger password (at least 6 characters).'
+        );
+      }
+
+      if (
+        raw.includes('auth session missing') ||
+        raw.includes('session not found') ||
+        raw.includes('jwt expired')
+      ) {
+        throw new Error(
+          'Your reset session has expired. Please request a new code.'
+        );
+      }
+
+      throw new Error(error.message || 'Failed to update password.');
+    }
+  };
   // ============================================================
   // SIGN OUT / GUEST
   // ============================================================
