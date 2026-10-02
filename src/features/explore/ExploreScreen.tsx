@@ -120,13 +120,6 @@ const VALID_PRICE_TYPES: PriceType[] = [
   'showcase',
 ];
 
-/**
- * Robustly resolve the price type for an ExplorePost.
- * Preference order:
- *   1. explicit item.price_type (already normalized)
- *   2. item.specifications.price_type
- *   3. inferred from price (fixed / free)
- */
 function resolvePostPriceType(item: ExplorePost): PriceType {
   const candidates: Array<unknown> = [
     item.price_type,
@@ -321,7 +314,6 @@ function buildOpportunityFromPost(
       ...specs,
       price_type: effectivePriceType,
     },
-    // carry the resolved price_type on the opportunity too
     ...( { price_type: effectivePriceType } as any),
   };
 }
@@ -550,6 +542,10 @@ const ExploreContent = ({ navigation }: any) => {
   // ✅ Pull-to-refresh state
   const [refreshing, setRefreshing] = useState(false);
 
+  // ✅ Tracks how far the grid has been scrolled, so we can show the
+  // web-only refresh button only when the user is near the top.
+  const [gridScrollY, setGridScrollY] = useState(0);
+
   const [selectedOpportunity, setSelectedOpportunity] =
     useState<Opportunity | null>(null);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
@@ -630,8 +626,6 @@ const ExploreContent = ({ navigation }: any) => {
       const posts: ExplorePost[] = opportunities.map((opp) => {
         const images = opp.catalogImages || [];
         const specs = (opp as any).specifications || {};
-
-        // Resolve the price_type from whichever source has it.
         const rawPriceType =
           (opp as any).price_type ?? specs.price_type ?? null;
 
@@ -693,10 +687,6 @@ const ExploreContent = ({ navigation }: any) => {
   // ============================================================
   // ✅ PULL-TO-REFRESH
   // ============================================================
-  //
-  // Re-fetches the opportunity list, re-shuffles, re-applies the
-  // current filter/sort, and scrolls back to the top.
-  //
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -721,7 +711,6 @@ const ExploreContent = ({ navigation }: any) => {
         return;
       }
 
-      // Rebuild the ExplorePost list exactly like fetchData does.
       const posts: ExplorePost[] = opportunities.map((opp) => {
         const images = opp.catalogImages || [];
         const specs = (opp as any).specifications || {};
@@ -773,7 +762,6 @@ const ExploreContent = ({ navigation }: any) => {
       setItems(shuffled);
       setFilteredItems(shuffled);
 
-      // Scroll the grid back to the top.
       try {
         gridListRef.current?.scrollToOffset({ offset: 0, animated: true });
       } catch {
@@ -875,7 +863,6 @@ const ExploreContent = ({ navigation }: any) => {
     });
   }, [filteredItems]);
 
-  // Prefetch likes
   useEffect(() => {
     if (!user?.id) return;
     const postIds = filteredItems.map((o) => o.id);
@@ -1391,6 +1378,10 @@ const ExploreContent = ({ navigation }: any) => {
   const numColumns = isDesktop ? 4 : 3;
   const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
 
+  // ✅ Show the web refresh button only when near the top of the grid.
+  const showWebRefreshButton =
+    Platform.OS === 'web' && !isDesktop && gridScrollY < 40;
+
   return (
     <SafeAreaView
       style={[
@@ -1467,6 +1458,8 @@ const ExploreContent = ({ navigation }: any) => {
         windowSize={5}
         initialNumToRender={8}
         ListHeaderComponent={ListHeader}
+        onScroll={(e) => setGridScrollY(e.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1487,6 +1480,24 @@ const ExploreContent = ({ navigation }: any) => {
         }
         stickyHeaderIndices={[0]}
       />
+
+      {/* ✅ Web-only fallback refresh button (RefreshControl doesn't
+          respond to pull gestures on web). */}
+      {showWebRefreshButton && (
+        <TouchableOpacity
+          style={styles.webRefreshButton}
+          onPress={handleRefresh}
+          disabled={refreshing}
+          activeOpacity={0.7}
+          accessibilityLabel="Refresh explore"
+        >
+          {refreshing ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Ionicons name="refresh" size={22} color="#FFFFFF" />
+          )}
+        </TouchableOpacity>
+      )}
 
       {renderSortModal()}
 
@@ -1778,5 +1789,25 @@ const styles = StyleSheet.create({
     maxHeight: '100dvh' as any,
     overflow: 'hidden',
     position: 'relative' as any,
+  },
+
+  // ✅ Web-only refresh button — bottom-center, sits above the tab bar
+  webRefreshButton: {
+    position: 'absolute',
+    bottom: 90,
+    left: '50%',
+    marginLeft: -22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(74, 125, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
   },
 });

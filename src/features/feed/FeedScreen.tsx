@@ -160,6 +160,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   // ✅ Pull-to-refresh state
   const [refreshing, setRefreshing] = useState(false);
 
+  // ✅ Bumping this forces the FlatList to remount after a refresh so
+  // iOS paging FlatList picks up the new data at index 0.
+  const [feedVersion, setFeedVersion] = useState(0);
+
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -564,15 +568,18 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   //
   // Re-fetches the raw opportunity list, re-applies the user's
   // location + recommendation pass, and resets the feed to index 0.
-  // Uses the same data path as the initial load so distances,
-  // filters, and the recommender behave identically.
+  //
+  // Ordering matters on iOS paging FlatLists:
+  //   1. swap the store contents
+  //   2. reset currentIndex
+  //   3. bump feedVersion → forces a clean remount at index 0
+  //   4. scroll to offset 0
   //
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
 
     try {
-      // Grab the user's current location so distances stay accurate.
       let userCoords: { latitude: number; longitude: number } | undefined;
       try {
         const loc = await locationService.getCurrentLocation();
@@ -583,30 +590,34 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         if (__DEV__) console.log('⚠️ Refresh: no location, using fallback');
       }
 
-      // Fetch a fresh batch.
       const freshRaw = await feedService.getOpportunities(userCoords);
 
+      // If the fetch failed outright, keep the old feed but still stop
+      // the spinner so the user isn't stuck in a refresh state.
       if (!freshRaw || freshRaw.length === 0) {
         if (__DEV__) console.log('ℹ️ Refresh returned no data — keeping existing');
         return;
       }
 
-      // Run the recommendation pass so the ordering is fresh.
+      // Recommendation pass (best-effort).
       let result: Opportunity[] = freshRaw;
       try {
         if (user?.id) {
-          result = await recommendationService.getPersonalizedRecommendations(
-            freshRaw,
-            user.id
-          );
-          if (!result || result.length === 0) result = freshRaw;
+          const personalized =
+            await recommendationService.getPersonalizedRecommendations(
+              freshRaw,
+              user.id
+            );
+          if (personalized && personalized.length > 0) {
+            result = personalized;
+          }
         } else {
-          const anon = recommendationService.getNewUserRecommendations(freshRaw);
+          const anon =
+            recommendationService.getNewUserRecommendations(freshRaw);
           if (anon && anon.length > 0) result = anon;
         }
       } catch (err) {
         if (__DEV__) console.warn('⚠️ Refresh recommender failed:', err);
-        result = freshRaw;
       }
 
       // Apply distances if we have a location.
@@ -627,22 +638,29 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         });
       }
 
-      // Swap the store contents and jump back to the top.
+      // 1. Swap the store contents.
       setOpportunities(result);
+
+      // 2. Reset the index to the top.
       setCurrentIndex(0);
       setContextPanelView(null);
 
-      // Reset the viewability tracker so the new first item is logged.
+      // Reset trackers so the new first item gets logged.
       lastOpenOpportunityIdRef.current = null;
       trackedViewRef.current = '';
 
-      // Scroll the FlatList back to index 0 without animation so the
-      // pull feels instant and doesn't fight the refresh gesture.
-      try {
-        flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
-      } catch {
-        /* noop */
-      }
+      // 3. Remount the FlatList so it starts at index 0 with the new
+      //    data. Without this, iOS keeps the previously visible page.
+      setFeedVersion((v) => v + 1);
+
+      // 4. Scroll to top on the next frame (after remount).
+      requestAnimationFrame(() => {
+        try {
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+        } catch {
+          /* noop */
+        }
+      });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
@@ -1645,6 +1663,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             )}
 
             <FlatList
+              key={`feed-${feedVersion}`}
               ref={flatListRef}
               data={uniqueOpportunities}
               renderItem={renderItem}
@@ -1667,7 +1686,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               windowSize={isDesktop ? 5 : 3}
               onScrollToIndexFailed={handleScrollToIndexFailed}
               scrollEventThrottle={32}
-              overScrollMode="always"
+              {...(Platform.OS !== 'web' ? { overScrollMode: 'always' } : {})}
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
@@ -1684,6 +1703,24 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               contentContainerStyle={{ paddingBottom: tabBarHeight }}
               style={styles.flatList}
             />
+
+            {/* ✅ Web-only fallback refresh button (RefreshControl
+                doesn't respond to pull gestures on web). */}
+            {Platform.OS === 'web' && currentIndex === 0 && !isDesktop && (
+              <TouchableOpacity
+                style={styles.webRefreshButton}
+                onPress={handleRefresh}
+                disabled={refreshing}
+                activeOpacity={0.7}
+                accessibilityLabel="Refresh feed"
+              >
+                {refreshing ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons name="refresh" size={22} color="#FFFFFF" />
+                )}
+              </TouchableOpacity>
+            )}
 
             <ReviewsBottomSheet
               visible={showReviewsModal}
@@ -1905,5 +1942,24 @@ const styles = StyleSheet.create({
     top: '50%',
     transform: [{ translateY: -150 }],
     zIndex: 50,
+  },
+  // ✅ Web-only refresh button — bottom-center, sits above the tab bar
+  webRefreshButton: {
+    position: 'absolute',
+    bottom: 90,
+    left: '50%',
+    marginLeft: -22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(74, 125, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30,
+    shadowColor: '#4A7DFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
   },
 });
