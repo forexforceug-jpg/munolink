@@ -18,6 +18,7 @@ import { UploadCameraScreen } from '../features/upload/UploadCameraScreen';
 import { UploadEditorScreen } from '../features/upload/UploadEditorScreen';
 import { PrivacyPolicyScreen } from '../features/legal/PrivacyPolicyScreen';
 import { TermsOfServiceScreen } from '../features/legal/TermsOfServiceScreen';
+import { useDeepLinks } from '../hooks/useDeepLinks';
 import type { RootStackParamList } from './types';
 
 // Re-export so existing imports of RootStackParamList from
@@ -27,6 +28,24 @@ export type { RootStackParamList };
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export const RootNavigator = () => {
+  // ✅ Turns incoming URLs into navigation actions.
+  //
+  // Handles:
+  //   • cold start   (app opened via link while closed)
+  //   • warm start   (app already running and receives a link)
+  //   • web          (window.location + popstate)
+  //
+  // Shared post links look like:
+  //   https://www.munolink.com/s/<postId>
+  //   munolink://s/<postId>
+  //
+  // The hook resolves them to:
+  //   navigate('MainTabs', { screen: 'Discover', params: { openPostId } })
+  //
+  // FeedScreen already reads `route.params.openPostId` and scrolls to
+  // that specific post, so the recipient lands directly on it.
+  useDeepLinks();
+
   return (
     <Stack.Navigator
       initialRouteName="MainTabs"

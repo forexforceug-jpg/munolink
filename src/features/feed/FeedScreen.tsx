@@ -75,8 +75,6 @@ const APP_DEEP_LINK =
   'https://expo.dev/accounts/forexforceug/projects/munolink/builds/affe04a9-726f-4d71-877f-c83907ba7414';
 
 // Gap between the info panel's bottom edge and the tab bar's top edge.
-// Larger than before so the panel floats clearly on top of the image
-// instead of hugging the tab bar.
 const SCENE_INFO_GAP = 40;
 
 type FeedScreenNavigationProp = NativeStackNavigationProp<
@@ -154,6 +152,20 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const flatListRef = useRef<FlatList>(null);
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
+
+  // ============================================================
+  // ✅ TIKTOK-STYLE FEED FILTER
+  //
+  // 'forYou' is the default. 'following' shows posts from users the
+  // current user follows. Switching tabs swaps the FlatList's data.
+  // ============================================================
+  const [activeFeed, setActiveFeed] = useState<'forYou' | 'following'>(
+    'forYou'
+  );
+  const [followingOpportunities, setFollowingOpportunities] = useState<
+    Opportunity[]
+  >([]);
+  const [isLoadingFollowing, setIsLoadingFollowing] = useState(false);
 
   const [userLocation, setUserLocation] = useState<string>('Detecting...');
   const [isLocationLoading, setIsLocationLoading] = useState(true);
@@ -395,12 +407,25 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     return Array.from(map.values());
   }, [opportunities]);
 
+  // ============================================================
+  // ✅ ACTIVE FEED ITEMS
+  //
+  // Whatever the FlatList should actually render right now, based on
+  // the selected tab. Everywhere below that used to read
+  // `uniqueOpportunities` should read this instead.
+  // ============================================================
+  const activeFeedItems = useMemo(() => {
+    return activeFeed === 'following'
+      ? followingOpportunities
+      : uniqueOpportunities;
+  }, [activeFeed, followingOpportunities, uniqueOpportunities]);
+
   const currentOpportunity = useMemo(() => {
-    if (!uniqueOpportunities || uniqueOpportunities.length === 0) return null;
-    if (currentIndex < 0 || currentIndex >= uniqueOpportunities.length)
+    if (!activeFeedItems || activeFeedItems.length === 0) return null;
+    if (currentIndex < 0 || currentIndex >= activeFeedItems.length)
       return null;
-    return uniqueOpportunities[currentIndex] || null;
-  }, [uniqueOpportunities, currentIndex]);
+    return activeFeedItems[currentIndex] || null;
+  }, [activeFeedItems, currentIndex]);
 
   const featuredOpportunities = useMemo(() => {
     return uniqueOpportunities.slice(0, FEATURED_COUNT);
@@ -414,23 +439,112 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [queryError, queryLoading, setError, setLoading]);
 
   // ============================================================
-  // DEEP LINK
+  // ✅ FETCH — Following feed
+  // ============================================================
+  const loadFollowingFeed = useCallback(async () => {
+    if (!user?.id) {
+      setFollowingOpportunities([]);
+      return;
+    }
+
+    setIsLoadingFollowing(true);
+    try {
+      // 1. Whom do I follow?
+      const { data: followRows, error: followError } = await (
+        supabase as any
+      )
+        .from('follows')
+        .select('following_id')
+        .eq('follower_id', user.id);
+
+      if (followError) throw followError;
+
+      const followedIds: string[] = (followRows || [])
+        .map((r: any) => r.following_id)
+        .filter(Boolean);
+
+      if (followedIds.length === 0) {
+        setFollowingOpportunities([]);
+        return;
+      }
+
+      // 2. Fetch catalog rows authored by those users.
+      //    We reuse the main feed's shape so the cards look identical.
+      let userCoords: { latitude: number; longitude: number } | undefined;
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // Prefer a dedicated service method if you have one.
+      // Fallback: fetch the whole feed and filter client-side.
+      let raw: Opportunity[] = [];
+      const svc: any = feedService as any;
+      if (typeof svc.getOpportunitiesByUserIds === 'function') {
+        raw = await svc.getOpportunitiesByUserIds(followedIds, userCoords);
+      } else {
+        const all = await feedService.getOpportunities(userCoords);
+        raw = all.filter((o) => followedIds.includes(o.userId));
+      }
+
+      setFollowingOpportunities(raw || []);
+    } catch (err) {
+      if (__DEV__) console.error('❌ Failed to load Following feed:', err);
+      setFollowingOpportunities([]);
+    } finally {
+      setIsLoadingFollowing(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (activeFeed === 'following') {
+      loadFollowingFeed();
+    }
+  }, [activeFeed, loadFollowingFeed]);
+
+  // ============================================================
+  // ✅ TAB SWITCH RESET
+  //
+  // When the user changes tabs, snap the FlatList back to the top so
+  // the first post of the new feed is shown (matches TikTok).
   // ============================================================
   useEffect(() => {
+    setCurrentIndex(0);
+    setContextPanelView(null);
+    setFeedVersion((v) => v + 1);
+    requestAnimationFrame(() => {
+      try {
+        flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      } catch {
+        /* noop */
+      }
+    });
+  }, [activeFeed, setCurrentIndex]);
+
+  // ============================================================
+  // DEEP LINK
+  // ============================================================
+   useEffect(() => {
     const openPostId = route?.params?.openPostId;
     if (openPostId) {
       pendingOpenPostIdRef.current = openPostId;
+      // ✅ A shared link must always resolve on the For You feed,
+      // because the post may not exist in the user's Following feed.
+      setActiveFeed('forYou');
       if (__DEV__) console.log('📌 Pending deep-linked post:', openPostId);
     }
   }, [route?.params?.openPostId]);
-
   useEffect(() => {
     const openPostId = pendingOpenPostIdRef.current;
     if (!openPostId) return;
-    if (uniqueOpportunities.length === 0) return;
+    if (activeFeedItems.length === 0) return;
     if (lastHandledPostIdRef.current === openPostId) return;
 
-    const index = uniqueOpportunities.findIndex((o) => o.id === openPostId);
+    const index = activeFeedItems.findIndex((o) => o.id === openPostId);
     if (index === -1) {
       pendingOpenPostIdRef.current = null;
       lastHandledPostIdRef.current = openPostId;
@@ -469,7 +583,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [uniqueOpportunities, navigation, setCurrentIndex]);
+  }, [activeFeedItems, navigation, setCurrentIndex]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: {
@@ -497,7 +611,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   // ============================================================
   useEffect(() => {
     if (!user?.id) return;
-    const postIds = uniqueOpportunities.map((o) => o.id);
+    const postIds = activeFeedItems.map((o) => o.id);
     if (postIds.length === 0) return;
 
     let cancelled = false;
@@ -524,18 +638,18 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, uniqueOpportunities]);
+  }, [user?.id, activeFeedItems]);
 
   // ============================================================
   // INITIALISE loadingItemsMap
   // ============================================================
   useEffect(() => {
-    if (uniqueOpportunities.length === 0) return;
+    if (activeFeedItems.length === 0) return;
 
     setLoadingItemsMap((prev) => {
       const next = { ...prev };
       let changed = false;
-      for (const opp of uniqueOpportunities) {
+      for (const opp of activeFeedItems) {
         if (next[opp.id] === undefined) {
           next[opp.id] = true;
           changed = true;
@@ -543,7 +657,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       }
       return changed ? next : prev;
     });
-  }, [uniqueOpportunities]);
+  }, [activeFeedItems]);
 
   const handleMediaLoadStateChange = useCallback(
     (opportunityId: string, isLoading: boolean) => {
@@ -563,6 +677,13 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setRefreshing(true);
 
     try {
+      // If we're on Following, just refresh that list.
+      if (activeFeed === 'following') {
+        await loadFollowingFeed();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        return;
+      }
+
       let userCoords: { latitude: number; longitude: number } | undefined;
       try {
         const loc = await locationService.getCurrentLocation();
@@ -642,6 +763,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [
     refreshing,
+    activeFeed,
+    loadFollowingFeed,
     user?.id,
     setOpportunities,
     setCurrentIndex,
@@ -745,10 +868,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
     if (index === null || index === undefined) return;
     if (index === currentIndex) return;
-    if (index < 0 || index >= uniqueOpportunities.length) return;
+    if (index < 0 || index >= activeFeedItems.length) return;
 
-    const nextOpp = uniqueOpportunities[index];
-    const prevOpp = uniqueOpportunities[currentIndex];
+    const nextOpp = activeFeedItems[index];
+    const prevOpp = activeFeedItems[currentIndex];
 
     if (prevOpp && lastOpenOpportunityIdRef.current === prevOpp.id) {
       const timeSpent = Date.now() - oppOpenTimeRef.current;
@@ -794,10 +917,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   useEffect(() => {
     if (
-      uniqueOpportunities.length > 0 &&
+      activeFeedItems.length > 0 &&
       lastOpenOpportunityIdRef.current === null
     ) {
-      const firstOpp = uniqueOpportunities[currentIndex];
+      const firstOpp = activeFeedItems[currentIndex];
       if (firstOpp) {
         lastOpenOpportunityIdRef.current = firstOpp.id;
         oppOpenTimeRef.current = Date.now();
@@ -811,7 +934,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         }
       }
     }
-  }, [uniqueOpportunities, currentIndex]);
+  }, [activeFeedItems, currentIndex]);
 
   // --- Action Handlers ---
   const handleReviewsPress = useCallback(
@@ -952,6 +1075,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     },
     [isAuthenticated, navigation, user?.id, showStyledAlert, hideStyledAlert]
   );
+
   const handleSavePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!isAuthenticated || !user?.id) {
@@ -984,7 +1108,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       const currentlySaved = savedItemsMap[opportunity.id] || false;
       const nextSaved = !currentlySaved;
 
-      // Optimistic UI
       setSavedItemsMap((prev) => ({
         ...prev,
         [opportunity.id]: nextSaved,
@@ -996,7 +1119,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             .from('saves')
             .insert({ user_id: user.id, post_id: opportunity.id });
 
-          // Ignore unique-constraint violation (already saved)
           if (error && (error as any).code !== '23505') throw error;
         } else {
           const { error } = await (supabase as any)
@@ -1008,7 +1130,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           if (error) throw error;
         }
 
-        // Best-effort tracking (non-fatal)
         recommendationService
           .trackInteraction(
             user.id,
@@ -1018,7 +1139,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           )
           .catch(() => {});
       } catch (err) {
-        // Rollback local state
         console.error('Save toggle failed:', err);
         setSavedItemsMap((prev) => ({
           ...prev,
@@ -1035,6 +1155,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       hideStyledAlert,
     ]
   );
+
   const handleLikePress = useCallback(
     async (opportunity: Opportunity) => {
       if (!isAuthenticated || !user?.id) {
@@ -1168,7 +1289,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       if (
         flatListRef.current &&
         index >= 0 &&
-        index < uniqueOpportunities.length
+        index < activeFeedItems.length
       ) {
         flatListRef.current.scrollToIndex({
           index,
@@ -1178,14 +1299,14 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         setContextPanelView(null);
       }
     },
-    [uniqueOpportunities.length, setCurrentIndex]
+    [activeFeedItems.length, setCurrentIndex]
   );
 
   const goToNext = useCallback(() => {
-    if (currentIndex < uniqueOpportunities.length - 1) {
+    if (currentIndex < activeFeedItems.length - 1) {
       scrollToIndex(currentIndex + 1);
     }
-  }, [currentIndex, uniqueOpportunities.length, scrollToIndex]);
+  }, [currentIndex, activeFeedItems.length, scrollToIndex]);
 
   const goToPrevious = useCallback(() => {
     if (currentIndex > 0) {
@@ -1216,18 +1337,18 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         <TouchableOpacity
           style={[
             styles.navArrow,
-            currentIndex === uniqueOpportunities.length - 1 &&
+            currentIndex === activeFeedItems.length - 1 &&
               styles.navArrowDisabled,
           ]}
           onPress={goToNext}
-          disabled={currentIndex === uniqueOpportunities.length - 1}
+          disabled={currentIndex === activeFeedItems.length - 1}
           activeOpacity={0.7}
         >
           <Ionicons
             name="chevron-down"
             size={28}
             color={
-              currentIndex === uniqueOpportunities.length - 1
+              currentIndex === activeFeedItems.length - 1
                 ? '#555'
                 : '#FFFFFF'
             }
@@ -1238,7 +1359,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [
     isDesktop,
     currentIndex,
-    uniqueOpportunities.length,
+    activeFeedItems.length,
     goToPrevious,
     goToNext,
   ]);
@@ -1493,7 +1614,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   // ============================================================
   const isInitialLoading = !hasFetchedOnceRef.current && queryLoading;
 
-  if (isInitialLoading || (isLoading && uniqueOpportunities.length === 0)) {
+  if (
+    activeFeed === 'forYou' &&
+    (isInitialLoading || (isLoading && uniqueOpportunities.length === 0))
+  ) {
     return (
       <View style={[styles.container, { height: visibleHeight }]}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
@@ -1502,7 +1626,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     );
   }
 
-  if (error) {
+  if (error && activeFeed === 'forYou') {
     return (
       <SafeAreaView
         style={[styles.centered, { height: visibleHeight }]}
@@ -1520,24 +1644,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     );
   }
 
-  if (uniqueOpportunities.length === 0) {
-    return (
-      <SafeAreaView
-        style={[styles.centered, { height: visibleHeight }]}
-        edges={['top']}
-      >
-        <Text style={[styles.emptyText, { fontSize: width < 380 ? 16 : 18 }]}>
-          No opportunities found
-        </Text>
-        <Text
-          style={[styles.emptySubtext, { fontSize: width < 380 ? 12 : 14 }]}
-        >
-          Check back later for new deals!
-        </Text>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <ResponsiveLayout
       currentRoute="Feed"
@@ -1545,7 +1651,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         (navigation as any).navigate(route);
       }}
       desktopNavArrows={renderDesktopNavArrows()}
-      selectedOpportunity={uniqueOpportunities[currentIndex] || null}
+      selectedOpportunity={activeFeedItems[currentIndex] || null}
       onReviewsPress={handleReviewsPress}
       onShowMorePress={handleShowMorePress}
       onSharePress={handleSharePress}
@@ -1586,6 +1692,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           >
             <StatusBar barStyle="light-content" />
 
+            {/* ============================================================
+                TOP BAR — logo / Open in App / search PLUS the TikTok-style
+                Following | For You tabs.
+                ============================================================ */}
             {!isDesktop && (
               <LinearGradient
                 colors={[
@@ -1652,52 +1762,130 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                     />
                   </TouchableOpacity>
                 </View>
+
+                {/* ✅ TikTok-style Following | For You tabs */}
+                <View style={styles.feedTabsRow}>
+                  <TouchableOpacity
+                    style={styles.feedTab}
+                    onPress={() => setActiveFeed('following')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.feedTabLabel,
+                        activeFeed === 'following' &&
+                          styles.feedTabLabelActive,
+                      ]}
+                    >
+                      Following
+                    </Text>
+                    {activeFeed === 'following' && (
+                      <View style={styles.feedTabUnderline} />
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.feedTab}
+                    onPress={() => setActiveFeed('forYou')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.feedTabLabel,
+                        activeFeed === 'forYou' && styles.feedTabLabelActive,
+                      ]}
+                    >
+                      For You
+                    </Text>
+                    {activeFeed === 'forYou' && (
+                      <View style={styles.feedTabUnderline} />
+                    )}
+                  </TouchableOpacity>
+                </View>
               </LinearGradient>
             )}
 
-            <FlatList
-              key={`feed-${feedVersion}`}
-              ref={flatListRef}
-              data={uniqueOpportunities}
-              renderItem={renderItem}
-              keyExtractor={(item, index) => `item-${item.id}-${index}`}
-              pagingEnabled={!isDesktop}
-              showsVerticalScrollIndicator={false}
-              snapToInterval={isDesktop ? undefined : visibleHeight}
-              snapToAlignment="start"
-              decelerationRate="fast"
-              viewabilityConfig={VIEWABILITY_CONFIG}
-              onViewableItemsChanged={handleViewableItemsChanged}
-              getItemLayout={(data, index) => {
-                const itemHeight = isDesktop ? height : visibleHeight;
-                return {
-                  length: itemHeight,
-                  offset: itemHeight * index,
-                  index,
-                };
-              }}
-              initialScrollIndex={currentIndex}
-              removeClippedSubviews={false}
-              maxToRenderPerBatch={isDesktop ? 3 : 2}
-              windowSize={isDesktop ? 5 : 3}
-              onScrollToIndexFailed={handleScrollToIndexFailed}
-              scrollEventThrottle={32}
-              {...(Platform.OS !== 'web' ? { overScrollMode: 'always' } : {})}
-              refreshControl={
-                <RefreshControl
-                  refreshing={refreshing}
-                  onRefresh={handleRefresh}
-                  tintColor="#4A7DFF"
-                  colors={['#4A7DFF']}
-                  progressBackgroundColor="#1A2A4F"
-                  progressViewOffset={
-                    Platform.OS === 'web' ? 0 : insets.top + 56
-                  }
-                />
-              }
-              contentContainerStyle={{ paddingBottom: 0 }}
-              style={styles.flatList}
-            />
+            {/* ============================================================
+                CONTENT
+                ============================================================ */}
+            {activeFeed === 'following' && followingOpportunities.length === 0 ? (
+              // ✅ Empty state for Following
+              <View style={styles.followingEmptyContainer}>
+                {isLoadingFollowing ? (
+                  <>
+                    <ActivityIndicator size="large" color="#FFFFFF" />
+                    <Text style={styles.followingEmptySubtext}>
+                      Loading Following feed…
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons
+                      name="people-outline"
+                      size={56}
+                      color="#8A8AAE"
+                    />
+                    <Text style={styles.followingEmptyTitle}>No posts yet</Text>
+                    <Text style={styles.followingEmptySubtext}>
+                      Follow people to see their posts here
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.followingEmptyButton}
+                      onPress={() => setActiveFeed('forYou')}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.followingEmptyButtonText}>
+                        Back to For You
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            ) : (
+              <FlatList
+                key={`feed-${activeFeed}-${feedVersion}`}
+                ref={flatListRef}
+                data={activeFeedItems}
+                renderItem={renderItem}
+                keyExtractor={(item, index) => `item-${item.id}-${index}`}
+                pagingEnabled={!isDesktop}
+                showsVerticalScrollIndicator={false}
+                snapToInterval={isDesktop ? undefined : visibleHeight}
+                snapToAlignment="start"
+                decelerationRate="fast"
+                viewabilityConfig={VIEWABILITY_CONFIG}
+                onViewableItemsChanged={handleViewableItemsChanged}
+                getItemLayout={(data, index) => {
+                  const itemHeight = isDesktop ? height : visibleHeight;
+                  return {
+                    length: itemHeight,
+                    offset: itemHeight * index,
+                    index,
+                  };
+                }}
+                initialScrollIndex={currentIndex}
+                removeClippedSubviews={false}
+                maxToRenderPerBatch={isDesktop ? 3 : 2}
+                windowSize={isDesktop ? 5 : 3}
+                onScrollToIndexFailed={handleScrollToIndexFailed}
+                scrollEventThrottle={32}
+                {...(Platform.OS !== 'web' ? { overScrollMode: 'always' } : {})}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={refreshing}
+                    onRefresh={handleRefresh}
+                    tintColor="#4A7DFF"
+                    colors={['#4A7DFF']}
+                    progressBackgroundColor="#1A2A4F"
+                    progressViewOffset={
+                      Platform.OS === 'web' ? 0 : insets.top + 100
+                    }
+                  />
+                }
+                contentContainerStyle={{ paddingBottom: 0 }}
+                style={styles.flatList}
+              />
+            )}
 
             {Platform.OS === 'web' && currentIndex === 0 && !isDesktop && (
               <TouchableOpacity
@@ -1891,6 +2079,73 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     flexShrink: 0,
   },
+
+  // ✅ TikTok-style Following | For You tabs
+  feedTabsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 24,
+    marginTop: 8,
+  },
+  feedTab: {
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  feedTabLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  feedTabLabelActive: {
+    color: '#FFFFFF',
+  },
+  feedTabUnderline: {
+    marginTop: 5,
+    width: 24,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#FFFFFF',
+  },
+
+  followingEmptyContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  followingEmptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 16,
+  },
+  followingEmptySubtext: {
+    color: '#8A8AAE',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  followingEmptyButton: {
+    marginTop: 24,
+    backgroundColor: '#4A7DFF',
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  followingEmptyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
   guestPromptOverlay: {
     position: 'absolute',
     top: 0,
