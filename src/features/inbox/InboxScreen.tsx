@@ -18,7 +18,10 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
@@ -501,6 +504,13 @@ const GuestInboxView = ({ navigation }: any) => (
 
 const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const { isAuthenticated, user } = useAuth();
+
+  // ✅ Bottom safe-area inset — needed because the chat input row
+  //    (with the Pay Now / Request buttons) sits flush against the
+  //    bottom edge of the screen and gets overlapped by the OS
+  //    gesture bar / home indicator.
+  const insets = useSafeAreaInsets();
+  const bottomSafeArea = Math.max(insets.bottom, 0);
 
   const routeParams = route?.params || {};
   const directUserId = routeParams.userId || null;
@@ -1638,10 +1648,6 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   // ============================================================
   // REAL-TIME SUBSCRIPTION
   // ============================================================
-
-  // ============================================================
-  // REAL-TIME SUBSCRIPTION
-  // ============================================================
   //
   // ✅ Fix: cannot add `postgres_changes` callbacks after `subscribe()`.
   //
@@ -1880,7 +1886,14 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             }
           />
 
-          <View style={styles.chatInputContainer}>
+          {/* ✅ Bottom safe-area padding added here so the Pay Now / Request
+              buttons clear the system gesture bar / home indicator. */}
+          <View
+            style={[
+              styles.chatInputContainer,
+              { paddingBottom: bottomSafeArea + 10 },
+            ]}
+          >
             <View style={styles.chatInputRow}>
               <TouchableOpacity style={styles.attachButton}>
                 <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
