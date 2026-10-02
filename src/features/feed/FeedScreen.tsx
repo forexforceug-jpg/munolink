@@ -1544,7 +1544,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
                     <Image
-                      source={require('../../../assets/favicon1.png')}
+                      source={require('../../../assets/favicon.png')}
                       style={styles.logoImage}
                       resizeMode="contain"
                     />
@@ -1564,7 +1564,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                       activeOpacity={0.7}
                     >
                       <Image
-                        source={require('../../../assets/favicon1.png')}
+                        source={require('../../../assets/favicon.png')}
                         style={styles.openInAppIcon}
                         resizeMode="contain"
                       />
