@@ -71,7 +71,7 @@ import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
 // Link shown by the "Open in App" button on web.
-const APP_DEEP_LINK = 'https://www.munolink.com/app';
+const APP_DEEP_LINK = 'https://expo.dev/accounts/forexforceug/projects/munolink/builds/affe04a9-726f-4d71-877f-c83907ba7414';
 
 type FeedScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -1544,7 +1544,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 <View style={styles.topBarContent}>
                   <TouchableOpacity style={styles.logoContainer}>
                     <Image
-                      source={require('../../../assets/favicon.png')}
+                      source={require('../../../assets/favicon1.png')}
                       style={styles.logoImage}
                       resizeMode="contain"
                     />
@@ -1564,7 +1564,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                       activeOpacity={0.7}
                     >
                       <Image
-                        source={require('../../../assets/favicon.png')}
+                        source={require('../../../assets/favicon1.png')}
                         style={styles.openInAppIcon}
                         resizeMode="contain"
                       />
@@ -1793,23 +1793,19 @@ const styles = StyleSheet.create({
     height: 33,
   },
 
-  // ✅ Web-only "Open in App" button — replaces the location button on web.
+  // ✅ Web-only "Open in App" button — matches the old location chip styling.
   openInAppButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4A7DFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 16,
     gap: 6,
-    flex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
     maxWidth: 180,
     justifyContent: 'center',
-    shadowColor: '#4A7DFF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 4,
   },
   openInAppIcon: {
     width: 16,
