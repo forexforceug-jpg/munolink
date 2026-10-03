@@ -60,16 +60,20 @@ interface FloatingActionRailProps {
   rightShift?: number;
 }
 
+// ✅ Desktop spacing tightened (was GAP: 24 → now 10; AI_GAP was
+// -14 → now 4). Buttons also slightly smaller so the column reads
+// as a compact TikTok-style rail.
 const DESKTOP_POSITION = {
-  BUTTON_SIZE: 56,
-  SHOP_BUTTON_SIZE: 54,
-  GAP: 24,
-  AI_GAP: -14,
-  ICON_SIZE: 32,
-  VALUE_FONT_SIZE: 12,
+  BUTTON_SIZE: 52,
+  SHOP_BUTTON_SIZE: 50,
+  GAP: 10,
+  AI_GAP: 4,
+  ICON_SIZE: 28,
+  VALUE_FONT_SIZE: 11,
   LABEL_FONT_SIZE: 10,
 };
 
+// ✅ Mobile values unchanged.
 const MOBILE_POSITION = {
   BUTTON_SIZE: 58,
   SHOP_BUTTON_SIZE: 52,
@@ -138,7 +142,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
   const hasInteractedLikeRef = useRef(false);
   const hasInteractedSaveRef = useRef(false);
 
-  // Reset state when opportunity changes
   useEffect(() => {
     if (opportunity.id !== currentOpportunityId) {
       setCurrentOpportunityId(opportunity.id);
@@ -228,10 +231,6 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
     }
   }, [isSavedState, saveCount, triggerHaptic, onSavePress, opportunity]);
 
-  // ✅ NEW: Delegates to sharePost so the URL is the OG-tagged
-  //    Supabase Edge Function URL — WhatsApp/FB then build a preview
-  //    card from the OG tags. Also notifies the parent so it can
-  //    track the share action server-side.
   const handleSharePress = useCallback(async () => {
     triggerHaptic('light');
 
@@ -274,7 +273,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
 
   const userLetter = opportunity.userFullName?.charAt(0).toUpperCase() || 'U';
 
-  const logoSize = isDesktop ? 80 : 70;
+  const logoSize = isDesktop ? 64 : 70;
 
   const effectiveDistance =
     typeof opportunity.distance === 'number' && opportunity.distance > 0

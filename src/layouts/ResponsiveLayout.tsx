@@ -14,6 +14,7 @@ interface Props {
   hideContextPanel?: boolean;
   fullWidth?: boolean;
   desktopNavArrows?: ReactNode;
+  desktopActionRail?: ReactNode;
   selectedOpportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
@@ -21,7 +22,9 @@ interface Props {
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
   contextPanelView?: 'details' | 'reviews' | 'directions' | null;
-  onContextPanelViewChange?: (view: 'details' | 'reviews' | 'directions' | null) => void;
+  onContextPanelViewChange?: (
+    view: 'details' | 'reviews' | 'directions' | null
+  ) => void;
   selectedProductId?: string;
   selectedProductTitle?: string;
   selectedOpportunityForModal?: Opportunity | null;
@@ -34,14 +37,15 @@ interface Props {
   onDirectionsClose?: () => void;
 }
 
-export function ResponsiveLayout({ 
-  children, 
-  currentRoute, 
+export function ResponsiveLayout({
+  children,
+  currentRoute,
   onNavigate,
   floatingActions,
   hideContextPanel = false,
   fullWidth = false,
   desktopNavArrows,
+  desktopActionRail,
   selectedOpportunity,
   onReviewsPress,
   onShowMorePress,
@@ -65,13 +69,14 @@ export function ResponsiveLayout({
 
   if (isDesktop) {
     return (
-      <DesktopLayout 
-        currentRoute={currentRoute} 
+      <DesktopLayout
+        currentRoute={currentRoute}
         onNavigate={onNavigate}
         floatingActions={floatingActions}
         hideContextPanel={hideContextPanel}
         fullWidth={fullWidth}
         desktopNavArrows={desktopNavArrows}
+        desktopActionRail={desktopActionRail}
         selectedOpportunity={selectedOpportunity}
         onReviewsPress={onReviewsPress}
         onShowMorePress={onShowMorePress}

@@ -77,6 +77,11 @@ const APP_DEEP_LINK =
 // Gap between the info panel's bottom edge and the tab bar's top edge.
 const SCENE_INFO_GAP = 40;
 
+// Fallback desktop rectangle dimensions used before the wrapper's
+// onLayout fires. Matches DesktopLayout's fallback (9:16 portrait).
+const DESKTOP_FEED_ASPECT = 9 / 16;
+const DESKTOP_FALLBACK_MAX_HEIGHT = 900;
+
 type FeedScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
   'MainTabs'
@@ -126,20 +131,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   // The tab bar's rendered height, from TabNavigator's single source of truth.
   const tabBarHeight = getTabBarHeight(insets);
 
-  // The maximum height a feed item can occupy without slipping under
-  // the tab bar. This is the arithmetic upper bound.
+  // Native-only clamp (desktop has no tab bar).
   const computedMaxVisible = Math.max(0, height - tabBarHeight);
 
-  // ✅ Measured visible height, clamped.
-  //
-  // The outer SafeAreaView reports its own height via `onLayout`. That
-  // height is the space the navigator gives the screen — which on
-  // native is the FULL navigator height (the tab bar is absolutely
-  // positioned and overlays the bottom, it doesn't shrink the screen).
-  //
-  // So we clamp the measured value against `height - tabBarHeight`.
-  // That way the FlatList items can never be taller than the visible
-  // area above the tab bar, and the info panel always lands above it.
   const [measuredVisibleHeight, setMeasuredVisibleHeight] = useState<
     number | null
   >(null);
@@ -149,15 +143,35 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       ? Math.min(measuredVisibleHeight, computedMaxVisible)
       : computedMaxVisible;
 
+  // ✅ Desktop: measure the feed rectangle from DesktopLayout's
+  // wrapper, so item frames exactly match it.
+  const [desktopItemHeight, setDesktopItemHeight] = useState<number | null>(
+    null
+  );
+  const [desktopItemWidth, setDesktopItemWidth] = useState<number | null>(
+    null
+  );
+
+  const desktopFallbackHeight = Math.min(
+    height * 0.92,
+    DESKTOP_FALLBACK_MAX_HEIGHT
+  );
+  const desktopFallbackWidth = desktopFallbackHeight * DESKTOP_FEED_ASPECT;
+
+  const itemHeight = isDesktop
+    ? desktopItemHeight ?? desktopFallbackHeight
+    : visibleHeight;
+
+  const itemWidth = isDesktop
+    ? desktopItemWidth ?? desktopFallbackWidth
+    : width;
+
   const flatListRef = useRef<FlatList>(null);
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
 
   // ============================================================
   // ✅ TIKTOK-STYLE FEED FILTER
-  //
-  // 'forYou' is the default. 'following' shows posts from users the
-  // current user follows. Switching tabs swaps the FlatList's data.
   // ============================================================
   const [activeFeed, setActiveFeed] = useState<'forYou' | 'following'>(
     'forYou'
@@ -409,10 +423,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   // ============================================================
   // ✅ ACTIVE FEED ITEMS
-  //
-  // Whatever the FlatList should actually render right now, based on
-  // the selected tab. Everywhere below that used to read
-  // `uniqueOpportunities` should read this instead.
   // ============================================================
   const activeFeedItems = useMemo(() => {
     return activeFeed === 'following'
@@ -449,7 +459,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
     setIsLoadingFollowing(true);
     try {
-      // 1. Whom do I follow?
       const { data: followRows, error: followError } = await (
         supabase as any
       )
@@ -468,8 +477,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         return;
       }
 
-      // 2. Fetch catalog rows authored by those users.
-      //    We reuse the main feed's shape so the cards look identical.
       let userCoords: { latitude: number; longitude: number } | undefined;
       try {
         const loc = await locationService.getCurrentLocation();
@@ -480,8 +487,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         /* ignore */
       }
 
-      // Prefer a dedicated service method if you have one.
-      // Fallback: fetch the whole feed and filter client-side.
       let raw: Opportunity[] = [];
       const svc: any = feedService as any;
       if (typeof svc.getOpportunitiesByUserIds === 'function') {
@@ -508,9 +513,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   // ============================================================
   // ✅ TAB SWITCH RESET
-  //
-  // When the user changes tabs, snap the FlatList back to the top so
-  // the first post of the new feed is shown (matches TikTok).
   // ============================================================
   useEffect(() => {
     setCurrentIndex(0);
@@ -526,29 +528,102 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   }, [activeFeed, setCurrentIndex]);
 
   // ============================================================
-  // DEEP LINK
+  // DEEP LINK — CAPTURE
   // ============================================================
-   useEffect(() => {
+  useEffect(() => {
     const openPostId = route?.params?.openPostId;
     if (openPostId) {
       pendingOpenPostIdRef.current = openPostId;
-      // ✅ A shared link must always resolve on the For You feed,
-      // because the post may not exist in the user's Following feed.
       setActiveFeed('forYou');
       if (__DEV__) console.log('📌 Pending deep-linked post:', openPostId);
     }
   }, [route?.params?.openPostId]);
+
+  // ============================================================
+  // ✅ DEEP LINK — FALLBACK FETCH
+  // ============================================================
+  useEffect(() => {
+    const openPostId = pendingOpenPostIdRef.current;
+
+    if (!openPostId) return;
+    if (uniqueOpportunities.some((o) => o.id === openPostId)) return;
+
+    let cancelled = false;
+
+    (async () => {
+      if (__DEV__) {
+        console.log('🟣 [DeepLink] Fetching post by id:', openPostId);
+      }
+
+      let userCoords: { latitude: number; longitude: number } | undefined;
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch {
+        /* ignore */
+      }
+
+      const single = await feedService.getOpportunityById(
+        openPostId,
+        userCoords
+      );
+
+      if (cancelled) return;
+
+      if (!single) {
+        if (__DEV__) {
+          console.warn('🟣 [DeepLink] Post not found in DB:', openPostId);
+        }
+        pendingOpenPostIdRef.current = null;
+        lastHandledPostIdRef.current = openPostId;
+        return;
+      }
+
+      if (__DEV__) {
+        console.log('🟣 [DeepLink] Injected post into feed:', single.title);
+      }
+
+      setCurrentIndex(0);
+      setOpportunities([single, ...opportunities]);
+      setFeedVersion((v) => v + 1);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    uniqueOpportunities,
+    opportunities,
+    setCurrentIndex,
+    setOpportunities,
+  ]);
+
+  // ============================================================
+  // ✅ DEEP LINK — SCROLL TO POST
+  // ============================================================
   useEffect(() => {
     const openPostId = pendingOpenPostIdRef.current;
     if (!openPostId) return;
-    if (activeFeedItems.length === 0) return;
+    if (uniqueOpportunities.length === 0) return;
     if (lastHandledPostIdRef.current === openPostId) return;
 
-    const index = activeFeedItems.findIndex((o) => o.id === openPostId);
+    const index = uniqueOpportunities.findIndex((o) => o.id === openPostId);
     if (index === -1) {
-      pendingOpenPostIdRef.current = null;
-      lastHandledPostIdRef.current = openPostId;
+      if (__DEV__) {
+        console.log('⚠️ Deep-linked post not in feed yet:', openPostId);
+      }
       return;
+    }
+
+    if (__DEV__) {
+      console.log(
+        '✅ Scrolling to deep-linked post:',
+        openPostId,
+        'index:',
+        index
+      );
     }
 
     let cancelled = false;
@@ -570,9 +645,18 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         } catch {
           /* noop */
         }
+
+        if (__DEV__) console.log('🎯 Scrolled to post on attempt', attempts);
       } catch (err) {
         if (attempts < 20) {
           setTimeout(tryScroll, 150);
+        } else if (__DEV__) {
+          console.warn(
+            '❌ Gave up scrolling to post after',
+            attempts,
+            'attempts:',
+            err
+          );
         }
       }
     };
@@ -583,7 +667,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [activeFeedItems, navigation, setCurrentIndex]);
+  }, [uniqueOpportunities, navigation, setCurrentIndex]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: {
@@ -677,7 +761,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setRefreshing(true);
 
     try {
-      // If we're on Following, just refresh that list.
       if (activeFeed === 'following') {
         await loadFollowingFeed();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -697,7 +780,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       const freshRaw = await feedService.getOpportunities(userCoords);
 
       if (!freshRaw || freshRaw.length === 0) {
-        if (__DEV__) console.log('ℹ️ Refresh returned no data — keeping existing');
+        if (__DEV__)
+          console.log('ℹ️ Refresh returned no data — keeping existing');
         return;
       }
 
@@ -1364,6 +1448,60 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     goToNext,
   ]);
 
+  // ✅ Single rail for desktop — rendered inside DesktopLayout's
+  // right gutter so it can never be clipped by the feed rectangle.
+  const renderDesktopActionRail = useCallback(() => {
+    if (!isDesktop) return null;
+    const opp = activeFeedItems[currentIndex];
+    if (!opp) return null;
+
+    return (
+      <FloatingActionRail
+        key={`desktop-rail-${opp.id}`}
+        opportunity={opp}
+        bottomInset={0}
+        rightShift={0}
+        isLiked={likedItemsMap[opp.id] || false}
+        likeCount={likeCountMap[opp.id] ?? opp.likeCount ?? 0}
+        onLikePress={handleLikePress}
+        onUserPress={() => {
+          navigation.navigate('UserProfile' as any, {
+            userId: opp.userId,
+            userName: opp.userFullName || 'User',
+          });
+        }}
+        onReviewsPress={(productId) =>
+          handleReviewsPress(productId, opp.title)
+        }
+        onDirectionsPress={() => {
+          setShowDirectionsModal(true);
+        }}
+        onSharePress={handleSharePress}
+        onAIPress={handleAIPress}
+        onSavePress={handleSavePress}
+        isSaved={savedItemsMap[opp.id] || false}
+        savedCount={savedItemsMap[opp.id] ? 1 : opp.saveCount || 0}
+        shareCount={opp.shareCount || 0}
+        reviewCount={opp.commentCount || 0}
+        distance={opp.distance || 0}
+        userAvatar={opp.userAvatar || null}
+      />
+    );
+  }, [
+    isDesktop,
+    activeFeedItems,
+    currentIndex,
+    likedItemsMap,
+    likeCountMap,
+    savedItemsMap,
+    handleLikePress,
+    handleReviewsPress,
+    handleSharePress,
+    handleAIPress,
+    handleSavePress,
+    navigation,
+  ]);
+
   const renderItem = useCallback(
     ({ item, index }: { item: Opportunity; index: number }) => {
       const isSaved = savedItemsMap[item.id] || false;
@@ -1457,11 +1595,14 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         });
       }
 
+      const frameWidth = isDesktop ? itemWidth : width;
+      const frameHeight = isDesktop ? itemHeight : visibleHeight;
+
       return (
         <View
           style={{
-            height: isDesktop ? height : visibleHeight,
-            width: isDesktop ? '100%' : width,
+            height: frameHeight,
+            width: frameWidth,
             justifyContent: 'center',
             alignItems: 'center',
             position: 'relative',
@@ -1484,8 +1625,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             type={item.type || 'product'}
             createdAt={item.createdAt}
             isDesktop={isDesktop}
-            width={isDesktop ? 420 : width}
-            height={isDesktop ? height : visibleHeight}
+            width={frameWidth}
+            height={frameHeight}
             onShowMore={() => handleShowMorePress(item)}
             onShare={() => handleSharePress(item)}
             onSave={() => handleSavePress(item)}
@@ -1541,58 +1682,70 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             autoPlay={true}
             autoPlayInterval={5000}
             resetKey={item.id}
-            useExplicitBottomOffset={true}
-            bottomOffset={SCENE_INFO_GAP}
+            useExplicitBottomOffset={isDesktop ? false : true}
+            bottomOffset={isDesktop ? 0 : SCENE_INFO_GAP}
             isVisible={isVisible}
           />
 
           {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
 
-          <View style={styles.actionRailWrapper}>
-            <FloatingActionRail
-              key={`rail-${item.id}`}
-              opportunity={item}
-              bottomInset={80}
-              rightShift={-6}
-              isLiked={isLiked}
-              likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
-              onLikePress={handleLikePress}
-              onUserPress={() => {
-                navigation.navigate('UserProfile' as any, {
-                  userId: item.userId,
-                  userName: item.userFullName || 'User',
-                });
-              }}
-              onReviewsPress={(productId) =>
-                handleReviewsPress(productId, item.title)
-              }
-              onDirectionsPress={(userName, area) => {
-                setShowDirectionsModal(true);
-              }}
-              onSharePress={handleSharePress}
-              onAIPress={handleAIPress}
-              onSavePress={handleSavePress}
-              isSaved={isSaved}
-              savedCount={savedItemsMap[item.id] ? 1 : item.saveCount || 0}
-              shareCount={item.shareCount || 0}
-              reviewCount={item.commentCount || 0}
-              distance={item.distance || 0}
-              userAvatar={item.userAvatar || null}
-            />
-          </View>
+          {/* ✅ Mobile only: per-item rail. Desktop uses the
+              layout-level rail rendered in the right gutter. */}
+          {!isDesktop && (
+            <View
+              style={[
+                styles.actionRailWrapper,
+                styles.actionRailWrapperMobile,
+              ]}
+              pointerEvents="box-none"
+            >
+              <FloatingActionRail
+                key={`rail-${item.id}`}
+                opportunity={item}
+                bottomInset={0}
+                rightShift={0}
+                isLiked={isLiked}
+                likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
+                onLikePress={handleLikePress}
+                onUserPress={() => {
+                  navigation.navigate('UserProfile' as any, {
+                    userId: item.userId,
+                    userName: item.userFullName || 'User',
+                  });
+                }}
+                onReviewsPress={(productId) =>
+                  handleReviewsPress(productId, item.title)
+                }
+                onDirectionsPress={(userName, area) => {
+                  setShowDirectionsModal(true);
+                }}
+                onSharePress={handleSharePress}
+                onAIPress={handleAIPress}
+                onSavePress={handleSavePress}
+                isSaved={isSaved}
+                savedCount={
+                  savedItemsMap[item.id] ? 1 : item.saveCount || 0
+                }
+                shareCount={item.shareCount || 0}
+                reviewCount={item.commentCount || 0}
+                distance={item.distance || 0}
+                userAvatar={item.userAvatar || null}
+              />
+            </View>
+          )}
         </View>
       );
     },
     [
       isDesktop,
-      height,
       width,
       visibleHeight,
+      itemWidth,
+      itemHeight,
       currentIndex,
       isFocused,
       isAuthenticated,
       navigation,
-      tabBarHeight,
       savedItemsMap,
       likedItemsMap,
       likeCountMap,
@@ -1619,7 +1772,12 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     (isInitialLoading || (isLoading && uniqueOpportunities.length === 0))
   ) {
     return (
-      <View style={[styles.container, { height: visibleHeight }]}>
+      <View
+        style={[
+          styles.container,
+          { height: isDesktop ? itemHeight : visibleHeight },
+        ]}
+      >
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
         <TikTokLoadingSkeleton />
       </View>
@@ -1629,14 +1787,22 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   if (error && activeFeed === 'forYou') {
     return (
       <SafeAreaView
-        style={[styles.centered, { height: visibleHeight }]}
+        style={[
+          styles.centered,
+          { height: isDesktop ? itemHeight : visibleHeight },
+        ]}
         edges={['top']}
       >
-        <Text style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}>
+        <Text
+          style={[styles.errorText, { fontSize: width < 380 ? 16 : 18 }]}
+        >
           Error loading feed
         </Text>
         <Text
-          style={[styles.errorSubtext, { fontSize: width < 380 ? 12 : 14 }]}
+          style={[
+            styles.errorSubtext,
+            { fontSize: width < 380 ? 12 : 14 },
+          ]}
         >
           {error}
         </Text>
@@ -1651,6 +1817,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
         (navigation as any).navigate(route);
       }}
       desktopNavArrows={renderDesktopNavArrows()}
+      desktopActionRail={renderDesktopActionRail()}
       selectedOpportunity={activeFeedItems[currentIndex] || null}
       onReviewsPress={handleReviewsPress}
       onShowMorePress={handleShowMorePress}
@@ -1684,6 +1851,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             ]}
             edges={['top']}
             onLayout={(e) => {
+              if (isDesktop) return; // desktop uses its own measurement
               const h = e.nativeEvent.layout.height;
               if (h && Math.abs(h - (measuredVisibleHeight ?? 0)) > 1) {
                 setMeasuredVisibleHeight(h);
@@ -1692,10 +1860,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           >
             <StatusBar barStyle="light-content" />
 
-            {/* ============================================================
-                TOP BAR — logo / Open in App / search PLUS the TikTok-style
-                Following | For You tabs.
-                ============================================================ */}
             {!isDesktop && (
               <LinearGradient
                 colors={[
@@ -1733,7 +1897,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                         try {
                           Linking.openURL(APP_DEEP_LINK);
                         } catch (err) {
-                          if (__DEV__) console.log('Open in App failed:', err);
+                          if (__DEV__)
+                            console.log('Open in App failed:', err);
                         }
                       }}
                       activeOpacity={0.7}
@@ -1763,7 +1928,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   </TouchableOpacity>
                 </View>
 
-                {/* ✅ TikTok-style Following | For You tabs */}
                 <View style={styles.feedTabsRow}>
                   <TouchableOpacity
                     style={styles.feedTab}
@@ -1792,7 +1956,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                     <Text
                       style={[
                         styles.feedTabLabel,
-                        activeFeed === 'forYou' && styles.feedTabLabelActive,
+                        activeFeed === 'forYou' &&
+                          styles.feedTabLabelActive,
                       ]}
                     >
                       For You
@@ -1805,11 +1970,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
               </LinearGradient>
             )}
 
-            {/* ============================================================
-                CONTENT
-                ============================================================ */}
-            {activeFeed === 'following' && followingOpportunities.length === 0 ? (
-              // ✅ Empty state for Following
+            {activeFeed === 'following' &&
+            followingOpportunities.length === 0 ? (
               <View style={styles.followingEmptyContainer}>
                 {isLoadingFollowing ? (
                   <>
@@ -1825,7 +1987,9 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                       size={56}
                       color="#8A8AAE"
                     />
-                    <Text style={styles.followingEmptyTitle}>No posts yet</Text>
+                    <Text style={styles.followingEmptyTitle}>
+                      No posts yet
+                    </Text>
                     <Text style={styles.followingEmptySubtext}>
                       Follow people to see their posts here
                     </Text>
@@ -1842,66 +2006,86 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 )}
               </View>
             ) : (
-              <FlatList
-                key={`feed-${activeFeed}-${feedVersion}`}
-                ref={flatListRef}
-                data={activeFeedItems}
-                renderItem={renderItem}
-                keyExtractor={(item, index) => `item-${item.id}-${index}`}
-                pagingEnabled={!isDesktop}
-                showsVerticalScrollIndicator={false}
-                snapToInterval={isDesktop ? undefined : visibleHeight}
-                snapToAlignment="start"
-                decelerationRate="fast"
-                viewabilityConfig={VIEWABILITY_CONFIG}
-                onViewableItemsChanged={handleViewableItemsChanged}
-                getItemLayout={(data, index) => {
-                  const itemHeight = isDesktop ? height : visibleHeight;
-                  return {
-                    length: itemHeight,
-                    offset: itemHeight * index,
-                    index,
-                  };
+              <View
+                style={{ flex: 1, width: '100%' }}
+                onLayout={(e) => {
+                  if (!isDesktop) return;
+                  const { width: w, height: h } = e.nativeEvent.layout;
+                  if (
+                    h > 0 &&
+                    (Math.abs(h - (desktopItemHeight ?? 0)) > 1 ||
+                      Math.abs(w - (desktopItemWidth ?? 0)) > 1)
+                  ) {
+                    setDesktopItemHeight(h);
+                    setDesktopItemWidth(w);
+                  }
                 }}
-                initialScrollIndex={currentIndex}
-                removeClippedSubviews={false}
-                maxToRenderPerBatch={isDesktop ? 3 : 2}
-                windowSize={isDesktop ? 5 : 3}
-                onScrollToIndexFailed={handleScrollToIndexFailed}
-                scrollEventThrottle={32}
-                {...(Platform.OS !== 'web' ? { overScrollMode: 'always' } : {})}
-                refreshControl={
-                  <RefreshControl
-                    refreshing={refreshing}
-                    onRefresh={handleRefresh}
-                    tintColor="#4A7DFF"
-                    colors={['#4A7DFF']}
-                    progressBackgroundColor="#1A2A4F"
-                    progressViewOffset={
-                      Platform.OS === 'web' ? 0 : insets.top + 100
-                    }
-                  />
-                }
-                contentContainerStyle={{ paddingBottom: 0 }}
-                style={styles.flatList}
-              />
+              >
+                <FlatList
+                  key={`feed-${activeFeed}-${feedVersion}`}
+                  ref={flatListRef}
+                  data={activeFeedItems}
+                  renderItem={renderItem}
+                  keyExtractor={(item, index) => `item-${item.id}-${index}`}
+                  pagingEnabled={!isDesktop}
+                  showsVerticalScrollIndicator={false}
+                  snapToInterval={isDesktop ? undefined : visibleHeight}
+                  snapToAlignment="start"
+                  decelerationRate="fast"
+                  viewabilityConfig={VIEWABILITY_CONFIG}
+                  onViewableItemsChanged={handleViewableItemsChanged}
+                  getItemLayout={(data, index) => {
+                    const h = isDesktop ? itemHeight : visibleHeight;
+                    return {
+                      length: h,
+                      offset: h * index,
+                      index,
+                    };
+                  }}
+                  initialScrollIndex={currentIndex}
+                  removeClippedSubviews={false}
+                  maxToRenderPerBatch={isDesktop ? 3 : 2}
+                  windowSize={isDesktop ? 5 : 3}
+                  onScrollToIndexFailed={handleScrollToIndexFailed}
+                  scrollEventThrottle={32}
+                  {...(Platform.OS !== 'web'
+                    ? { overScrollMode: 'always' }
+                    : {})}
+                  refreshControl={
+                    <RefreshControl
+                      refreshing={refreshing}
+                      onRefresh={handleRefresh}
+                      tintColor="#4A7DFF"
+                      colors={['#4A7DFF']}
+                      progressBackgroundColor="#1A2A4F"
+                      progressViewOffset={
+                        Platform.OS === 'web' ? 0 : insets.top + 100
+                      }
+                    />
+                  }
+                  contentContainerStyle={{ paddingBottom: 0 }}
+                  style={styles.flatList}
+                />
+              </View>
             )}
 
-            {Platform.OS === 'web' && currentIndex === 0 && !isDesktop && (
-              <TouchableOpacity
-                style={styles.webRefreshButton}
-                onPress={handleRefresh}
-                disabled={refreshing}
-                activeOpacity={0.7}
-                accessibilityLabel="Refresh feed"
-              >
-                {refreshing ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Ionicons name="refresh" size={22} color="#FFFFFF" />
-                )}
-              </TouchableOpacity>
-            )}
+            {Platform.OS === 'web' &&
+              currentIndex === 0 &&
+              !isDesktop && (
+                <TouchableOpacity
+                  style={styles.webRefreshButton}
+                  onPress={handleRefresh}
+                  disabled={refreshing}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Refresh feed"
+                >
+                  {refreshing ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="refresh" size={22} color="#FFFFFF" />
+                  )}
+                </TouchableOpacity>
+              )}
 
             <ReviewsBottomSheet
               visible={showReviewsModal}
@@ -2080,7 +2264,6 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
 
-  // ✅ TikTok-style Following | For You tabs
   feedTabsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -2194,10 +2377,14 @@ const styles = StyleSheet.create({
   },
   actionRailWrapper: {
     position: 'absolute',
+    zIndex: 50,
+  },
+  // ✅ Native only — the desktop path renders the rail in
+  // DesktopLayout's right gutter instead.
+  actionRailWrapperMobile: {
     right: 16,
     top: '50%',
     transform: [{ translateY: -150 }],
-    zIndex: 50,
   },
   webRefreshButton: {
     position: 'absolute',

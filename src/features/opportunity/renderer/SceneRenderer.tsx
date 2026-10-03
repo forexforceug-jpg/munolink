@@ -104,6 +104,20 @@ interface Props {
   onInboxPress?: () => void;
   showInboxButton?: boolean;
   onMediaLoadStateChange?: (isLoading: boolean) => void;
+  /**
+   * ✅ NEW: reports the natural (intrinsic) pixel size of the
+   * currently visible media, so a parent (e.g. FeedScreen on
+   * desktop) can size its container to the media's aspect ratio
+   * and render the media contain-to-fill with no cropping.
+   *
+   *   • Image → fires with the decoded image's { width, height }.
+   *   • Video → fires with `null` for now (VideoItem handles its
+   *             own contain-to-fill internally).
+   *   • Unknown / loading → fires with `null`.
+   */
+  onNaturalSize?: (
+    size: { width: number; height: number } | null
+  ) => void;
   width?: number;
   height?: number;
   autoPlay?: boolean;
@@ -114,9 +128,7 @@ interface Props {
   /**
    * When true, `bottomOffset` is used verbatim for the info panel's
    * bottom offset, and SceneRenderer skips its internal tab-bar
-   * computation. Use this from screens that already know the exact
-   * tab-bar height (e.g. FeedScreen, which sits inside the tab
-   * navigator and reads `useBottomTabBarHeight()` itself).
+   * computation.
    */
   useExplicitBottomOffset?: boolean;
   title?: string;
@@ -849,6 +861,7 @@ export function SceneRenderer({
   onInboxPress,
   showInboxButton = true,
   onMediaLoadStateChange,
+  onNaturalSize, // ✅ NEW
   width = screenWidth,
   height = 600,
   autoPlay: _autoPlay,
@@ -1008,6 +1021,51 @@ export function SceneRenderer({
     onMediaLoadStateChange(isLoading);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIndex, mediaLoadingMap, onMediaLoadStateChange]);
+
+  // ============================================================
+  // ✅ REPORT NATURAL SIZE UPWARD
+  //
+  // Fires whenever the current media changes, or when the decoded
+  // image's intrinsic dimensions become known. Parent (FeedScreen)
+  // uses this to size its desktop rectangle to the media's aspect
+  // ratio, so `resizeMode="contain"` fills the box edge-to-edge.
+  // ============================================================
+  useEffect(() => {
+    if (!onNaturalSize) return;
+
+    const current = safeMedia[currentIndex];
+    if (!current) {
+      onNaturalSize(null);
+      return;
+    }
+
+    if (current.type === 'image') {
+      if (
+        activeImageNaturalSize?.width &&
+        activeImageNaturalSize?.height
+      ) {
+        onNaturalSize({
+          width: activeImageNaturalSize.width,
+          height: activeImageNaturalSize.height,
+        });
+      } else {
+        // Not decoded yet — tell the parent to keep its previous
+        // aspect ratio rather than flashing the default.
+        onNaturalSize(null);
+      }
+    } else if (current.type === 'video') {
+      // VideoItem handles contain-to-fill internally. Leave the
+      // parent's ratio alone (fire null) until a future refactor
+      // lifts the video's natural size up.
+      onNaturalSize(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    currentIndex,
+    activeImageNaturalSize?.width,
+    activeImageNaturalSize?.height,
+    onNaturalSize,
+  ]);
 
   const handleVideoReady = useCallback(
     (index: number, isLoading: boolean) => {
