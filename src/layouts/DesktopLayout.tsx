@@ -35,6 +35,8 @@ interface Props {
   selectedOpportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
+  // ✅ NEW: featured-card tap → handled by the parent screen.
+  onFeaturedItemPress?: (opportunity: Opportunity) => void;
   onSharePress?: (opportunity: Opportunity) => void;
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
@@ -67,6 +69,7 @@ export function DesktopLayout({
   selectedOpportunity,
   onReviewsPress,
   onShowMorePress,
+  onFeaturedItemPress,
   onSharePress,
   onAIPress,
   featuredOpportunities = [],
@@ -181,9 +184,6 @@ export function DesktopLayout({
 
   const showContextPanel = !hideContextPanel && !fullWidth;
 
-  // ✅ When we're in a "fill the remaining area" mode (fullWidth),
-  // the feedContainer must stop shrink-to-fit centering and instead
-  // stretch to fill everything to the right of the sidebar.
   const feedContainerFills =
     fullWidth || hideContextPanel || !showContextPanel;
 
@@ -251,6 +251,7 @@ export function DesktopLayout({
               opportunity={selectedOpportunity || undefined}
               onReviewsPress={onReviewsPress}
               onShowMorePress={onShowMorePress}
+              onFeaturedItemPress={onFeaturedItemPress}
               onSharePress={onSharePress}
               onAIPress={onAIPress}
               featuredOpportunities={featuredOpportunities}
@@ -284,9 +285,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
-  // ✅ Used when there's no context panel (or we're in `fullWidth`
-  // mode): stretch the content to fill the whole area to the right
-  // of the sidebar instead of shrink-wrapping and centering.
   feedContainerFill: {
     alignItems: 'stretch',
     justifyContent: 'flex-start',

@@ -20,6 +20,8 @@ interface Props {
   selectedOpportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
+  // ✅ NEW: featured-card tap on the ContextPanel.
+  onFeaturedItemPress?: (opportunity: Opportunity) => void;
   onSharePress?: (opportunity: Opportunity) => void;
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
@@ -52,6 +54,7 @@ export function ResponsiveLayout({
   selectedOpportunity,
   onReviewsPress,
   onShowMorePress,
+  onFeaturedItemPress,
   onSharePress,
   onAIPress,
   featuredOpportunities = [],
@@ -84,6 +87,7 @@ export function ResponsiveLayout({
         selectedOpportunity={selectedOpportunity}
         onReviewsPress={onReviewsPress}
         onShowMorePress={onShowMorePress}
+        onFeaturedItemPress={onFeaturedItemPress}
         onSharePress={onSharePress}
         onAIPress={onAIPress}
         featuredOpportunities={featuredOpportunities}

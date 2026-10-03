@@ -1,6 +1,6 @@
 // src/components/StyledAlert.tsx
 
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -13,17 +13,33 @@ import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
 
+export type StyledAlertButtonStyle =
+  | 'default'
+  | 'cancel'
+  | 'destructive'
+  | 'primary';
+
+export interface StyledAlertButton {
+  text: string;
+  onPress: () => void;
+  style?: StyledAlertButtonStyle;
+}
+
+export interface StyledAlertConfig {
+  title: string;
+  message: string;
+  icon?: string;
+  iconColor?: string;
+  buttons: StyledAlertButton[];
+}
+
 interface StyledAlertProps {
   visible: boolean;
   title: string;
   message: string;
   icon?: string;
   iconColor?: string;
-  buttons: {
-    text: string;
-    onPress: () => void;
-    style?: 'default' | 'cancel' | 'destructive' | 'primary';
-  }[];
+  buttons: StyledAlertButton[];
   onClose?: () => void;
 }
 
@@ -71,21 +87,15 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
     >
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Icon — subtle, minimal */}
           <View style={styles.iconWrapper}>
             <Ionicons name={icon as any} size={22} color={iconColor} />
           </View>
 
-          {/* Title */}
           <Text style={styles.title}>{title}</Text>
-
-          {/* Message */}
           <Text style={styles.message}>{message}</Text>
 
-          {/* Divider */}
           <View style={styles.divider} />
 
-          {/* Buttons — thin, side-by-side */}
           <View style={styles.buttonContainer}>
             {buttons.map((button, index) => (
               <TouchableOpacity
@@ -112,6 +122,95 @@ export const StyledAlert: React.FC<StyledAlertProps> = ({
   );
 };
 
+/**
+ * ✅ Imperative-friendly hook so screens can keep using an
+ * `Alert.alert(title, message, buttons)`-style API while still
+ * rendering the app-styled `StyledAlert` modal.
+ *
+ * Usage:
+ *
+ *   const { show, element } = useStyledAlert();
+ *   ...
+ *   show({ title, message, buttons, icon, iconColor });
+ *   ...
+ *   return (<View>{element}{ ...screen }</View>);
+ */
+export function useStyledAlert() {
+  const [config, setConfig] = useState<StyledAlertConfig & { visible: boolean }>(
+    {
+      visible: false,
+      title: '',
+      message: '',
+      buttons: [],
+    }
+  );
+
+  const show = useCallback(
+    (
+      cfg:
+        | StyledAlertConfig
+        | string,
+      message?: string,
+      buttons?: StyledAlertButton[]
+    ) => {
+      if (typeof cfg === 'string') {
+        setConfig({
+          visible: true,
+          title: cfg,
+          message: message || '',
+          buttons:
+            buttons && buttons.length > 0
+              ? buttons
+              : [
+                  {
+                    text: 'OK',
+                    style: 'primary',
+                    onPress: () => setConfig((c) => ({ ...c, visible: false })),
+                  },
+                ],
+        });
+      } else {
+        setConfig({
+          visible: true,
+          title: cfg.title,
+          message: cfg.message,
+          icon: cfg.icon,
+          iconColor: cfg.iconColor,
+          buttons:
+            cfg.buttons && cfg.buttons.length > 0
+              ? cfg.buttons
+              : [
+                  {
+                    text: 'OK',
+                    style: 'primary',
+                    onPress: () => setConfig((c) => ({ ...c, visible: false })),
+                  },
+                ],
+        });
+      }
+    },
+    []
+  );
+
+  const hide = useCallback(() => {
+    setConfig((c) => ({ ...c, visible: false }));
+  }, []);
+
+  const element = (
+    <StyledAlert
+      visible={config.visible}
+      title={config.title}
+      message={config.message}
+      icon={config.icon}
+      iconColor={config.iconColor}
+      buttons={config.buttons}
+      onClose={hide}
+    />
+  );
+
+  return { show, hide, element };
+}
+
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -131,7 +230,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    // subtle shadow for depth
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.35,

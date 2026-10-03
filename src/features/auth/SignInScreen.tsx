@@ -9,7 +9,6 @@ import {
   TextInput,
   StatusBar,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -20,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { useStyledAlert } from '../feed/components/StyledAlert';
 
 const COLORS = {
   bg: '#0D0D1A',
@@ -40,6 +40,7 @@ const SignInContent = ({ navigation }: any) => {
   const { signInWithEmail, signInWithPhonePassword, signInWithGoogle } =
     useAuth();
   const { isDesktop } = useBreakpoint();
+  const { show: showAlert, element: alertElement } = useStyledAlert();
 
   const [method, setMethod] = useState<SignInMethod>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -52,11 +53,11 @@ const SignInContent = ({ navigation }: any) => {
   const handleSignIn = async () => {
     if (method === 'phone') {
       if (phoneNumber.length < 7) {
-        Alert.alert('Invalid Phone', 'Please enter a valid phone number.');
+        showAlert('Invalid Phone', 'Please enter a valid phone number.');
         return;
       }
       if (!password) {
-        Alert.alert('Password required', 'Please enter your password.');
+        showAlert('Password required', 'Please enter your password.');
         return;
       }
 
@@ -66,7 +67,10 @@ const SignInContent = ({ navigation }: any) => {
         await signInWithPhonePassword(fullPhone, password);
         navigation.replace('MainTabs');
       } catch (e: any) {
-        Alert.alert('Sign in failed', e?.message || 'Please check your details.');
+        showAlert(
+          'Sign in failed',
+          e?.message || 'Please check your details.'
+        );
       } finally {
         setIsLoading(false);
       }
@@ -74,7 +78,7 @@ const SignInContent = ({ navigation }: any) => {
     }
 
     if (!email.trim() || !password) {
-      Alert.alert('Error', 'Please enter your email and password.');
+      showAlert('Error', 'Please enter your email and password.');
       return;
     }
     setIsLoading(true);
@@ -82,7 +86,10 @@ const SignInContent = ({ navigation }: any) => {
       await signInWithEmail(email.trim().toLowerCase(), password);
       navigation.replace('MainTabs');
     } catch (e: any) {
-      Alert.alert('Sign in failed', e?.message || 'Please check your details.');
+      showAlert(
+        'Sign in failed',
+        e?.message || 'Please check your details.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -93,7 +100,7 @@ const SignInContent = ({ navigation }: any) => {
     try {
       await signInWithGoogle();
     } catch (e: any) {
-      Alert.alert(
+      showAlert(
         'Google Sign-In failed',
         e?.message || 'Please try again.'
       );
@@ -103,8 +110,6 @@ const SignInContent = ({ navigation }: any) => {
   };
 
   const handleForgotPassword = () => {
-    // Works from both tabs. Pass the current method + any input so the
-    // reset screen can pre-fill it.
     navigation.navigate('ForgotPassword', {
       email: method === 'email' ? email.trim().toLowerCase() : '',
       phone: method === 'phone' ? phoneNumber.trim() : '',
@@ -335,6 +340,8 @@ const SignInContent = ({ navigation }: any) => {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {alertElement}
     </SafeAreaView>
   );
 };
@@ -484,7 +491,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   eyeButton: { paddingHorizontal: 14 },
-
   forgotPasswordButton: {
     alignSelf: 'flex-end',
     marginTop: -4,
@@ -495,7 +501,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-
   signInButton: {
     borderRadius: 12,
     overflow: 'hidden',
@@ -514,7 +519,6 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   signInButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
-
   dividerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -544,7 +548,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
-
   joinButton: { alignItems: 'center', paddingVertical: 4 },
   joinText: { color: COLORS.textSecondary, fontSize: 14, textAlign: 'center' },
   joinLink: { color: COLORS.accent, fontWeight: '500' },

@@ -12,7 +12,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { useStyledAlert } from '../feed/components/StyledAlert';
 
 const { width } = Dimensions.get('window');
 
@@ -55,11 +55,6 @@ const StepIndicator = ({ currentStep, totalSteps }: any) => (
   </View>
 );
 
-// ============================================================
-// "Already registered" detection
-// Supabase returns different messages across versions, so we
-// pattern-match on a few known phrases.
-// ============================================================
 function isAlreadyRegisteredError(message: string | undefined): boolean {
   if (!message) return false;
   const m = message.toLowerCase();
@@ -83,6 +78,7 @@ const JoinContent = ({ navigation }: any) => {
     verifyPhoneOtp,
   } = useAuth();
   const { isDesktop } = useBreakpoint();
+  const { show: showAlert, element: alertElement } = useStyledAlert();
 
   const [step, setStep] = useState(1);
   const [method, setMethod] = useState<SignupMethod>('phone');
@@ -118,51 +114,56 @@ const JoinContent = ({ navigation }: any) => {
   const isEmailValid = /\S+@\S+\.\S+/.test(email.trim());
   const isPasswordValid = password.length >= 6;
   const passwordsMatch =
-    password.length > 0 && confirmPassword.length > 0 && password === confirmPassword;
+    password.length > 0 &&
+    confirmPassword.length > 0 &&
+    password === confirmPassword;
 
-  // ✅ confirm-password is required for BOTH phone and email now
   const canSubmit =
     isNameValid &&
     isPasswordValid &&
     passwordsMatch &&
-    (method === 'phone'
-      ? phoneNumber.length >= 7
-      : isEmailValid);
+    (method === 'phone' ? phoneNumber.length >= 7 : isEmailValid);
 
   // ============================================================
-  // "ALREADY REGISTERED" ALERT — offers to jump to Sign In
+  // "ALREADY REGISTERED" — styled
   // ============================================================
   const showAlreadyRegisteredAlert = () => {
-    Alert.alert(
-      'Account already exists',
-      `It looks like this ${method === 'phone' ? 'phone number' : 'email'} is already registered. Would you like to sign in instead?`,
-      [
-        { text: 'Try again', style: 'cancel' },
+    showAlert({
+      title: 'Account already exists',
+      message: `It looks like this ${
+        method === 'phone' ? 'phone number' : 'email'
+      } is already registered. Would you like to sign in instead?`,
+      icon: 'person-circle-outline',
+      iconColor: '#4A7DFF',
+      buttons: [
+        {
+          text: 'Try again',
+          style: 'cancel',
+          onPress: () => {},
+        },
         {
           text: 'Sign In',
+          style: 'primary',
           onPress: () => navigation.navigate('SignIn'),
         },
-      ]
-    );
+      ],
+    });
   };
 
   // ============================================================
-  // STEP 1: CREATE ACCOUNT
+  // STEP 1 — CREATE
   // ============================================================
   const handleContinue = async () => {
     if (!isNameValid) {
-      Alert.alert('Error', 'Please enter your full name');
+      showAlert('Error', 'Please enter your full name');
       return;
     }
-
     if (!isPasswordValid) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+      showAlert('Error', 'Password must be at least 6 characters');
       return;
     }
-
-    // ✅ Confirm password required for both methods
     if (!passwordsMatch) {
-      Alert.alert('Error', 'Passwords do not match');
+      showAlert('Error', 'Passwords do not match');
       return;
     }
 
@@ -170,14 +171,13 @@ const JoinContent = ({ navigation }: any) => {
 
     if (method === 'phone') {
       if (phoneNumber.length < 7) {
-        Alert.alert('Error', 'Please enter a valid phone number');
+        showAlert('Error', 'Please enter a valid phone number');
         return;
       }
 
       setIsLoading(true);
       try {
         const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
-        // ✅ Pass fullName through so AuthContext can persist it
         await signUpWithPhone(fullPhone, password, name);
         setStep(2);
         setResendTimer(60);
@@ -187,7 +187,7 @@ const JoinContent = ({ navigation }: any) => {
         if (isAlreadyRegisteredError(msg)) {
           showAlreadyRegisteredAlert();
         } else {
-          Alert.alert(
+          showAlert(
             'Error',
             msg || 'Failed to create account. Please try again.'
           );
@@ -198,15 +198,13 @@ const JoinContent = ({ navigation }: any) => {
       return;
     }
 
-    // Email path
     if (!isEmailValid) {
-      Alert.alert('Error', 'Please enter a valid email');
+      showAlert('Error', 'Please enter a valid email');
       return;
     }
 
     setIsLoading(true);
     try {
-      // ✅ Pass fullName through
       await signUpWithEmail(email.trim().toLowerCase(), password, name);
       setStep(2);
       setResendTimer(60);
@@ -216,7 +214,7 @@ const JoinContent = ({ navigation }: any) => {
       if (isAlreadyRegisteredError(msg)) {
         showAlreadyRegisteredAlert();
       } else {
-        Alert.alert(
+        showAlert(
           'Error',
           msg || 'Failed to create account. Please try again.'
         );
@@ -227,12 +225,12 @@ const JoinContent = ({ navigation }: any) => {
   };
 
   // ============================================================
-  // STEP 2: VERIFY OTP
+  // STEP 2 — VERIFY
   // ============================================================
   const handleVerifyOTP = async () => {
     const code = otp.join('');
     if (code.length < 6) {
-      Alert.alert('Invalid OTP', 'Please enter the 6-digit code.');
+      showAlert('Invalid OTP', 'Please enter the 6-digit code.');
       return;
     }
 
@@ -241,7 +239,6 @@ const JoinContent = ({ navigation }: any) => {
       const name = fullName.trim();
       if (method === 'phone') {
         const fullPhone = `+256${phoneNumber.replace(/\s/g, '')}`;
-        // ✅ Also pass fullName during verification as a safety net
         await verifyPhoneOtp(fullPhone, code, name);
       } else {
         await verifyEmailOtp(email.trim().toLowerCase(), code, name);
@@ -250,7 +247,7 @@ const JoinContent = ({ navigation }: any) => {
       navigation.replace('MainTabs');
     } catch (error: any) {
       console.error('OTP verification error:', error);
-      Alert.alert(
+      showAlert(
         'Error',
         error.message || 'Invalid or expired code. Please try again.'
       );
@@ -271,9 +268,9 @@ const JoinContent = ({ navigation }: any) => {
       } else {
         await signUpWithEmail(email.trim().toLowerCase(), password, name);
       }
-      Alert.alert('Code Sent', 'A new verification code has been sent.');
+      showAlert('Code Sent', 'A new verification code has been sent.');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to resend code.');
+      showAlert('Error', error.message || 'Failed to resend code.');
     }
   };
 
@@ -302,15 +299,15 @@ const JoinContent = ({ navigation }: any) => {
     try {
       await signInWithGoogle();
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to sign in with Google.');
+      showAlert(
+        'Error',
+        error.message || 'Failed to sign in with Google.'
+      );
     } finally {
       setIsGoogleLoading(false);
     }
   };
 
-  // ============================================================
-  // RENDER STEP 1
-  // ============================================================
   const renderStep1 = () => (
     <ScrollView
       showsVerticalScrollIndicator={false}
@@ -331,7 +328,6 @@ const JoinContent = ({ navigation }: any) => {
         Join thousands of people discovering opportunities nearby.
       </Text>
 
-      {/* Full Name */}
       <View style={styles.inputContainer}>
         <Text style={styles.inputLabel}>Full Name</Text>
         <TextInput
@@ -345,7 +341,6 @@ const JoinContent = ({ navigation }: any) => {
         />
       </View>
 
-      {/* Method toggle */}
       <View style={styles.methodToggle}>
         <TouchableOpacity
           style={[
@@ -395,7 +390,6 @@ const JoinContent = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
 
-      {/* PHONE */}
       {method === 'phone' && (
         <View style={styles.inputContainer}>
           <Text style={styles.inputLabel}>Phone Number</Text>
@@ -416,15 +410,11 @@ const JoinContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* EMAIL */}
       {method === 'email' && (
         <View style={styles.inputContainer}>
           <Text style={styles.inputLabel}>Email</Text>
           <TextInput
-            style={[
-              styles.input,
-              isEmailValid && email && styles.inputFilled,
-            ]}
+            style={[styles.input, isEmailValid && email && styles.inputFilled]}
             placeholder="your@email.com"
             placeholderTextColor={COLORS.textMuted}
             keyboardType="email-address"
@@ -435,7 +425,6 @@ const JoinContent = ({ navigation }: any) => {
         </View>
       )}
 
-      {/* PASSWORD */}
       <View style={styles.inputContainer}>
         <Text style={styles.inputLabel}>Password</Text>
         <View style={styles.passwordInput}>
@@ -462,7 +451,6 @@ const JoinContent = ({ navigation }: any) => {
         </View>
       </View>
 
-      {/* CONFIRM PASSWORD — now shown for BOTH methods */}
       <View style={styles.inputContainer}>
         <Text style={styles.inputLabel}>Confirm Password</Text>
         <View style={styles.passwordInput}>
@@ -561,9 +549,6 @@ const JoinContent = ({ navigation }: any) => {
     </ScrollView>
   );
 
-  // ============================================================
-  // RENDER STEP 2 (OTP)
-  // ============================================================
   const renderStep2 = () => (
     <View style={styles.stepContainer}>
       <View style={styles.stepIconContainer}>
@@ -673,6 +658,8 @@ const JoinContent = ({ navigation }: any) => {
           {step === 2 && renderStep2()}
         </View>
       </KeyboardAvoidingView>
+
+      {alertElement}
     </SafeAreaView>
   );
 };

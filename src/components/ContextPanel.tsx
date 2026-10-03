@@ -1,7 +1,7 @@
 // src/components/ContextPanel.tsx
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Opportunity } from '../services/feed.service';
 import { ReviewsBottomSheet } from '../features/feed/components/ReviewsBottomSheet';
@@ -12,6 +12,12 @@ interface Props {
   opportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
+  /**
+   * ✅ Fired when the user taps a card in the Featured grid.
+   * On desktop this should scroll the center feed to that post
+   * (not open the details view in this panel).
+   */
+  onFeaturedItemPress?: (opportunity: Opportunity) => void;
   onSharePress?: (opportunity: Opportunity) => void;
   onAIPress?: (opportunity: Opportunity) => void;
   featuredOpportunities?: Opportunity[];
@@ -42,10 +48,11 @@ const FeaturedItem = ({ item, onPress }: any) => (
   </TouchableOpacity>
 );
 
-export function ContextPanel({ 
-  opportunity, 
+export function ContextPanel({
+  opportunity,
   onReviewsPress,
   onShowMorePress,
+  onFeaturedItemPress,
   onSharePress,
   onAIPress,
   featuredOpportunities = [],
@@ -62,15 +69,18 @@ export function ContextPanel({
   directionsViewActive = false,
   onDirectionsClose,
 }: Props) {
-  const [internalActiveView, setInternalActiveView] = useState<'details' | 'reviews' | 'directions' | null>(null);
-  
-  const activeView = externalActiveView !== undefined ? externalActiveView : internalActiveView;
+  const [internalActiveView, setInternalActiveView] = useState<
+    'details' | 'reviews' | 'directions' | null
+  >(null);
 
-  const setView = (view: 'details' | 'reviews' | 'directions' | null) => {
+  const activeView =
+    externalActiveView !== undefined ? externalActiveView : internalActiveView;
+
+  const setView = (
+    view: 'details' | 'reviews' | 'directions' | null
+  ) => {
     setInternalActiveView(view);
-    if (onViewChange) {
-      onViewChange(view);
-    }
+    if (onViewChange) onViewChange(view);
   };
 
   const PANEL_WIDTH = 340;
@@ -97,7 +107,7 @@ export function ContextPanel({
   }
 
   // ============================================================
-  // AI VIEW - Show AI Assistant
+  // AI VIEW
   // ============================================================
   if (aiViewActive && opportunity) {
     console.log('🎯 Rendering AI view in ContextPanel');
@@ -117,7 +127,7 @@ export function ContextPanel({
   }
 
   // ============================================================
-  // DEFAULT: Show Featured Grid (3 columns)
+  // DEFAULT: Featured grid
   // ============================================================
   if (!opportunity || !activeView) {
     return (
@@ -132,11 +142,19 @@ export function ContextPanel({
         <FlatList
           data={featuredOpportunities}
           renderItem={({ item }) => (
-            <FeaturedItem 
-              item={item} 
+            <FeaturedItem
+              item={item}
               onPress={(selectedItem: Opportunity) => {
-                setView('details');
-                onShowMorePress?.(selectedItem);
+                // ✅ Tapping a Featured card opens the post in the
+                // CENTER FEED — the parent handles the scroll.
+                // Falls back to the old details-in-panel flow only
+                // if the parent didn't provide a handler.
+                if (onFeaturedItemPress) {
+                  onFeaturedItemPress(selectedItem);
+                } else {
+                  setView('details');
+                  onShowMorePress?.(selectedItem);
+                }
               }}
             />
           )}
@@ -165,10 +183,13 @@ export function ContextPanel({
     return (
       <View style={[styles.container, { width: PANEL_WIDTH }]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => {
-            setView(null);
-            onCloseReviews?.();
-          }} style={styles.backButton}>
+          <TouchableOpacity
+            onPress={() => {
+              setView(null);
+              onCloseReviews?.();
+            }}
+            style={styles.backButton}
+          >
             <Ionicons name="arrow-back" size={18} color="#4A7DFF" />
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
@@ -194,7 +215,7 @@ export function ContextPanel({
   }
 
   // ============================================================
-  // DETAILS VIEW (See More)
+  // DETAILS VIEW
   // ============================================================
   if (activeView === 'details') {
     const displayOpportunity = opportunity || selectedOpportunity;
@@ -202,10 +223,13 @@ export function ContextPanel({
     return (
       <View style={[styles.container, { width: PANEL_WIDTH }]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => {
-            setView(null);
-            onCloseDetails?.();
-          }} style={styles.backButton}>
+          <TouchableOpacity
+            onPress={() => {
+              setView(null);
+              onCloseDetails?.();
+            }}
+            style={styles.backButton}
+          >
             <Ionicons name="arrow-back" size={18} color="#4A7DFF" />
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>

@@ -9,7 +9,6 @@ import {
   TextInput,
   StatusBar,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -20,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { useStyledAlert } from '../feed/components/StyledAlert';
 
 const COLORS = {
   bg: '#0D0D1A',
@@ -45,6 +45,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
     verifyPhonePasswordResetOtp,
   } = useAuth();
   const { isDesktop } = useBreakpoint();
+  const { show: showAlert, element: alertElement } = useStyledAlert();
 
   const [method, setMethod] = useState<ResetMethod>('email');
   const [step, setStep] = useState<Step>('input');
@@ -93,12 +94,12 @@ const ForgotPasswordContent = ({ navigation }: any) => {
   const handleRequestReset = async () => {
     if (method === 'email') {
       if (!isEmailValid) {
-        Alert.alert('Invalid Email', 'Please enter a valid email address.');
+        showAlert('Invalid Email', 'Please enter a valid email address.');
         return;
       }
     } else {
       if (!isPhoneValid) {
-        Alert.alert('Invalid Phone', 'Please enter a valid phone number.');
+        showAlert('Invalid Phone', 'Please enter a valid phone number.');
         return;
       }
     }
@@ -113,7 +114,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       setStep('otp');
       setResendTimer(60);
     } catch (e: any) {
-      Alert.alert(
+      showAlert(
         'Could not send code',
         e?.message || 'Please try again.'
       );
@@ -128,7 +129,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
   const handleVerifyOtp = async () => {
     const code = otp.join('');
     if (code.length < 6) {
-      Alert.alert('Invalid Code', 'Please enter the 6-digit code.');
+      showAlert('Invalid Code', 'Please enter the 6-digit code.');
       return;
     }
 
@@ -141,7 +142,7 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       }
       setStep('newPassword');
     } catch (e: any) {
-      Alert.alert(
+      showAlert(
         'Verification failed',
         e?.message || 'Invalid or expired code. Please try again.'
       );
@@ -159,9 +160,9 @@ const ForgotPasswordContent = ({ navigation }: any) => {
       } else {
         await requestPhonePasswordReset(phoneNumber.trim());
       }
-      Alert.alert('Sent', 'A new code has been sent.');
+      showAlert('Sent', 'A new code has been sent.');
     } catch (e: any) {
-      Alert.alert('Could not resend', e?.message || 'Please try again.');
+      showAlert('Could not resend', e?.message || 'Please try again.');
     }
   };
 
@@ -187,29 +188,33 @@ const ForgotPasswordContent = ({ navigation }: any) => {
   // ------------------------------------------------------------
   const handleUpdatePassword = async () => {
     if (!isPasswordValid) {
-      Alert.alert('Error', 'Password must be at least 6 characters.');
+      showAlert('Error', 'Password must be at least 6 characters.');
       return;
     }
     if (!passwordsMatch) {
-      Alert.alert('Error', 'Passwords do not match.');
+      showAlert('Error', 'Passwords do not match.');
       return;
     }
 
     setIsLoading(true);
     try {
       await updatePassword(newPassword);
-      Alert.alert(
-        'Password Updated',
-        'Your password has been changed. Please sign in with your new password.',
-        [
+      showAlert({
+        title: 'Password Updated',
+        message:
+          'Your password has been changed. Please sign in with your new password.',
+        icon: 'checkmark-circle-outline',
+        iconColor: '#2ECC71',
+        buttons: [
           {
             text: 'Sign In',
+            style: 'primary',
             onPress: () => navigation.replace('SignIn'),
           },
-        ]
-      );
+        ],
+      });
     } catch (e: any) {
-      Alert.alert(
+      showAlert(
         'Could not update password',
         e?.message || 'Please try again.'
       );
@@ -575,6 +580,8 @@ const ForgotPasswordContent = ({ navigation }: any) => {
           {step === 'newPassword' && renderPasswordStep()}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {alertElement}
     </SafeAreaView>
   );
 };

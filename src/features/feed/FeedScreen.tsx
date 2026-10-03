@@ -970,13 +970,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   // ============================================================
   // ACTION HANDLERS
-  //
-  // On desktop, every rail action opens inside the ContextPanel:
-  //   • Reviews   → contextPanelView = 'reviews'
-  //   • Details   → contextPanelView = 'details'
-  //   • Directions→ contextPanelView = 'directions'
-  //   • AI        → aiViewActive = true
-  // On mobile, they open the bottom-sheet modals.
   // ============================================================
   const handleReviewsPress = useCallback(
     (productId: string, productTitle?: string) => {
@@ -985,7 +978,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       setSelectedProductTitle(productTitle || '');
 
       if (isDesktop) {
-        // Make sure the panel has an opportunity to render.
         const opp = activeFeedItems[currentIndex] ?? null;
         if (opp) setSelectedOpportunity(opp);
         setAiViewActive(false);
@@ -1052,7 +1044,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       setAiContextHint('');
 
       if (isDesktop) {
-        // AI takes over the ContextPanel on desktop.
         setContextPanelView(null);
         setAiViewActive(true);
       } else {
@@ -1372,6 +1363,36 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       scrollToIndex(currentIndex - 1);
     }
   }, [currentIndex, scrollToIndex]);
+
+  // ✅ NEW: Featured card tap in the ContextPanel → scroll center feed.
+  const handleFeaturedItemPress = useCallback(
+    (opportunity: Opportunity) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      const idx = activeFeedItems.findIndex(
+        (o) => o.id === opportunity.id
+      );
+      if (idx === -1) {
+        if (__DEV__) {
+          console.warn(
+            '⭐ Featured item not in active feed:',
+            opportunity.id
+          );
+        }
+        return;
+      }
+
+      // Reset the panel back to Featured before scrolling.
+      setContextPanelView(null);
+      setAiViewActive(false);
+      setSelectedOpportunity(null);
+      setSelectedProductId('');
+      setSelectedProductTitle('');
+
+      scrollToIndex(idx);
+    },
+    [activeFeedItems, scrollToIndex]
+  );
 
   const renderDesktopNavArrows = useCallback(() => {
     if (!isDesktop) return null;
@@ -1793,6 +1814,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       selectedOpportunity={activeFeedItems[currentIndex] || null}
       onReviewsPress={handleReviewsPress}
       onShowMorePress={handleShowMorePress}
+      // ✅ NEW: featured-card tap in the ContextPanel scrolls center feed.
+      onFeaturedItemPress={handleFeaturedItemPress}
       onSharePress={handleSharePress}
       onAIPress={handleAIPress}
       featuredOpportunities={featuredOpportunities}

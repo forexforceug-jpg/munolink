@@ -9,12 +9,13 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
-import { Alert, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
+import { locationService } from '../services/location.service';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -28,7 +29,6 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
 
-  // Email signup / verify / sign in
   signUpWithEmail: (
     email: string,
     password: string,
@@ -41,7 +41,6 @@ interface AuthContextType {
   ) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
 
-  // Phone signup / verify / sign in
   signUpWithPhone: (
     phone: string,
     password: string,
@@ -54,18 +53,15 @@ interface AuthContextType {
   ) => Promise<void>;
   signInWithPhonePassword: (phone: string, password: string) => Promise<void>;
 
-  // Google / signout / guest
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   logout: () => Promise<void>;
   joinAsGuest: () => void;
 
-  // ✅ EMAIL password reset (Supabase native)
   requestPasswordReset: (email: string) => Promise<void>;
   verifyPasswordResetOtp: (email: string, token: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
 
-  // ✅ PHONE password reset (Supabase SMS OTP)
   requestPhonePasswordReset: (phone: string) => Promise<void>;
   verifyPhonePasswordResetOtp: (phone: string, token: string) => Promise<void>;
 }
@@ -82,9 +78,6 @@ function generateNonce(length = 32): string {
     .join('');
 }
 
-/**
- * Best-effort persist of the user's profile row.
- */
 async function upsertUserProfile(params: {
   userId: string;
   fullName?: string | null;
@@ -116,14 +109,182 @@ async function upsertUserProfile(params: {
   }
 }
 
-/**
- * Normalise a Ugandan phone number to E.164 (+256XXXXXXXXX).
- */
 function normaliseUgandanPhone(raw: string): string {
   const digits = raw.replace(/\D/g, '');
   if (digits.startsWith('256')) return `+${digits}`;
   if (digits.startsWith('0')) return `+256${digits.slice(1)}`;
   return `+256${digits}`;
+}
+
+// ============================================================
+// Location persistence
+// ============================================================
+
+/** Get coordinates on web using the browser geolocation API. */
+function getWebLocation(): Promise<{
+  latitude: number;
+  longitude: number;
+} | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+
+    // Fail fast if permission has already been denied.
+    try {
+      navigator.permissions
+        ?.query({ name: 'geolocation' as PermissionName })
+        .then((perm) => {
+          if (perm.state === 'denied') {
+            resolve(null);
+          }
+        })
+        .catch(() => {});
+    } catch {
+      /* permission API not available */
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+      },
+      () => resolve(null),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+
+/** One-shot reverse geocode (best effort — never throws). */
+async function reverseGeocode(
+  latitude: number,
+  longitude: number
+): Promise<{
+  city: string | null;
+  region: string | null;
+  country: string | null;
+}> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&addressdetails=1`;
+    const res = await fetch(url, {
+      headers: {
+        // Nominatim asks for a UA. Browsers ignore custom UA, this
+        // is mostly here for native where it's honoured.
+        'User-Agent': 'Munolink/1.0 (contact@munolink.com)',
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      return { city: null, region: null, country: null };
+    }
+    const data = (await res.json()) as any;
+    const a = data?.address || {};
+    return {
+      city:
+        a.city ||
+        a.town ||
+        a.village ||
+        a.suburb ||
+        a.county ||
+        null,
+      region: a.state || a.region || null,
+      country: a.country || null,
+    };
+  } catch {
+    return { city: null, region: null, country: null };
+  }
+}
+
+/**
+ * Persist the user's location fields to the `users` table.
+ * Idempotent — writes at most once per user per install.
+ */
+async function persistUserLocation(userId: string): Promise<void> {
+  if (!userId) return;
+
+  // Guard: have we already written location for this user?
+  const guardKey = `@munolink/location_written/${userId}`;
+  try {
+    const already = await AsyncStorage.getItem(guardKey);
+    if (already === '1') return;
+  } catch {
+    /* ignore — fall through and try again */
+  }
+
+  try {
+    // Skip if the row already has location set.
+    const { data: row, error: readErr } = await supabase
+      .from('users')
+      .select('latitude, longitude, location_city, location_region, location_country')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (readErr && __DEV__) {
+      console.log('ℹ️ location read warning:', readErr.message);
+    }
+
+    if (
+      row?.latitude != null &&
+      row?.longitude != null &&
+      (row?.location_city || row?.location_region || row?.location_country)
+    ) {
+      // Nothing to do — mark guarded and bail.
+      try {
+        await AsyncStorage.setItem(guardKey, '1');
+      } catch {}
+      return;
+    }
+
+    // Acquire coordinates.
+    let coords: { latitude: number; longitude: number } | null = null;
+
+    if (Platform.OS === 'web') {
+      coords = await getWebLocation();
+    } else {
+      try {
+        const loc = await locationService.getCurrentLocation();
+        if (loc?.latitude != null && loc?.longitude != null) {
+          coords = { latitude: loc.latitude, longitude: loc.longitude };
+        }
+      } catch {
+        coords = null;
+      }
+    }
+
+    if (!coords) return; // user denied / unavailable — try again next time
+
+    const { city, region, country } = await reverseGeocode(
+      coords.latitude,
+      coords.longitude
+    );
+
+    const patch: Record<string, any> = {
+      id: userId,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+    };
+    if (city) patch.location_city = city;
+    if (region) patch.location_region = region;
+    if (country) patch.location_country = country;
+
+    const { error: upErr } = await supabase
+      .from('users')
+      .upsert(patch, { onConflict: 'id' });
+
+    if (upErr) {
+      if (__DEV__) console.log('ℹ️ location upsert warning:', upErr.message);
+      return;
+    }
+
+    try {
+      await AsyncStorage.setItem(guardKey, '1');
+    } catch {}
+  } catch (err) {
+    if (__DEV__) console.log('ℹ️ persistUserLocation threw:', err);
+  }
 }
 
 // ============================================================
@@ -174,6 +335,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setUser(restored.user);
           setIsAuthenticated(true);
           setIsGuest(false);
+          // Fire-and-forget location write for restored sessions.
+          persistUserLocation(restored.user.id).catch(() => {});
         } else if (!cancelled) {
           setIsGuest(true);
         }
@@ -190,7 +353,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, []);
 
-  // Listen to all auth events
+  // Listen to all auth events — handles Google / OAuth completions
+  // that don't pass through our signup helpers.
   useEffect(() => {
     const {
       data: { subscription },
@@ -199,6 +363,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setUser(newSession?.user ?? null);
       setIsAuthenticated(!!newSession);
       setIsGuest(!newSession);
+
+      // ✅ Any time a user becomes authenticated (including the
+      // Google redirect completing), make sure we have location.
+      if (
+        newSession?.user?.id &&
+        (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')
+      ) {
+        persistUserLocation(newSession.user.id).catch(() => {});
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -219,8 +392,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           token: response.params.id_token,
           nonce: rawNonceRef.current || undefined,
         })
-        .then(({ error }) => {
-          if (error) Alert.alert('Error', error.message);
+        .then(({ data, error }) => {
+          if (error) throw error;
+          // onAuthStateChange also fires, but call directly so the
+          // persistence happens immediately in this flow.
+          if (data?.user?.id) {
+            persistUserLocation(data.user.id).catch(() => {});
+          }
+        })
+        .catch(() => {
+          /* silent — UI handles */
         });
     }
   }, [response]);
@@ -231,14 +412,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         provider: 'google',
         options: { redirectTo: window.location.origin },
       });
-      if (error) Alert.alert('Error', error.message);
+      if (error) throw error;
       return;
     }
     try {
       rawNonceRef.current = generateNonce();
       await promptAsync();
     } catch (error: any) {
-      Alert.alert('Error', 'Failed to sign in with Google.');
+      throw new Error('Failed to sign in with Google.');
     }
   };
 
@@ -267,6 +448,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         fullName: trimmedName,
         email,
       });
+      // ✅ Persist location for the new account.
+      persistUserLocation(data.user.id).catch(() => {});
     }
   };
 
@@ -287,12 +470,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
     const resolvedName = fromArgs || fromMeta || null;
 
-    if (data?.user?.id && resolvedName) {
-      await upsertUserProfile({
-        userId: data.user.id,
-        fullName: resolvedName,
-        email,
-      });
+    if (data?.user?.id) {
+      if (resolvedName) {
+        await upsertUserProfile({
+          userId: data.user.id,
+          fullName: resolvedName,
+          email,
+        });
+      }
+      // ✅ Persist location after verification.
+      persistUserLocation(data.user.id).catch(() => {});
     }
   };
 
@@ -330,6 +517,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         fullName: trimmedName,
         phone: e164,
       });
+      // ✅ Persist location for the new account.
+      persistUserLocation(data.user.id).catch(() => {});
     }
   };
 
@@ -352,12 +541,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
     const resolvedName = fromArgs || fromMeta || null;
 
-    if (data?.user?.id && resolvedName) {
-      await upsertUserProfile({
-        userId: data.user.id,
-        fullName: resolvedName,
-        phone: e164,
-      });
+    if (data?.user?.id) {
+      if (resolvedName) {
+        await upsertUserProfile({
+          userId: data.user.id,
+          fullName: resolvedName,
+          phone: e164,
+        });
+      }
+      // ✅ Persist location after verification.
+      persistUserLocation(data.user.id).catch(() => {});
     }
   };
 
@@ -374,7 +567,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
-  // EMAIL PASSWORD RESET (native Supabase recovery)
+  // EMAIL PASSWORD RESET
   // ============================================================
   const requestPasswordReset = async (email: string) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -393,20 +586,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // ============================================================
-  // PHONE PASSWORD RESET (SMS OTP → session → updateUser)
+  // PHONE PASSWORD RESET
   // ============================================================
-  //
-  // Supabase does not have a dedicated "recover by phone" endpoint,
-  // so we reuse the phone sign-in OTP channel:
-  //
-  //   Step 1  signInWithOtp({ phone })           → sends SMS code
-  //   Step 2  verifyOtp({ phone, token, 'sms' }) → establishes session
-  //   Step 3  updateUser({ password })           → sets new password
-  //
-  // This is the standard and secure way to reset a password with
-  // only a phone number, and it works with the same Supabase SMS
-  // provider you already have configured.
-  //
   const requestPhonePasswordReset = async (phone: string) => {
     const e164 = normaliseUgandanPhone(phone);
 
@@ -416,11 +597,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     const { error } = await supabase.auth.signInWithOtp({
       phone: e164,
-      options: {
-        // If the user doesn't exist yet, don't silently create one —
-        // we want an explicit "account not found" error instead.
-        shouldCreateUser: false,
-      },
+      options: { shouldCreateUser: false },
     });
     if (error) throw error;
   };
@@ -444,7 +621,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Password must be at least 6 characters.');
     }
 
-    // Requires an active session — Supabase enforces this.
     const {
       data: { session: active },
     } = await supabase.auth.getSession();
@@ -460,9 +636,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     });
 
     if (error) {
-      // Supabase returns `same_password` when the new password equals
-      // the current one. Surface a friendly message instead of the
-      // raw API error.
       const raw = (error.message || '').toLowerCase();
       const code = (error as any)?.code || '';
 
@@ -496,6 +669,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error(error.message || 'Failed to update password.');
     }
   };
+
   // ============================================================
   // SIGN OUT / GUEST
   // ============================================================
@@ -530,11 +704,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       signOut,
       logout: signOut,
       joinAsGuest,
-      // Email reset
       requestPasswordReset,
       verifyPasswordResetOtp,
       updatePassword,
-      // Phone reset
       requestPhonePasswordReset,
       verifyPhonePasswordResetOtp,
     }),

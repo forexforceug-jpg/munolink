@@ -706,7 +706,7 @@ const PostsGrid: React.FC<PostsGridProps> = ({
   onLongPress,
   isDesktop,
 }) => {
-  const NUM_COLUMNS = 6;
+  const NUM_COLUMNS = 4;
 
   const rows: (CatalogItem | null)[][] = useMemo(() => {
     const out: (CatalogItem | null)[][] = [];
