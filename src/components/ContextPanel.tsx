@@ -5,7 +5,6 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, FlatList }
 import { Ionicons } from '@expo/vector-icons';
 import { Opportunity } from '../services/feed.service';
 import { ReviewsBottomSheet } from '../features/feed/components/ReviewsBottomSheet';
-import { SimpleDetailsModal } from '../features/feed/components/SimpleDetailsModal';
 import { AIBottomSheet } from '../features/feed/components/AIBottomSheet';
 import { DirectionsBottomSheet } from '../features/feed/components/DirectionsBottomSheet';
 
@@ -212,19 +211,6 @@ export function ContextPanel({
           </TouchableOpacity>
           <Text style={styles.headerTitle}>📋 Details</Text>
           <View style={{ width: 30 }} />
-        </View>
-
-        <View style={styles.modalContainer}>
-          <SimpleDetailsModal
-            visible={true}
-            opportunity={displayOpportunity}
-            onClose={() => {
-              setView(null);
-              onCloseDetails?.();
-            }}
-            isDesktopView={true}
-            panelWidth={PANEL_WIDTH}
-          />
         </View>
       </View>
     );

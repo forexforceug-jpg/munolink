@@ -70,15 +70,11 @@ import { getTabBarHeight } from '../../navigation/TabNavigator';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
-// Link shown by the "Open in App" button on web.
 const APP_DEEP_LINK =
   'https://expo.dev/accounts/forexforceug/projects/munolink/builds/affe04a9-726f-4d71-877f-c83907ba7414';
 
-// Gap between the info panel's bottom edge and the tab bar's top edge.
 const SCENE_INFO_GAP = 40;
 
-// Fallback desktop rectangle dimensions used before the wrapper's
-// onLayout fires. Matches DesktopLayout's fallback (9:16 portrait).
 const DESKTOP_FEED_ASPECT = 9 / 16;
 const DESKTOP_FALLBACK_MAX_HEIGHT = 900;
 
@@ -128,10 +124,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
 
-  // The tab bar's rendered height, from TabNavigator's single source of truth.
   const tabBarHeight = getTabBarHeight(insets);
-
-  // Native-only clamp (desktop has no tab bar).
   const computedMaxVisible = Math.max(0, height - tabBarHeight);
 
   const [measuredVisibleHeight, setMeasuredVisibleHeight] = useState<
@@ -143,8 +136,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       ? Math.min(measuredVisibleHeight, computedMaxVisible)
       : computedMaxVisible;
 
-  // ✅ Desktop: measure the feed rectangle from DesktopLayout's
-  // wrapper, so item frames exactly match it.
   const [desktopItemHeight, setDesktopItemHeight] = useState<number | null>(
     null
   );
@@ -170,9 +161,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const reviewsSheetRef = useRef<BottomSheetModal>(null);
   const aiSheetRef = useRef<BottomSheetModal>(null);
 
-  // ============================================================
-  // ✅ TIKTOK-STYLE FEED FILTER
-  // ============================================================
   const [activeFeed, setActiveFeed] = useState<'forYou' | 'following'>(
     'forYou'
   );
@@ -288,9 +276,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setError,
   } = useFeedStore();
 
-  // ============================================================
-  // QUERY
-  // ============================================================
   const {
     data,
     isLoading: queryLoading,
@@ -319,9 +304,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [queryStatus]);
 
-  // ============================================================
-  // LOCATION HANDLING (state only — no UI trigger)
-  // ============================================================
   useEffect(() => {
     const getLocation = async () => {
       try {
@@ -409,7 +391,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     [data, user?.id, setOpportunities]
   );
 
-  // --- Memoized Values ---
   const uniqueOpportunities = useMemo(() => {
     if (!opportunities || opportunities.length === 0) return [];
     const map = new Map<string, Opportunity>();
@@ -421,9 +402,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     return Array.from(map.values());
   }, [opportunities]);
 
-  // ============================================================
-  // ✅ ACTIVE FEED ITEMS
-  // ============================================================
   const activeFeedItems = useMemo(() => {
     return activeFeed === 'following'
       ? followingOpportunities
@@ -448,9 +426,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setLoading(queryLoading);
   }, [queryError, queryLoading, setError, setLoading]);
 
-  // ============================================================
-  // ✅ FETCH — Following feed
-  // ============================================================
   const loadFollowingFeed = useCallback(async () => {
     if (!user?.id) {
       setFollowingOpportunities([]);
@@ -511,9 +486,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [activeFeed, loadFollowingFeed]);
 
-  // ============================================================
-  // ✅ TAB SWITCH RESET
-  // ============================================================
   useEffect(() => {
     setCurrentIndex(0);
     setContextPanelView(null);
@@ -527,9 +499,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     });
   }, [activeFeed, setCurrentIndex]);
 
-  // ============================================================
-  // DEEP LINK — CAPTURE
-  // ============================================================
   useEffect(() => {
     const openPostId = route?.params?.openPostId;
     if (openPostId) {
@@ -539,9 +508,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [route?.params?.openPostId]);
 
-  // ============================================================
-  // ✅ DEEP LINK — FALLBACK FETCH
-  // ============================================================
   useEffect(() => {
     const openPostId = pendingOpenPostIdRef.current;
 
@@ -600,9 +566,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setOpportunities,
   ]);
 
-  // ============================================================
-  // ✅ DEEP LINK — SCROLL TO POST
-  // ============================================================
   useEffect(() => {
     const openPostId = pendingOpenPostIdRef.current;
     if (!openPostId) return;
@@ -690,9 +653,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     []
   );
 
-  // ============================================================
-  // PREFETCH LIKES
-  // ============================================================
   useEffect(() => {
     if (!user?.id) return;
     const postIds = activeFeedItems.map((o) => o.id);
@@ -724,9 +684,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     };
   }, [user?.id, activeFeedItems]);
 
-  // ============================================================
-  // INITIALISE loadingItemsMap
-  // ============================================================
   useEffect(() => {
     if (activeFeedItems.length === 0) return;
 
@@ -753,9 +710,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     []
   );
 
-  // ============================================================
-  // PULL-TO-REFRESH
-  // ============================================================
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -854,9 +808,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setCurrentIndex,
   ]);
 
-  // ============================================================
-  // SILENT RECOMMENDATION PASS
-  // ============================================================
   useEffect(() => {
     if (!data || data.length === 0) return;
 
@@ -932,9 +883,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [swipeCount, isAuthenticated, isGuest]);
 
-  // ============================================================
-  // STABLE VIEWABILITY HANDLER
-  // ============================================================
   const onViewableItemsChangedRef = useRef<
     | ((info: {
         viewableItems: ViewToken<Opportunity>[];
@@ -1020,7 +968,16 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     }
   }, [activeFeedItems, currentIndex]);
 
-  // --- Action Handlers ---
+  // ============================================================
+  // ACTION HANDLERS
+  //
+  // On desktop, every rail action opens inside the ContextPanel:
+  //   • Reviews   → contextPanelView = 'reviews'
+  //   • Details   → contextPanelView = 'details'
+  //   • Directions→ contextPanelView = 'directions'
+  //   • AI        → aiViewActive = true
+  // On mobile, they open the bottom-sheet modals.
+  // ============================================================
   const handleReviewsPress = useCallback(
     (productId: string, productTitle?: string) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1028,12 +985,16 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       setSelectedProductTitle(productTitle || '');
 
       if (isDesktop) {
+        // Make sure the panel has an opportunity to render.
+        const opp = activeFeedItems[currentIndex] ?? null;
+        if (opp) setSelectedOpportunity(opp);
+        setAiViewActive(false);
         setContextPanelView('reviews');
       } else {
         setShowReviewsModal(true);
       }
     },
-    [isDesktop]
+    [isDesktop, activeFeedItems, currentIndex]
   );
 
   const handleSharePress = useCallback(
@@ -1070,9 +1031,18 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const handleDirectionsPress = useCallback(
     (userName: string, area: string) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      if (isDesktop) {
+        const opp = activeFeedItems[currentIndex] ?? null;
+        if (opp) setSelectedOpportunity(opp);
+        setAiViewActive(false);
+        setContextPanelView('directions');
+        return;
+      }
+
       setShowDirectionsModal(true);
     },
-    []
+    [isDesktop, activeFeedItems, currentIndex]
   );
 
   const handleAIPress = useCallback(
@@ -1082,6 +1052,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       setAiContextHint('');
 
       if (isDesktop) {
+        // AI takes over the ContextPanel on desktop.
+        setContextPanelView(null);
         setAiViewActive(true);
       } else {
         setShowAIModal(true);
@@ -1095,11 +1067,13 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setAiViewActive(false);
     setSelectedOpportunity(null);
     setAiContextHint('');
+    setContextPanelView(null);
   }, []);
 
   const handleCloseDirections = useCallback(() => {
     setShowDirectionsModal(false);
     setSelectedOpportunity(null);
+    setContextPanelView(null);
   }, []);
 
   const handleShowMorePress = useCallback(
@@ -1108,6 +1082,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       setSelectedOpportunity(opportunity);
 
       if (isDesktop) {
+        setAiViewActive(false);
         setContextPanelView('details');
       } else {
         setShowDetailsModal(true);
@@ -1448,8 +1423,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     goToNext,
   ]);
 
-  // ✅ Single rail for desktop — rendered inside DesktopLayout's
-  // right gutter so it can never be clipped by the feed rectangle.
   const renderDesktopActionRail = useCallback(() => {
     if (!isDesktop) return null;
     const opp = activeFeedItems[currentIndex];
@@ -1474,10 +1447,15 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
           handleReviewsPress(productId, opp.title)
         }
         onDirectionsPress={() => {
-          setShowDirectionsModal(true);
+          setSelectedOpportunity(opp);
+          setContextPanelView('directions');
         }}
         onSharePress={handleSharePress}
-        onAIPress={handleAIPress}
+        onAIPress={() => {
+          setSelectedOpportunity(opp);
+          setContextPanelView(null);
+          setAiViewActive(true);
+        }}
         onSavePress={handleSavePress}
         isSaved={savedItemsMap[opp.id] || false}
         savedCount={savedItemsMap[opp.id] ? 1 : opp.saveCount || 0}
@@ -1497,7 +1475,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     handleLikePress,
     handleReviewsPress,
     handleSharePress,
-    handleAIPress,
     handleSavePress,
     navigation,
   ]);
@@ -1689,8 +1666,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
           {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
 
-          {/* ✅ Mobile only: per-item rail. Desktop uses the
-              layout-level rail rendered in the right gutter. */}
           {!isDesktop && (
             <View
               style={[
@@ -1762,9 +1737,6 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     ]
   );
 
-  // ============================================================
-  // Loading / error / empty states
-  // ============================================================
   const isInitialLoading = !hasFetchedOnceRef.current && queryLoading;
 
   if (
@@ -1832,6 +1804,8 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
       aiViewActive={aiViewActive}
       onAIClose={handleCloseAI}
       aiContextHint={aiContextHint}
+      directionsViewActive={contextPanelView === 'directions'}
+      onDirectionsClose={handleCloseDirections}
       onCloseReviews={() => {
         setContextPanelView(null);
         setSelectedProductId('');
@@ -1851,7 +1825,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             ]}
             edges={['top']}
             onLayout={(e) => {
-              if (isDesktop) return; // desktop uses its own measurement
+              if (isDesktop) return;
               const h = e.nativeEvent.layout.height;
               if (h && Math.abs(h - (measuredVisibleHeight ?? 0)) > 1) {
                 setMeasuredVisibleHeight(h);
@@ -2379,8 +2353,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     zIndex: 50,
   },
-  // ✅ Native only — the desktop path renders the rail in
-  // DesktopLayout's right gutter instead.
   actionRailWrapperMobile: {
     right: 16,
     top: '50%',

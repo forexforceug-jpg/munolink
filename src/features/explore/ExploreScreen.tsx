@@ -59,9 +59,10 @@ const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
   minimumViewTime: 100,
 };
 
-// ============================================================
-// TYPES
-// ============================================================
+const DESKTOP_FEED_ASPECT = 9 / 16;
+const DESKTOP_FALLBACK_MAX_HEIGHT = 900;
+const DESKTOP_GRID_COLUMNS = 6;
+
 type PriceType =
   | 'fixed'
   | 'negotiable'
@@ -109,9 +110,6 @@ interface ExplorePost {
   price_type?: PriceType | string | null;
 }
 
-// ============================================================
-// HELPERS
-// ============================================================
 const VALID_PRICE_TYPES: PriceType[] = [
   'fixed',
   'negotiable',
@@ -174,9 +172,6 @@ const FilterChip = ({ label, selected, onPress, count }: any) => (
   </TouchableOpacity>
 );
 
-// ============================================================
-// GRID CARD
-// ============================================================
 const GridResultCard = React.memo(
   ({
     item,
@@ -264,9 +259,6 @@ const GridResultCard = React.memo(
   }
 );
 
-// ============================================================
-// ADAPTER
-// ============================================================
 function buildOpportunityFromPost(
   item: ExplorePost,
   isSaved: boolean
@@ -314,7 +306,7 @@ function buildOpportunityFromPost(
       ...specs,
       price_type: effectivePriceType,
     },
-    ...( { price_type: effectivePriceType } as any),
+    ...({ price_type: effectivePriceType } as any),
   };
 }
 
@@ -326,17 +318,14 @@ const ItemMediaLoadingSpinner: React.FC = () => {
   );
 };
 
-// ============================================================
-// FULLSCREEN ITEM
-// ============================================================
 interface FullscreenItemProps {
   item: ExplorePost;
   index: number;
   fullscreenIndex: number;
   isFocused: boolean;
   isDesktop: boolean;
-  winWidth: number;
-  winHeight: number;
+  cardWidth: number;
+  cardHeight: number;
   isSaved: boolean;
   isLiked: boolean;
   likeCount: number;
@@ -351,6 +340,10 @@ interface FullscreenItemProps {
   onReviewsPress: (item: ExplorePost) => void;
   onDirectionsPress: (item: ExplorePost) => void;
   onAIPress: (item: ExplorePost) => void;
+  onNaturalSize?: (
+    size: { width: number; height: number } | null
+  ) => void;
+  fillMode?: 'contain' | 'cover';
 }
 
 const FullscreenItem: React.FC<FullscreenItemProps> = ({
@@ -359,8 +352,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   fullscreenIndex,
   isFocused,
   isDesktop,
-  winWidth,
-  winHeight,
+  cardWidth,
+  cardHeight,
   isSaved,
   isLiked,
   likeCount,
@@ -375,6 +368,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onReviewsPress,
   onDirectionsPress,
   onAIPress,
+  onNaturalSize,
+  fillMode = 'contain',
 }) => {
   const opportunity = buildOpportunityFromPost(item, isSaved);
   const effectivePriceType = resolvePostPriceType(item);
@@ -419,8 +414,6 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   }
 
   const displayName = item.user_full_name || 'User';
-  const cardWidth = isDesktop ? 420 : winWidth;
-  const cardHeight = isDesktop ? winHeight : winHeight;
   const specs = (item as any).specifications || {};
   const isVisible = isFocused && index === fullscreenIndex;
 
@@ -470,43 +463,91 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         autoPlayInterval={5000}
         priceType={effectivePriceType}
         resetKey={item.id}
+        useExplicitBottomOffset={isDesktop ? false : true}
         bottomOffset={0}
         isVisible={isVisible}
+        onNaturalSize={onNaturalSize}
+        fillMode={isDesktop ? fillMode : 'contain'}
       />
 
       {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
 
-      <View style={styles.actionRailWrapper}>
-        <FloatingActionRail
-          key={`rail-${item.id}`}
-          opportunity={opportunity}
-          isLiked={isLiked}
-          bottomInset={80}
-          rightShift={-6}
-          likeCount={likeCount}
-          onLikePress={() => onLike(item)}
-          onUserPress={() => onUserPress(item)}
-          onReviewsPress={() => onReviewsPress(item)}
-          onDirectionsPress={() => onDirectionsPress(item)}
-          onSharePress={onShare}
-          onAIPress={() => onAIPress(item)}
-          onSavePress={() => onSave(item)}
-          isSaved={isSaved}
-          savedCount={item.saveCount || 0}
-          shareCount={item.share_count || 0}
-          reviewCount={item.comment_count || 0}
-          distance={item.distance || 0}
-          userAvatar={item.user_avatar || null}
-        />
-      </View>
+      {!isDesktop && (
+        <View style={styles.actionRailWrapper}>
+          <FloatingActionRail
+            key={`rail-${item.id}`}
+            opportunity={opportunity}
+            isLiked={isLiked}
+            bottomInset={80}
+            rightShift={-6}
+            likeCount={likeCount}
+            onLikePress={() => onLike(item)}
+            onUserPress={() => onUserPress(item)}
+            onReviewsPress={() => onReviewsPress(item)}
+            onDirectionsPress={() => onDirectionsPress(item)}
+            onSharePress={onShare}
+            onAIPress={() => onAIPress(item)}
+            onSavePress={() => onSave(item)}
+            isSaved={isSaved}
+            savedCount={item.saveCount || 0}
+            shareCount={item.share_count || 0}
+            reviewCount={item.comment_count || 0}
+            distance={item.distance || 0}
+            userAvatar={item.user_avatar || null}
+          />
+        </View>
+      )}
     </View>
   );
 };
 
-// ============================================================
-// EXPLORE CONTENT
-// ============================================================
-const ExploreContent = ({ navigation }: any) => {
+interface ExploreContentProps {
+  navigation: any;
+  viewMode: 'grid' | 'fullscreen';
+  setViewMode: (mode: 'grid' | 'fullscreen') => void;
+  onDesktopFullscreenStateChange?: (state: {
+    fullscreenIndex: number;
+    totalCount: number;
+    currentPost: ExplorePost | null;
+    isSaved: boolean;
+    isLiked: boolean;
+    likeCount: number;
+  }) => void;
+  onDesktopScrollToIndex?: (fn: (idx: number) => void) => void;
+  onDesktopRailHandlersChange?: (handlers: {
+    onLike: () => void;
+    onSave: () => void;
+    onUser: () => void;
+    onReviews: () => void;
+    onDirections: () => void;
+    onShare: () => void;
+    onAI: () => void;
+  }) => void;
+  onDesktopReviewsRequest?: (
+    opportunity: Opportunity,
+    productTitle: string
+  ) => void;
+  onDesktopDirectionsRequest?: (opportunity: Opportunity) => void;
+  onDesktopAIRequest?: (opportunity: Opportunity) => void;
+  onDesktopDetailsRequest?: (opportunity: Opportunity) => void;
+  /** Called whenever the visible fullscreen post changes, so the
+   * parent can reset the context panel to Featured. */
+  onDesktopFullscreenIndexChange?: (index: number, postId: string) => void;
+}
+
+const ExploreContent: React.FC<ExploreContentProps> = ({
+  navigation,
+  viewMode,
+  setViewMode,
+  onDesktopFullscreenStateChange,
+  onDesktopScrollToIndex,
+  onDesktopRailHandlersChange,
+  onDesktopReviewsRequest,
+  onDesktopDirectionsRequest,
+  onDesktopAIRequest,
+  onDesktopDetailsRequest,
+  onDesktopFullscreenIndexChange,
+}) => {
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
   const isFocused = useIsFocused();
@@ -519,38 +560,57 @@ const ExploreContent = ({ navigation }: any) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [showSortModal, setShowSortModal] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<ExplorePost | null>(null);
   const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
-
   const [likedItemsMap, setLikedItemsMap] = useState<Record<string, boolean>>(
     {}
   );
   const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
-
   const [categories] = useState(DEFAULT_CATEGORIES);
   const [showSearch, setShowSearch] = useState(false);
-
   const [loadingItemsMap, setLoadingItemsMap] = useState<
     Record<string, boolean>
   >({});
-
   const [fullscreenIndex, setFullscreenIndex] = useState(0);
-
-  // ✅ Pull-to-refresh state
   const [refreshing, setRefreshing] = useState(false);
-
-  // ✅ Tracks how far the grid has been scrolled, so we can show the
-  // web-only refresh button only when the user is near the top.
   const [gridScrollY, setGridScrollY] = useState(0);
 
+  // ✅ Mobile-only modal state. Never used when isDesktop is true.
   const [selectedOpportunity, setSelectedOpportunity] =
     useState<Opportunity | null>(null);
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
+
+  const aspectCacheRef = useRef<Map<string, number>>(new Map());
+  const [aspectCacheVersion, setAspectCacheVersion] = useState(0);
+  const [reportedAspect, setReportedAspect] = useState<number | null>(null);
+  const reportedAspectPostIdRef = useRef<string | null>(null);
+  const [currentMediaAspect, setCurrentMediaAspect] = useState<number | null>(
+    null
+  );
+
+  const [desktopItemHeight, setDesktopItemHeight] = useState<number | null>(
+    null
+  );
+  const [desktopItemWidth, setDesktopItemWidth] = useState<number | null>(
+    null
+  );
+
+  const desktopFallbackHeight = Math.min(
+    winHeight * 0.92,
+    DESKTOP_FALLBACK_MAX_HEIGHT
+  );
+  const desktopFallbackWidth = desktopFallbackHeight * DESKTOP_FEED_ASPECT;
+
+  const itemHeight = isDesktop
+    ? desktopItemHeight ?? desktopFallbackHeight
+    : winHeight;
+  const itemWidth = isDesktop
+    ? desktopItemWidth ?? desktopFallbackWidth
+    : winWidth;
 
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
@@ -594,8 +654,8 @@ const ExploreContent = ({ navigation }: any) => {
     setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
   }, []);
 
-  const flatListRef = useRef<FlatList>(null);        // fullscreen carousel
-  const gridListRef = useRef<FlatList>(null);        // grid list (for refresh scroll)
+  const flatListRef = useRef<FlatList>(null);
+  const gridListRef = useRef<FlatList>(null);
   const searchInputRef = useRef<TextInput>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
 
@@ -684,97 +744,24 @@ const ExploreContent = ({ navigation }: any) => {
     fetchData();
   }, [fetchData]);
 
-  // ============================================================
-  // ✅ PULL-TO-REFRESH
-  // ============================================================
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
 
     try {
-      let userCoords: { latitude: number; longitude: number } | undefined;
-      try {
-        const loc = await locationService.getCurrentLocation();
-        if (loc?.latitude != null && loc?.longitude != null) {
-          userCoords = { latitude: loc.latitude, longitude: loc.longitude };
-        }
-      } catch (err) {
-        if (__DEV__) console.log('⚠️ Explore refresh: no location');
-      }
-
-      const opportunities: Opportunity[] = await feedService.getOpportunities(
-        userCoords
-      );
-
-      if (!opportunities || opportunities.length === 0) {
-        if (__DEV__) console.log('ℹ️ Explore refresh returned no data');
-        return;
-      }
-
-      const posts: ExplorePost[] = opportunities.map((opp) => {
-        const images = opp.catalogImages || [];
-        const specs = (opp as any).specifications || {};
-        const rawPriceType =
-          (opp as any).price_type ?? specs.price_type ?? null;
-
-        return {
-          id: opp.id,
-          user_id: opp.userId || '',
-          name: opp.title || 'Untitled',
-          description: opp.description || null,
-          price: opp.price ?? null,
-          currency: opp.currency || 'UGX',
-          images: images,
-          video: opp.video || null,
-          video_thumbnail: opp.video_thumbnail || null,
-          video_duration: opp.video_duration || null,
-          video_size: opp.video_size || null,
-          hashtags: opp.hashtags || [],
-          location: opp.area || null,
-          category: opp.category || null,
-          status: 'active',
-          like_count: opp.likeCount || 0,
-          view_count: opp.viewCount || 0,
-          share_count: opp.shareCount || 0,
-          comment_count: opp.commentCount || 0,
-          created_at: opp.createdAt || new Date().toISOString(),
-          updated_at: opp.createdAt || new Date().toISOString(),
-          user_full_name: opp.userFullName || 'User',
-          user_avatar: opp.userAvatar || null,
-          detected_category: opp.category || null,
-          detected_intent: null,
-          detected_tags: opp.hashtags || [],
-          userId: opp.userId || '',
-          userFullName: opp.userFullName || 'User',
-          userAvatar: opp.userAvatar || null,
-          imageUrl: images[0] || opp.video_thumbnail || '',
-          catalogImages: images,
-          user_cover_url: null,
-          distance: opp.distance,
-          saveCount: opp.saveCount || 0,
-          isSaved: opp.isSaved || false,
-          specifications: specs,
-          price_type: rawPriceType,
-        };
-      });
-
-      const shuffled = posts.sort(() => Math.random() - 0.5);
-      setItems(shuffled);
-      setFilteredItems(shuffled);
-
+      await fetchData();
       try {
         gridListRef.current?.scrollToOffset({ offset: 0, animated: true });
       } catch {
         /* noop */
       }
-
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       if (__DEV__) console.error('❌ Explore refresh failed:', err);
     } finally {
       setRefreshing(false);
     }
-  }, [refreshing]);
+  }, [refreshing, fetchData]);
 
   const applyFilters = useCallback(() => {
     let result = [...items];
@@ -871,21 +858,38 @@ const ExploreContent = ({ navigation }: any) => {
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('likes' as any)
-          .select('post_id')
-          .eq('user_id', user.id)
-          .in('post_id', postIds);
+        const [likesRes, savesRes] = await Promise.all([
+          supabase
+            .from('likes' as any)
+            .select('post_id')
+            .eq('user_id', user.id)
+            .in('post_id', postIds),
+          supabase
+            .from('saves' as any)
+            .select('post_id')
+            .eq('user_id', user.id)
+            .in('post_id', postIds),
+        ]);
 
-        if (cancelled || error || !data) return;
+        if (cancelled) return;
 
-        const likedIds: Record<string, boolean> = {};
-        data.forEach((row: any) => {
-          likedIds[row.post_id] = true;
-        });
-        setLikedItemsMap((prev) => ({ ...prev, ...likedIds }));
+        if (!likesRes.error && likesRes.data) {
+          const likedIds: Record<string, boolean> = {};
+          likesRes.data.forEach((row: any) => {
+            likedIds[row.post_id] = true;
+          });
+          setLikedItemsMap((prev) => ({ ...prev, ...likedIds }));
+        }
+
+        if (!savesRes.error && savesRes.data) {
+          const savedIds: Record<string, boolean> = {};
+          savesRes.data.forEach((row: any) => {
+            savedIds[row.post_id] = true;
+          });
+          setSavedItemsMap((prev) => ({ ...prev, ...savedIds }));
+        }
       } catch (e) {
-        console.warn('Failed to prefetch likes:', e);
+        if (__DEV__) console.warn('Explore prefetch failed:', e);
       }
     })();
 
@@ -911,15 +915,20 @@ const ExploreContent = ({ navigation }: any) => {
       setSelectedItem(item);
       setFullscreenIndex(idx >= 0 ? idx : 0);
       setViewMode('fullscreen');
+
+      // ✅ Reset the desktop context panel to Featured on entry.
+      if (isDesktop && onDesktopFullscreenIndexChange) {
+        onDesktopFullscreenIndexChange(idx >= 0 ? idx : 0, item.id);
+      }
     },
-    [filteredItems]
+    [filteredItems, setViewMode, isDesktop, onDesktopFullscreenIndexChange]
   );
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
     setFullscreenIndex(0);
-  }, []);
+  }, [setViewMode]);
 
   const toggleSearch = useCallback(() => {
     setShowSearch(!showSearch);
@@ -948,6 +957,13 @@ const ExploreContent = ({ navigation }: any) => {
     if (idx == null) return;
     if (idx === fullscreenIndex) return;
     setFullscreenIndex(idx);
+
+    // ✅ Reset the desktop context panel to Featured when the
+    // visible post changes.
+    if (isDesktop && onDesktopFullscreenIndexChange) {
+      const post = filteredItems[idx];
+      if (post) onDesktopFullscreenIndexChange(idx, post.id);
+    }
   };
 
   const handleFullscreenViewableItemsChanged = useRef(
@@ -975,7 +991,7 @@ const ExploreContent = ({ navigation }: any) => {
   }, []);
 
   const handleLikePress = useCallback(
-    async (opportunity: Opportunity) => {
+    async (post: ExplorePost) => {
       if (!user?.id) {
         showStyledAlert({
           title: '🔒 Join Munolink',
@@ -983,7 +999,11 @@ const ExploreContent = ({ navigation }: any) => {
           icon: 'lock-closed',
           iconColor: '#4A7DFF',
           buttons: [
-            { text: 'Continue Browsing', style: 'cancel', onPress: hideStyledAlert },
+            {
+              text: 'Continue Browsing',
+              style: 'cancel',
+              onPress: hideStyledAlert,
+            },
             {
               text: 'Join Now',
               style: 'primary',
@@ -997,15 +1017,15 @@ const ExploreContent = ({ navigation }: any) => {
         return;
       }
 
-      const currentlyLiked = likedItemsMap[opportunity.id] || false;
+      const currentlyLiked = likedItemsMap[post.id] || false;
       const nextLiked = !currentlyLiked;
 
-      setLikedItemsMap((prev) => ({ ...prev, [opportunity.id]: nextLiked }));
+      setLikedItemsMap((prev) => ({ ...prev, [post.id]: nextLiked }));
       setLikeCountMap((prev) => {
-        const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+        const current = prev[post.id] ?? post.like_count ?? 0;
         return {
           ...prev,
-          [opportunity.id]: Math.max(0, current + (nextLiked ? 1 : -1)),
+          [post.id]: Math.max(0, current + (nextLiked ? 1 : -1)),
         };
       });
 
@@ -1013,36 +1033,293 @@ const ExploreContent = ({ navigation }: any) => {
         if (nextLiked) {
           const { error } = await (supabase as any)
             .from('likes')
-            .insert({ user_id: user.id, post_id: opportunity.id });
+            .insert({ user_id: user.id, post_id: post.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
           const { error } = await (supabase as any)
             .from('likes')
             .delete()
             .eq('user_id', user.id)
-            .eq('post_id', opportunity.id);
+            .eq('post_id', post.id);
           if (error) throw error;
         }
       } catch (err) {
         console.error('Like toggle failed:', err);
-        setLikedItemsMap((prev) => ({
-          ...prev,
-          [opportunity.id]: currentlyLiked,
-        }));
+        setLikedItemsMap((prev) => ({ ...prev, [post.id]: currentlyLiked }));
         setLikeCountMap((prev) => {
-          const current = prev[opportunity.id] ?? opportunity.likeCount ?? 0;
+          const current = prev[post.id] ?? post.like_count ?? 0;
           return {
             ...prev,
-            [opportunity.id]: Math.max(
-              0,
-              current + (currentlyLiked ? 1 : -1)
-            ),
+            [post.id]: Math.max(0, current + (currentlyLiked ? 1 : -1)),
           };
         });
       }
     },
     [user?.id, likedItemsMap, navigation, showStyledAlert, hideStyledAlert]
   );
+
+  const handleSavePress = useCallback(
+    async (post: ExplorePost) => {
+      if (!user?.id) {
+        showStyledAlert({
+          title: '🔒 Join Munolink',
+          message: 'Create a free account to save items.',
+          icon: 'lock-closed',
+          iconColor: '#4A7DFF',
+          buttons: [
+            {
+              text: 'Continue Browsing',
+              style: 'cancel',
+              onPress: hideStyledAlert,
+            },
+            {
+              text: 'Join Now',
+              style: 'primary',
+              onPress: () => {
+                hideStyledAlert();
+                navigation.navigate('Join');
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      const currentlySaved =
+        savedItemsMap[post.id] ?? post.isSaved ?? false;
+      const nextSaved = !currentlySaved;
+
+      setSavedItemsMap((prev) => ({
+        ...prev,
+        [post.id]: nextSaved,
+      }));
+
+      try {
+        if (nextSaved) {
+          const { error } = await (supabase as any)
+            .from('saves')
+            .insert({ user_id: user.id, post_id: post.id });
+          if (error && (error as any).code !== '23505') throw error;
+        } else {
+          const { error } = await (supabase as any)
+            .from('saves')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('post_id', post.id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error('Save toggle failed:', err);
+        setSavedItemsMap((prev) => ({
+          ...prev,
+          [post.id]: currentlySaved,
+        }));
+      }
+    },
+    [
+      user?.id,
+      navigation,
+      savedItemsMap,
+      showStyledAlert,
+      hideStyledAlert,
+    ]
+  );
+
+  const getPostAspect = useCallback((post: ExplorePost | null | undefined) => {
+    if (!post) return null;
+    const cached = aspectCacheRef.current.get(post.id);
+    if (cached && isFinite(cached) && cached > 0) return cached;
+    return null;
+  }, []);
+
+  const resolvePostAspect = useCallback(async (post: ExplorePost) => {
+    if (!post?.id) return;
+    if (aspectCacheRef.current.has(post.id)) return;
+
+    const url =
+      post.imageUrl ||
+      post.video_thumbnail ||
+      post.user_cover_url ||
+      undefined;
+    if (!url || typeof url !== 'string') return;
+
+    try {
+      const size = await new Promise<{ width: number; height: number }>(
+        (resolve, reject) => {
+          (Image as any).getSize(
+            url,
+            (w: number, h: number) => resolve({ width: w, height: h }),
+            (err: any) => reject(err)
+          );
+        }
+      );
+      if (size.width > 0 && size.height > 0) {
+        aspectCacheRef.current.set(post.id, size.width / size.height);
+        setAspectCacheVersion((v) => v + 1);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (viewMode !== 'fullscreen') return;
+    const start = Math.max(0, fullscreenIndex - 1);
+    const end = Math.min(filteredItems.length - 1, fullscreenIndex + 3);
+    for (let i = start; i <= end; i++) {
+      const post = filteredItems[i];
+      if (post) resolvePostAspect(post);
+    }
+  }, [isDesktop, viewMode, filteredItems, fullscreenIndex, resolvePostAspect]);
+
+  useEffect(() => {
+    if (!isDesktop) {
+      setCurrentMediaAspect(null);
+      return;
+    }
+    const post = filteredItems[fullscreenIndex] ?? null;
+    if (!post) {
+      setCurrentMediaAspect(null);
+      return;
+    }
+    const cached = getPostAspect(post);
+    if (cached) {
+      setCurrentMediaAspect(cached);
+      return;
+    }
+    if (reportedAspect && reportedAspectPostIdRef.current === post.id) {
+      setCurrentMediaAspect(reportedAspect);
+    } else {
+      setCurrentMediaAspect(null);
+    }
+  }, [
+    isDesktop,
+    filteredItems,
+    fullscreenIndex,
+    aspectCacheVersion,
+    reportedAspect,
+    getPostAspect,
+  ]);
+
+  const desktopFillMode: 'contain' | 'cover' =
+    isDesktop && currentMediaAspect ? 'contain' : 'cover';
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (viewMode !== 'fullscreen') return;
+    if (!onDesktopFullscreenStateChange) return;
+
+    const post = filteredItems[fullscreenIndex] ?? null;
+    if (!post) return;
+
+    const isSaved = savedItemsMap[post.id] ?? post.isSaved ?? false;
+    const isLiked = likedItemsMap[post.id] || false;
+    const likeCount = likeCountMap[post.id] ?? post.like_count ?? 0;
+
+    onDesktopFullscreenStateChange({
+      fullscreenIndex,
+      totalCount: filteredItems.length,
+      currentPost: post,
+      isSaved,
+      isLiked,
+      likeCount,
+    });
+  }, [
+    isDesktop,
+    viewMode,
+    filteredItems,
+    fullscreenIndex,
+    savedItemsMap,
+    likedItemsMap,
+    likeCountMap,
+    onDesktopFullscreenStateChange,
+  ]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!onDesktopScrollToIndex) return;
+
+    const fn = (idx: number) => {
+      if (flatListRef.current && idx >= 0 && idx < filteredItems.length) {
+        try {
+          flatListRef.current.scrollToIndex({ index: idx, animated: true });
+          setFullscreenIndex(idx);
+        } catch {
+          /* noop */
+        }
+      }
+    };
+
+    onDesktopScrollToIndex(fn);
+  }, [isDesktop, filteredItems.length, onDesktopScrollToIndex]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!onDesktopRailHandlersChange) return;
+
+    const post = filteredItems[fullscreenIndex] ?? null;
+    if (!post) return;
+
+    const isSaved = savedItemsMap[post.id] ?? post.isSaved ?? false;
+    const opportunity = buildOpportunityFromPost(post, isSaved);
+
+    onDesktopRailHandlersChange({
+      onLike: () => handleLikePress(post),
+      onSave: () => handleSavePress(post),
+      onUser: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        navigation.navigate('UserProfile' as any, {
+          userId: post.user_id,
+          userName: post.user_full_name || 'User',
+        });
+      },
+      onReviews: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (isDesktop && onDesktopReviewsRequest) {
+          onDesktopReviewsRequest(opportunity, post.name || 'Post');
+        } else {
+          setSelectedOpportunity(opportunity);
+          setShowReviewsModal(true);
+        }
+      },
+      onDirections: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (isDesktop && onDesktopDirectionsRequest) {
+          onDesktopDirectionsRequest(opportunity);
+        } else {
+          setSelectedOpportunity(opportunity);
+          setShowDirectionsModal(true);
+        }
+      },
+      onShare: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      },
+      onAI: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        if (isDesktop && onDesktopAIRequest) {
+          onDesktopAIRequest(opportunity);
+        } else {
+          setSelectedOpportunity(opportunity);
+          setShowAIModal(true);
+        }
+      },
+    });
+  }, [
+    isDesktop,
+    filteredItems,
+    fullscreenIndex,
+    savedItemsMap,
+    handleLikePress,
+    handleSavePress,
+    navigation,
+    onDesktopRailHandlersChange,
+    onDesktopReviewsRequest,
+    onDesktopDirectionsRequest,
+    onDesktopAIRequest,
+  ]);
 
   const renderSortModal = () => (
     <Modal
@@ -1164,6 +1441,7 @@ const ExploreContent = ({ navigation }: any) => {
     );
   }
 
+  // -------- FULLSCREEN ----------
   if (viewMode === 'fullscreen' && selectedItem) {
     const allItems = filteredItems;
     const currentIndex = allItems.findIndex(
@@ -1172,168 +1450,208 @@ const ExploreContent = ({ navigation }: any) => {
     const initialIndex = currentIndex !== -1 ? currentIndex : 0;
 
     return (
-      <GestureHandlerRootView style={styles.container}>
-        <BottomSheetModalProvider>
-          <View style={styles.container}>
-            <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={handleBackToGrid}
-            >
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-              <Text style={styles.backButtonText}>Back to explore</Text>
-            </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBackToGrid}
+        >
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Text style={styles.backButtonText}>Back to explore</Text>
+        </TouchableOpacity>
 
-            <FlatList
-              ref={flatListRef}
-              data={allItems}
-              renderItem={({ item, index }) => (
-                <View style={{ height: winHeight, width: winWidth }}>
-                  <FullscreenItem
-                    item={item}
-                    index={index}
-                    fullscreenIndex={fullscreenIndex}
-                    isFocused={isFocused}
-                    isDesktop={isDesktop}
-                    winWidth={winWidth}
-                    winHeight={winHeight}
-                    isSaved={
-                      savedItemsMap[item.id] !== undefined
-                        ? savedItemsMap[item.id]
-                        : item.isSaved || false
-                    }
-                    isLiked={likedItemsMap[item.id] || false}
-                    likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
-                    isItemLoading={loadingItemsMap[item.id] === true}
-                    onShowMore={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+        <View
+          style={{ flex: 1, width: '100%' }}
+          onLayout={(e) => {
+            if (!isDesktop) return;
+            const { width: w, height: h } = e.nativeEvent.layout;
+            if (
+              h > 0 &&
+              (Math.abs(h - (desktopItemHeight ?? 0)) > 1 ||
+                Math.abs(w - (desktopItemWidth ?? 0)) > 1)
+            ) {
+              setDesktopItemHeight(h);
+              setDesktopItemWidth(w);
+            }
+          }}
+        >
+          <FlatList
+            ref={flatListRef}
+            data={allItems}
+            renderItem={({ item, index }) => (
+              <View
+                style={{
+                  height: isDesktop ? itemHeight : winHeight,
+                  width: isDesktop ? itemWidth : winWidth,
+                }}
+              >
+                <FullscreenItem
+                  item={item}
+                  index={index}
+                  fullscreenIndex={fullscreenIndex}
+                  isFocused={isFocused}
+                  isDesktop={isDesktop}
+                  cardWidth={isDesktop ? itemWidth : winWidth}
+                  cardHeight={isDesktop ? itemHeight : winHeight}
+                  isSaved={
+                    savedItemsMap[item.id] !== undefined
+                      ? savedItemsMap[item.id]
+                      : item.isSaved || false
+                  }
+                  isLiked={likedItemsMap[item.id] || false}
+                  likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
+                  isItemLoading={loadingItemsMap[item.id] === true}
+                  onShowMore={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const opp = buildOpportunityFromPost(p, false);
+                    if (isDesktop && onDesktopDetailsRequest) {
+                      onDesktopDetailsRequest(opp);
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowAIModal(true);
-                    }}
-                    onShare={() =>
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                     }
-                    onSave={(p) => {
-                      if (!user?.id) {
-                        showStyledAlert({
-                          title: '🔒 Join Munolink',
-                          message: 'Create a free account to save items.',
-                          icon: 'lock-closed',
-                          iconColor: '#4A7DFF',
-                          buttons: [
-                            {
-                              text: 'Continue Browsing',
-                              style: 'cancel',
-                              onPress: hideStyledAlert,
+                  }}
+                  onShare={() =>
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                  }
+                  onSave={(p) => handleSavePress(p)}
+                  onLike={(p) => handleLikePress(p)}
+                  onInbox={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    if (!user?.id) {
+                      showStyledAlert({
+                        title: '🔒 Join Munolink',
+                        message:
+                          'Create a free account to message sellers and providers.',
+                        icon: 'lock-closed',
+                        iconColor: '#4A7DFF',
+                        buttons: [
+                          {
+                            text: 'Continue Browsing',
+                            style: 'cancel',
+                            onPress: hideStyledAlert,
+                          },
+                          {
+                            text: 'Join Now',
+                            style: 'primary',
+                            onPress: () => {
+                              hideStyledAlert();
+                              navigation.navigate('Join');
                             },
-                            {
-                              text: 'Join Now',
-                              style: 'primary',
-                              onPress: () => {
-                                hideStyledAlert();
-                                navigation.navigate('Join');
-                              },
-                            },
-                          ],
-                        });
-                        return;
-                      }
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSavedItemsMap((prev) => ({
-                        ...prev,
-                        [p.id]: !(prev[p.id] ?? p.isSaved ?? false),
-                      }));
-                    }}
-                    onLike={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      handleLikePress(buildOpportunityFromPost(p, false));
-                    }}
-                    onInbox={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      if (!user?.id) {
-                        showStyledAlert({
-                          title: '🔒 Join Munolink',
-                          message:
-                            'Create a free account to message sellers and providers.',
-                          icon: 'lock-closed',
-                          iconColor: '#4A7DFF',
-                          buttons: [
-                            {
-                              text: 'Continue Browsing',
-                              style: 'cancel',
-                              onPress: hideStyledAlert,
-                            },
-                            {
-                              text: 'Join Now',
-                              style: 'primary',
-                              onPress: () => {
-                                hideStyledAlert();
-                                navigation.navigate('Join');
-                              },
-                            },
-                          ],
-                        });
-                        return;
-                      }
-                      navigation.navigate('Inbox', {
-                        userId: p.user_id || '',
-                        userName: p.user_full_name || 'User',
+                          },
+                        ],
                       });
-                    }}
-                    onMediaLoadStateChange={(isLoading) =>
-                      handleMediaLoadStateChange(item.id, isLoading)
+                      return;
                     }
-                    onUserPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      navigation.navigate('UserProfile' as any, {
-                        userId: p.user_id,
-                        userName: p.user_full_name || 'User',
-                      });
-                    }}
-                    onReviewsPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                    navigation.navigate('Inbox', {
+                      userId: p.user_id || '',
+                      userName: p.user_full_name || 'User',
+                    });
+                  }}
+                  onMediaLoadStateChange={(isLoading) =>
+                    handleMediaLoadStateChange(item.id, isLoading)
+                  }
+                  onUserPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    navigation.navigate('UserProfile' as any, {
+                      userId: p.user_id,
+                      userName: p.user_full_name || 'User',
+                    });
+                  }}
+                  onReviewsPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const opp = buildOpportunityFromPost(p, false);
+                    if (isDesktop && onDesktopReviewsRequest) {
+                      onDesktopReviewsRequest(opp, p.name || 'Post');
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowReviewsModal(true);
-                    }}
-                    onDirectionsPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                    }
+                  }}
+                  onDirectionsPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const opp = buildOpportunityFromPost(p, false);
+                    if (isDesktop && onDesktopDirectionsRequest) {
+                      onDesktopDirectionsRequest(opp);
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowDirectionsModal(true);
-                    }}
-                    onAIPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                      setSelectedOpportunity(buildOpportunityFromPost(p, false));
+                    }
+                  }}
+                  onAIPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                    const opp = buildOpportunityFromPost(p, false);
+                    if (isDesktop && onDesktopAIRequest) {
+                      onDesktopAIRequest(opp);
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowAIModal(true);
-                    }}
-                  />
-                </View>
-              )}
-              keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
-              pagingEnabled={!isDesktop}
-              showsVerticalScrollIndicator={false}
-              snapToInterval={winHeight}
-              snapToAlignment="start"
-              decelerationRate="fast"
-              initialScrollIndex={initialIndex}
-              getItemLayout={(data, index) => ({
-                length: winHeight,
-                offset: winHeight * index,
+                    }
+                  }}
+                  onNaturalSize={(size) => {
+                    if (!isDesktop) return;
+                    if (index !== fullscreenIndex) return;
+                    if (size && size.width > 0 && size.height > 0) {
+                      const aspect = size.width / size.height;
+                      if (!aspectCacheRef.current.has(item.id)) {
+                        aspectCacheRef.current.set(item.id, aspect);
+                        setAspectCacheVersion((v) => v + 1);
+                      }
+                      setReportedAspect(aspect);
+                      reportedAspectPostIdRef.current = item.id;
+                    }
+                  }}
+                  fillMode={desktopFillMode}
+                />
+              </View>
+            )}
+            keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
+            pagingEnabled={!isDesktop}
+            showsVerticalScrollIndicator={false}
+            snapToInterval={isDesktop ? undefined : winHeight}
+            snapToAlignment="start"
+            decelerationRate="fast"
+            initialScrollIndex={initialIndex}
+            getItemLayout={(data, index) => {
+              const h = isDesktop ? itemHeight : winHeight;
+              return {
+                length: h,
+                offset: h * index,
                 index,
-              })}
-              viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
-              onViewableItemsChanged={handleFullscreenViewableItemsChanged}
-              extraData={`${fullscreenIndex}-${isFocused}-${Object.keys(
-                loadingItemsMap
-              )
-                .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
-                .join(',')}`}
-              removeClippedSubviews={false}
-              maxToRenderPerBatch={isDesktop ? 3 : 2}
-              windowSize={isDesktop ? 5 : 3}
-              scrollEventThrottle={16}
-            />
+              };
+            }}
+            viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
+            onViewableItemsChanged={handleFullscreenViewableItemsChanged}
+            extraData={`${fullscreenIndex}-${isFocused}-${
+              isDesktop ? currentMediaAspect ?? 'na' : 'na'
+            }-${Object.keys(loadingItemsMap)
+              .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
+              .join(',')}`}
+            removeClippedSubviews={false}
+            maxToRenderPerBatch={isDesktop ? 3 : 2}
+            windowSize={isDesktop ? 5 : 3}
+            scrollEventThrottle={16}
+            onScrollToIndexFailed={(info) => {
+              setTimeout(() => {
+                try {
+                  flatListRef.current?.scrollToIndex({
+                    index: info.index,
+                    animated: false,
+                    viewPosition: 0,
+                  });
+                } catch {
+                  /* noop */
+                }
+              }, 200);
+            }}
+          />
+        </View>
 
+        {/* ✅ Mobile-only modals. On desktop the ContextPanel
+            handles reviews / directions / AI / details. */}
+        {!isDesktop && (
+          <>
             <ReviewsBottomSheet
               visible={showReviewsModal}
               productId={selectedOpportunity?.id || ''}
@@ -1350,35 +1668,35 @@ const ExploreContent = ({ navigation }: any) => {
                   : ''
               }
               onClose={handleCloseAI}
-              isDesktopView={isDesktop}
+              isDesktopView={false}
             />
 
             <DirectionsBottomSheet
               visible={showDirectionsModal}
               opportunity={selectedOpportunity}
               onClose={handleCloseDirections}
-              isDesktopView={isDesktop}
+              isDesktopView={false}
             />
+          </>
+        )}
 
-            <StyledAlert
-              visible={styledAlertConfig.visible}
-              title={styledAlertConfig.title}
-              message={styledAlertConfig.message}
-              icon={styledAlertConfig.icon}
-              iconColor={styledAlertConfig.iconColor}
-              buttons={styledAlertConfig.buttons}
-              onClose={hideStyledAlert}
-            />
-          </View>
-        </BottomSheetModalProvider>
-      </GestureHandlerRootView>
+        <StyledAlert
+          visible={styledAlertConfig.visible}
+          title={styledAlertConfig.title}
+          message={styledAlertConfig.message}
+          icon={styledAlertConfig.icon}
+          iconColor={styledAlertConfig.iconColor}
+          buttons={styledAlertConfig.buttons}
+          onClose={hideStyledAlert}
+        />
+      </View>
     );
   }
 
-  const numColumns = isDesktop ? 4 : 3;
-  const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
+  // -------- GRID ----------
+  const numColumns = isDesktop ? DESKTOP_GRID_COLUMNS : 3;
+  const gridKey = isDesktop ? 'desktop-grid-6col' : 'mobile-grid-3col';
 
-  // ✅ Show the web refresh button only when near the top of the grid.
   const showWebRefreshButton =
     Platform.OS === 'web' && !isDesktop && gridScrollY < 40;
 
@@ -1481,8 +1799,6 @@ const ExploreContent = ({ navigation }: any) => {
         stickyHeaderIndices={[0]}
       />
 
-      {/* ✅ Web-only fallback refresh button (RefreshControl doesn't
-          respond to pull gestures on web). */}
       {showWebRefreshButton && (
         <TouchableOpacity
           style={styles.webRefreshButton}
@@ -1514,25 +1830,276 @@ const ExploreContent = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// MAIN EXPORT
+// ============================================================
 export const ExploreScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
+  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
+
+  const [fsState, setFsState] = useState<{
+    fullscreenIndex: number;
+    totalCount: number;
+    currentPost: ExplorePost | null;
+    isSaved: boolean;
+    isLiked: boolean;
+    likeCount: number;
+  } | null>(null);
+
+  const scrollToFullscreenIndexRef = useRef<((idx: number) => void) | null>(
+    null
+  );
+
+  const [railHandlers, setRailHandlers] = useState<{
+    onLike: () => void;
+    onSave: () => void;
+    onUser: () => void;
+    onReviews: () => void;
+    onDirections: () => void;
+    onShare: () => void;
+    onAI: () => void;
+  } | null>(null);
+
+  // ✅ ContextPanel state — defaults to Featured (null view + AI off)
+  const [contextPanelView, setContextPanelView] = useState<
+    'details' | 'reviews' | 'directions' | null
+  >(null);
+  const [aiViewActive, setAiViewActive] = useState(false);
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState<Opportunity | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [selectedProductTitle, setSelectedProductTitle] =
+    useState<string>('');
+
+  // ✅ Reset the panel to Featured whenever the fullscreen post
+  // changes (entering fullscreen, or swiping to a different post).
+  const handleFullscreenIndexChange = useCallback(
+    (_index: number, _postId: string) => {
+      setContextPanelView(null);
+      setAiViewActive(false);
+      setSelectedOpportunity(null);
+      setSelectedProductId('');
+      setSelectedProductTitle('');
+    },
+    []
+  );
+
+  if (!isDesktop) {
+    return (
+      <ExploreContent
+        navigation={navigation}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+      />
+    );
+  }
+
+  const currentPost = fsState?.currentPost || null;
+  const currentOpportunity = currentPost
+    ? buildOpportunityFromPost(currentPost, fsState?.isSaved || false)
+    : null;
+
+  const renderDesktopActionRail = () => {
+    if (viewMode !== 'fullscreen') return null;
+    if (!currentPost || !railHandlers) return null;
+
+    return (
+      <FloatingActionRail
+        key={`explore-rail-${currentPost.id}`}
+        opportunity={currentOpportunity!}
+        bottomInset={0}
+        rightShift={0}
+        isLiked={fsState?.isLiked || false}
+        likeCount={fsState?.likeCount || 0}
+        onLikePress={railHandlers.onLike}
+        onUserPress={railHandlers.onUser}
+        onReviewsPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setSelectedProductId(currentOpportunity.id);
+          setSelectedProductTitle(currentOpportunity.title || 'Post');
+          setAiViewActive(false);
+          setContextPanelView('reviews');
+        }}
+        onDirectionsPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setAiViewActive(false);
+          setContextPanelView('directions');
+        }}
+        onSharePress={railHandlers.onShare}
+        onAIPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setContextPanelView(null);
+          setAiViewActive(true);
+        }}
+        onSavePress={railHandlers.onSave}
+        isSaved={fsState?.isSaved || false}
+        savedCount={currentPost.saveCount || 0}
+        shareCount={currentPost.share_count || 0}
+        reviewCount={currentPost.comment_count || 0}
+        distance={currentPost.distance || 0}
+        userAvatar={currentPost.user_avatar || null}
+      />
+    );
+  };
+
+  const renderDesktopNavArrows = () => {
+    if (viewMode !== 'fullscreen') return null;
+    if (!fsState) return null;
+
+    const atStart = fsState.fullscreenIndex === 0;
+    const atEnd = fsState.fullscreenIndex >= fsState.totalCount - 1;
+
+    return (
+      <View style={{ alignItems: 'center', gap: 8 }}>
+        <TouchableOpacity
+          style={[styles.navArrow, atStart && styles.navArrowDisabled]}
+          onPress={() => {
+            if (!atStart) {
+              scrollToFullscreenIndexRef.current?.(
+                fsState.fullscreenIndex - 1
+              );
+            }
+          }}
+          disabled={atStart}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="chevron-up"
+            size={28}
+            color={atStart ? '#555' : '#FFFFFF'}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.navArrow, atEnd && styles.navArrowDisabled]}
+          onPress={() => {
+            if (!atEnd) {
+              scrollToFullscreenIndexRef.current?.(
+                fsState.fullscreenIndex + 1
+              );
+            }
+          }}
+          disabled={atEnd}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="chevron-down"
+            size={28}
+            color={atEnd ? '#555' : '#FFFFFF'}
+          />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const isGrid = viewMode === 'grid';
+
   return (
-    <ResponsiveLayout
-      currentRoute="Explore"
-      onNavigate={(route) => navigation?.navigate(route)}
-      floatingActions={null}
-      hideContextPanel={true}
-      fullWidth={true}
-    >
-      <ExploreContent navigation={navigation} />
-    </ResponsiveLayout>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
+      <BottomSheetModalProvider>
+        <ResponsiveLayout
+          currentRoute="Explore"
+          fullWidth={isGrid}
+          hideContextPanel={isGrid}
+          desktopActionRail={renderDesktopActionRail()}
+          desktopNavArrows={renderDesktopNavArrows()}
+          feedAspectRatio={undefined /* SceneRenderer reports it up */}
+          selectedOpportunity={
+            selectedOpportunity || currentOpportunity || null
+          }
+          featuredOpportunities={[]}
+          contextPanelView={contextPanelView}
+          onContextPanelViewChange={setContextPanelView}
+          selectedProductId={selectedProductId}
+          selectedProductTitle={selectedProductTitle}
+          selectedOpportunityForModal={selectedOpportunity}
+          aiViewActive={aiViewActive}
+          onAIClose={() => {
+            setAiViewActive(false);
+            setSelectedOpportunity(null);
+            setContextPanelView(null);
+          }}
+          aiContextHint={
+            selectedOpportunity
+              ? `Explore: ${selectedOpportunity.title}`
+              : ''
+          }
+          directionsViewActive={contextPanelView === 'directions'}
+          onDirectionsClose={() => {
+            setContextPanelView(null);
+            setSelectedOpportunity(null);
+          }}
+          onReviewsPress={(productId, productTitle) => {
+            setSelectedProductId(productId);
+            setSelectedProductTitle(productTitle || '');
+            setAiViewActive(false);
+            setContextPanelView('reviews');
+          }}
+          onShowMorePress={(opp) => {
+            setSelectedOpportunity(opp);
+            setAiViewActive(false);
+            setContextPanelView('details');
+          }}
+          onSharePress={() => {
+            /* handled inside ExploreContent */
+          }}
+          onAIPress={(opp) => {
+            setSelectedOpportunity(opp);
+            setContextPanelView(null);
+            setAiViewActive(true);
+          }}
+          onCloseReviews={() => {
+            setContextPanelView(null);
+            setSelectedProductId('');
+            setSelectedProductTitle('');
+          }}
+          onCloseDetails={() => {
+            setContextPanelView(null);
+            setSelectedOpportunity(null);
+          }}
+        >
+          <ExploreContent
+            navigation={navigation}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            onDesktopFullscreenStateChange={setFsState}
+            onDesktopScrollToIndex={(fn) => {
+              scrollToFullscreenIndexRef.current = fn;
+            }}
+            onDesktopRailHandlersChange={setRailHandlers}
+            onDesktopFullscreenIndexChange={handleFullscreenIndexChange}
+            onDesktopReviewsRequest={(opp, title) => {
+              setSelectedOpportunity(opp);
+              setSelectedProductId(opp.id);
+              setSelectedProductTitle(title);
+              setAiViewActive(false);
+              setContextPanelView('reviews');
+            }}
+            onDesktopDirectionsRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setAiViewActive(false);
+              setContextPanelView('directions');
+            }}
+            onDesktopAIRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setContextPanelView(null);
+              setAiViewActive(true);
+            }}
+            onDesktopDetailsRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setAiViewActive(false);
+              setContextPanelView('details');
+            }}
+          />
+        </ResponsiveLayout>
+      </BottomSheetModalProvider>
+    </GestureHandlerRootView>
   );
 };
 
-// ============================================================
-// STYLES
-// ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0D0D1A' },
   containerDesktop: { backgroundColor: '#0D0D1A', padding: 24 },
@@ -1738,6 +2305,20 @@ const styles = StyleSheet.create({
     transform: [{ translateY: -150 }],
     zIndex: 50,
   },
+  navArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  navArrowDisabled: {
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
 
   modalOverlay: {
     flex: 1,
@@ -1781,7 +2362,6 @@ const styles = StyleSheet.create({
   sortOptionText: { color: '#E8ECF4', fontSize: 16 },
   sortOptionTextActive: { color: '#4A7DFF', fontWeight: '500' },
 
-  // ✅ Viewport-locked container for web
   containerWeb: {
     flex: 1,
     backgroundColor: '#0D0D1A',
@@ -1791,7 +2371,6 @@ const styles = StyleSheet.create({
     position: 'relative' as any,
   },
 
-  // ✅ Web-only refresh button — bottom-center, sits above the tab bar
   webRefreshButton: {
     position: 'absolute',
     bottom: 90,

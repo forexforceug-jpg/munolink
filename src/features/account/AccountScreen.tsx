@@ -56,9 +56,9 @@ const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
   minimumViewTime: 100,
 } as ViewabilityConfig;
 
-// ============================================================
-// ✅ Price type — now includes 'showcase'
-// ============================================================
+const DESKTOP_FEED_ASPECT = 9 / 16;
+const DESKTOP_FALLBACK_MAX_HEIGHT = 900;
+
 type PriceType = 'fixed' | 'negotiable' | 'free' | 'showcase';
 
 const VALID_PRICE_TYPES: PriceType[] = [
@@ -79,12 +79,6 @@ const PRICE_TYPE_OPTIONS: {
   { key: 'showcase', label: 'Showcase', icon: 'sparkles-outline' },
 ];
 
-// ============================================================
-// HELPERS
-// ============================================================
-
-// Strip the Ugandan country code for display in the phone input.
-// Stored values are E.164 (+256XXXXXXXXX). Display values are 9 digits.
 const stripCountryCode = (raw: string | null | undefined): string => {
   if (!raw) return '';
   const digits = String(raw).replace(/\D/g, '');
@@ -201,7 +195,6 @@ async function deleteStorageFileFromPublicUrl(
   }
 }
 
-// --- Types ---
 interface UserProfile {
   id: string;
   full_name: string | null;
@@ -251,9 +244,6 @@ interface CatalogItem {
   isSaved?: boolean;
 }
 
-// ============================================================
-// HELPERS — pricing
-// ============================================================
 const isRemoteUrl = (u: string | null | undefined): boolean =>
   !!u && (u.startsWith('http://') || u.startsWith('https://'));
 
@@ -345,13 +335,9 @@ function buildOpportunityFromCatalogItem(
       ...specs,
       price_type: effectivePriceType,
     },
-    ...( { price_type: effectivePriceType } as any),
+    ...({ price_type: effectivePriceType } as any),
   };
 }
-
-// ============================================================
-// SUB-COMPONENTS
-// ============================================================
 
 const StatsRow = ({ following, followers, likes }: any) => (
   <View style={styles.statsRow}>
@@ -506,17 +492,14 @@ const ItemMediaLoadingSpinner: React.FC = () => {
   );
 };
 
-// ============================================================
-// FULLSCREEN ITEM
-// ============================================================
 interface FullscreenItemProps {
   item: CatalogItem;
   index: number;
   fullscreenIndex: number;
   isFocused: boolean;
   isDesktop: boolean;
-  winWidth: number;
-  winHeight: number;
+  cardWidth: number;
+  cardHeight: number;
   userProfile: UserProfile | null;
   userId: string | undefined;
   isSaved: boolean;
@@ -535,6 +518,10 @@ interface FullscreenItemProps {
   onDirectionsPress: (item: CatalogItem) => void;
   onAIPress: (item: CatalogItem) => void;
   onOverflowPress: (item: CatalogItem) => void;
+  onNaturalSize?: (
+    size: { width: number; height: number } | null
+  ) => void;
+  fillMode?: 'contain' | 'cover';
 }
 
 const FullscreenItem: React.FC<FullscreenItemProps> = ({
@@ -543,8 +530,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   fullscreenIndex,
   isFocused,
   isDesktop,
-  winWidth,
-  winHeight,
+  cardWidth,
+  cardHeight,
   userProfile,
   userId,
   isSaved,
@@ -563,6 +550,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onDirectionsPress,
   onAIPress,
   onOverflowPress,
+  onNaturalSize,
+  fillMode = 'contain',
 }) => {
   const opportunity = buildOpportunityFromCatalogItem(
     item,
@@ -607,8 +596,6 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   }
 
   const price = getPriceFromItem(item) || 0;
-  const cardWidth = isDesktop ? 420 : winWidth;
-  const cardHeight = isDesktop ? winHeight : winHeight;
 
   const isVisible = isFocused && index === fullscreenIndex;
 
@@ -658,35 +645,40 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         autoPlayInterval={5000}
         priceType={effectivePriceType}
         resetKey={item.id}
+        useExplicitBottomOffset={isDesktop ? false : true}
         bottomOffset={0}
         isVisible={isVisible}
+        onNaturalSize={onNaturalSize}
+        fillMode={isDesktop ? fillMode : 'contain'}
       />
 
       {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
 
-      <View style={styles.actionRailWrapper}>
-        <FloatingActionRail
-          key={`rail-${item.id}`}
-          opportunity={opportunity}
-          isLiked={isLiked}
-          bottomInset={80}
-          rightShift={-6}
-          likeCount={likeCount}
-          onLikePress={() => onLike(item)}
-          onUserPress={() => onUserPress(item)}
-          onReviewsPress={() => onReviewsPress(item)}
-          onDirectionsPress={() => onDirectionsPress(item)}
-          onSharePress={onShare}
-          onAIPress={() => onAIPress(item)}
-          onSavePress={() => onSave(item)}
-          isSaved={isSaved}
-          savedCount={item.saveCount || 0}
-          shareCount={item.share_count || 0}
-          reviewCount={item.comment_count || 0}
-          distance={item.distance || 0}
-          userAvatar={userProfile?.avatar_url || null}
-        />
-      </View>
+      {!isDesktop && (
+        <View style={styles.actionRailWrapper}>
+          <FloatingActionRail
+            key={`rail-${item.id}`}
+            opportunity={opportunity}
+            isLiked={isLiked}
+            bottomInset={80}
+            rightShift={-6}
+            likeCount={likeCount}
+            onLikePress={() => onLike(item)}
+            onUserPress={() => onUserPress(item)}
+            onReviewsPress={() => onReviewsPress(item)}
+            onDirectionsPress={() => onDirectionsPress(item)}
+            onSharePress={onShare}
+            onAIPress={() => onAIPress(item)}
+            onSavePress={() => onSave(item)}
+            isSaved={isSaved}
+            savedCount={item.saveCount || 0}
+            shareCount={item.share_count || 0}
+            reviewCount={item.comment_count || 0}
+            distance={item.distance || 0}
+            userAvatar={userProfile?.avatar_url || null}
+          />
+        </View>
+      )}
 
       {isMine && (
         <TouchableOpacity
@@ -701,9 +693,6 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   );
 };
 
-// ============================================================
-// MANUAL GRID (no nested FlatList → no scroll conflicts)
-// ============================================================
 interface PostsGridProps {
   items: CatalogItem[];
   onPress: (item: CatalogItem) => void;
@@ -717,7 +706,7 @@ const PostsGrid: React.FC<PostsGridProps> = ({
   onLongPress,
   isDesktop,
 }) => {
-  const NUM_COLUMNS = 3;
+  const NUM_COLUMNS = 6;
 
   const rows: (CatalogItem | null)[][] = useMemo(() => {
     const out: (CatalogItem | null)[][] = [];
@@ -754,17 +743,55 @@ const PostsGrid: React.FC<PostsGridProps> = ({
   );
 };
 
-// ============================================================
-// MAIN CONTENT
-// ============================================================
-const AccountContent = ({ navigation }: any) => {
+interface AccountContentProps {
+  navigation: any;
+  viewMode: 'grid' | 'fullscreen';
+  setViewMode: (mode: 'grid' | 'fullscreen') => void;
+  onDesktopFullscreenStateChange?: (state: {
+    fullscreenIndex: number;
+    totalCount: number;
+    currentItem: CatalogItem | null;
+    isSaved: boolean;
+    isLiked: boolean;
+    likeCount: number;
+    userProfile: UserProfile | null;
+  }) => void;
+  onDesktopScrollToIndex?: (fn: (idx: number) => void) => void;
+  onDesktopRailHandlersChange?: (handlers: {
+    onLike: () => void;
+    onSave: () => void;
+    onUser: () => void;
+    onReviews: () => void;
+    onDirections: () => void;
+    onShare: () => void;
+    onAI: () => void;
+  }) => void;
+  onDesktopReviewsRequest?: (
+    opportunity: Opportunity,
+    productTitle: string
+  ) => void;
+  onDesktopDirectionsRequest?: (opportunity: Opportunity) => void;
+  onDesktopAIRequest?: (opportunity: Opportunity) => void;
+  onDesktopDetailsRequest?: (opportunity: Opportunity) => void;
+}
+
+const AccountContent: React.FC<AccountContentProps> = ({
+  navigation,
+  viewMode,
+  setViewMode,
+  onDesktopFullscreenStateChange,
+  onDesktopScrollToIndex,
+  onDesktopRailHandlersChange,
+  onDesktopReviewsRequest,
+  onDesktopDirectionsRequest,
+  onDesktopAIRequest,
+  onDesktopDetailsRequest,
+}) => {
   const { user, isAuthenticated, logout } = useAuth();
   const { isDesktop } = useBreakpoint();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
 
-  // FAB position: tab bar height + gap, so it never slides under the
-  // system nav bar / gesture bar.
   const tabBarHeight = getTabBarHeight(insets);
   const FAB_BOTTOM_OFFSET = tabBarHeight + 16;
 
@@ -784,7 +811,6 @@ const AccountContent = ({ navigation }: any) => {
   const [showEditPost, setShowEditPost] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
 
-  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [savedItemsMap, setSavedItemsMap] = useState<Record<string, boolean>>(
     {}
@@ -806,6 +832,32 @@ const AccountContent = ({ navigation }: any) => {
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
+
+  const aspectCacheRef = useRef<Map<string, number>>(new Map());
+  const [aspectCacheVersion, setAspectCacheVersion] = useState(0);
+  const [reportedAspect, setReportedAspect] = useState<number | null>(null);
+  const reportedAspectPostIdRef = useRef<string | null>(null);
+  const [currentMediaAspect, setCurrentMediaAspect] = useState<number | null>(
+    null
+  );
+
+  const [desktopItemHeight, setDesktopItemHeight] = useState<number | null>(
+    null
+  );
+  const [desktopItemWidth, setDesktopItemWidth] = useState<number | null>(
+    null
+  );
+
+  const desktopFallbackHeight = Math.min(
+    height * 0.92,
+    DESKTOP_FALLBACK_MAX_HEIGHT
+  );
+  const desktopFallbackWidth = desktopFallbackHeight * DESKTOP_FEED_ASPECT;
+
+  const itemHeight = isDesktop
+    ? desktopItemHeight ?? desktopFallbackHeight
+    : height;
+  const itemWidth = isDesktop ? desktopItemWidth ?? desktopFallbackWidth : width;
 
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
@@ -893,9 +945,6 @@ const AccountContent = ({ navigation }: any) => {
 
   const flatListRef = useRef<FlatList>(null);
 
-  // ============================================================
-  // SHAPER — converts raw catalog rows to CatalogItem[]
-  // ============================================================
   const shapeCatalogRows = useCallback(
     async (rows: any[]): Promise<CatalogItem[]> => {
       if (!rows || rows.length === 0) return [];
@@ -995,9 +1044,6 @@ const AccountContent = ({ navigation }: any) => {
     [userProfile]
   );
 
-  // ============================================================
-  // FETCH — user profile
-  // ============================================================
   const fetchUserProfile = useCallback(async () => {
     if (!user?.id) return null;
 
@@ -1056,9 +1102,6 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user]);
 
-  // ============================================================
-  // FETCH — user's own catalog
-  // ============================================================
   const fetchUserCatalog = useCallback(
     async (_profile: UserProfile | null) => {
       if (!user?.id) return [];
@@ -1081,9 +1124,6 @@ const AccountContent = ({ navigation }: any) => {
     [user, shapeCatalogRows]
   );
 
-  // ============================================================
-  // FETCH — saved posts
-  // ============================================================
   const fetchSavedItems = useCallback(async () => {
     if (!user?.id) return [];
 
@@ -1113,9 +1153,6 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user, shapeCatalogRows]);
 
-  // ============================================================
-  // FETCH — liked posts
-  // ============================================================
   const fetchLikedItems = useCallback(async () => {
     if (!user?.id) return [];
 
@@ -1145,9 +1182,6 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user, shapeCatalogRows]);
 
-  // ============================================================
-  // FETCH — follow stats
-  // ============================================================
   const fetchFollowStats = useCallback(async () => {
     if (!user?.id) return { followers: 0, following: 0 };
 
@@ -1172,9 +1206,6 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [user?.id]);
 
-  // ============================================================
-  // FETCH — total likes on user's own posts
-  // ============================================================
   const fetchLikeStats = useCallback(
     async (myCatalogIds: string[]) => {
       if (!user?.id || myCatalogIds.length === 0) return 0;
@@ -1195,9 +1226,6 @@ const AccountContent = ({ navigation }: any) => {
     [user?.id]
   );
 
-  // ============================================================
-  // LOAD ALL DATA
-  // ============================================================
   const loadAllData = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
@@ -1305,9 +1333,6 @@ const AccountContent = ({ navigation }: any) => {
     };
   }, [user?.id, catalogItems]);
 
-  // ============================================================
-  // FETCH SAVED / LIKED WHEN TABS BECOME ACTIVE
-  // ============================================================
   useEffect(() => {
     if (!user?.id) return;
 
@@ -1353,9 +1378,6 @@ const AccountContent = ({ navigation }: any) => {
     }
   }, [loadAllData, activeTab, fetchSavedItems, fetchLikedItems]);
 
-  // ============================================================
-  // WHICH ITEMS TO RENDER IN THE GRID
-  // ============================================================
   const activeItems = useMemo(() => {
     switch (activeTab) {
       case 'saved':
@@ -1367,10 +1389,6 @@ const AccountContent = ({ navigation }: any) => {
         return catalogItems;
     }
   }, [activeTab, savedItems, likedItems, catalogItems]);
-
-  // ============================================================
-  // PROFILE IMAGE UPLOAD
-  // ============================================================
 
   const uploadProfileImage = async (
     uri: string,
@@ -1574,7 +1592,6 @@ const AccountContent = ({ navigation }: any) => {
         updateData.full_name = editForm.full_name.trim();
       }
 
-      // ✅ Persist phone number as E.164 (+256XXXXXXXXX)
       if (editForm.phone_number.trim()) {
         const digits = editForm.phone_number.replace(/\D/g, '');
         updateData.phone_number = digits.startsWith('256')
@@ -1755,6 +1772,7 @@ const AccountContent = ({ navigation }: any) => {
     [
       user?.id,
       selectedItem?.id,
+      setViewMode,
       showStyledAlert,
       hideStyledAlert,
     ]
@@ -1768,7 +1786,7 @@ const AccountContent = ({ navigation }: any) => {
       const destructiveIndex = 1;
       const cancelIndex = 2;
 
-      if (Platform.OS === 'ios') {
+      if (Platform.OS === 'ios' && !isDesktop) {
         ActionSheetIOS.showActionSheetWithOptions(
           {
             options,
@@ -1811,6 +1829,7 @@ const AccountContent = ({ navigation }: any) => {
     },
     [
       user?.id,
+      isDesktop,
       openEditPost,
       confirmDeletePost,
       showStyledAlert,
@@ -2288,14 +2307,14 @@ const AccountContent = ({ navigation }: any) => {
       setFullscreenIndex(idx >= 0 ? idx : 0);
       setViewMode('fullscreen');
     },
-    [activeItems]
+    [activeItems, setViewMode]
   );
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
     setFullscreenIndex(0);
-  }, []);
+  }, [setViewMode]);
 
   const handleCloseAI = useCallback(() => {
     setShowAIModal(false);
@@ -2393,14 +2412,11 @@ const AccountContent = ({ navigation }: any) => {
 
   const handleSettingsPress = () => setShowSettings(true);
 
-  // Opens the edit-profile modal, pre-filled with the current profile.
-  // Used both by "Profile Settings" and "Change Location".
   const openEditProfileModal = useCallback(() => {
     setShowEditProfile(true);
     if (userProfile) {
       setEditForm({
         full_name: userProfile.full_name || '',
-        // ✅ Show only the local part (no +256)
         phone_number: stripCountryCode(userProfile.phone_number),
         bio: userProfile.bio || '',
         location_city: userProfile.location_city || '',
@@ -2417,8 +2433,6 @@ const AccountContent = ({ navigation }: any) => {
     switch (action) {
       case 'profile':
       case 'location':
-        // Both open the same modal; the modal already contains the
-        // location fields, so "Change Location" is a shortcut to them.
         openEditProfileModal();
         break;
       case 'help':
@@ -2434,10 +2448,6 @@ const AccountContent = ({ navigation }: any) => {
         navigation.navigate('TermsOfService');
         break;
       case 'addAccount':
-        // Note: Supabase only supports one active session at a time.
-        // "Add Account" therefore signs the current user out and takes
-        // them to Sign In to log into a different account. The previous
-        // session is replaced when the new login completes.
         showStyledAlert({
           title: 'Add Account',
           message:
@@ -2525,6 +2535,215 @@ const AccountContent = ({ navigation }: any) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     navigation.navigate('UploadCamera');
   }, [navigation]);
+
+  const getPostAspect = useCallback((item: CatalogItem | null | undefined) => {
+    if (!item) return null;
+    const cached = aspectCacheRef.current.get(item.id);
+    if (cached && isFinite(cached) && cached > 0) return cached;
+    return null;
+  }, []);
+
+  const resolvePostAspect = useCallback(async (item: CatalogItem) => {
+    if (!item?.id) return;
+    if (aspectCacheRef.current.has(item.id)) return;
+
+    const url =
+      (item.images && item.images[0]) ||
+      item.video_thumbnail ||
+      undefined;
+    if (!url || typeof url !== 'string') return;
+
+    try {
+      const size = await new Promise<{ width: number; height: number }>(
+        (resolve, reject) => {
+          (Image as any).getSize(
+            url,
+            (w: number, h: number) => resolve({ width: w, height: h }),
+            (err: any) => reject(err)
+          );
+        }
+      );
+      if (size.width > 0 && size.height > 0) {
+        aspectCacheRef.current.set(item.id, size.width / size.height);
+        setAspectCacheVersion((v) => v + 1);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (viewMode !== 'fullscreen') return;
+    const start = Math.max(0, fullscreenIndex - 1);
+    const end = Math.min(activeItems.length - 1, fullscreenIndex + 3);
+    for (let i = start; i <= end; i++) {
+      const post = activeItems[i];
+      if (post) resolvePostAspect(post);
+    }
+  }, [isDesktop, viewMode, activeItems, fullscreenIndex, resolvePostAspect]);
+
+  useEffect(() => {
+    if (!isDesktop) {
+      setCurrentMediaAspect(null);
+      return;
+    }
+    const post = activeItems[fullscreenIndex] ?? null;
+    if (!post) {
+      setCurrentMediaAspect(null);
+      return;
+    }
+    const cached = getPostAspect(post);
+    if (cached) {
+      setCurrentMediaAspect(cached);
+      return;
+    }
+    if (reportedAspect && reportedAspectPostIdRef.current === post.id) {
+      setCurrentMediaAspect(reportedAspect);
+    } else {
+      setCurrentMediaAspect(null);
+    }
+  }, [
+    isDesktop,
+    activeItems,
+    fullscreenIndex,
+    aspectCacheVersion,
+    reportedAspect,
+    getPostAspect,
+  ]);
+
+  const desktopFillMode: 'contain' | 'cover' =
+    isDesktop && currentMediaAspect ? 'contain' : 'cover';
+
+  // ✅ Report fullscreen state upward
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (viewMode !== 'fullscreen') return;
+    if (!onDesktopFullscreenStateChange) return;
+
+    const item = activeItems[fullscreenIndex] ?? null;
+    if (!item) return;
+
+    const isSaved = savedItemsMap[item.id] ?? item.isSaved ?? false;
+    const isLiked = likedItemsMap[item.id] || false;
+    const likeCount = likeCountMap[item.id] ?? item.like_count ?? 0;
+
+    onDesktopFullscreenStateChange({
+      fullscreenIndex,
+      totalCount: activeItems.length,
+      currentItem: item,
+      isSaved,
+      isLiked,
+      likeCount,
+      userProfile,
+    });
+  }, [
+    isDesktop,
+    viewMode,
+    activeItems,
+    fullscreenIndex,
+    savedItemsMap,
+    likedItemsMap,
+    likeCountMap,
+    userProfile,
+    onDesktopFullscreenStateChange,
+  ]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!onDesktopScrollToIndex) return;
+
+    const fn = (idx: number) => {
+      if (flatListRef.current && idx >= 0 && idx < activeItems.length) {
+        try {
+          flatListRef.current.scrollToIndex({ index: idx, animated: true });
+          setFullscreenIndex(idx);
+        } catch {
+          /* noop */
+        }
+      }
+    };
+
+    onDesktopScrollToIndex(fn);
+  }, [isDesktop, activeItems.length, onDesktopScrollToIndex]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!onDesktopRailHandlersChange) return;
+
+    const item = activeItems[fullscreenIndex] ?? null;
+    if (!item) return;
+
+    const isSaved = savedItemsMap[item.id] ?? item.isSaved ?? false;
+    const opportunity = buildOpportunityFromCatalogItem(
+      item,
+      userProfile,
+      isSaved
+    );
+
+    onDesktopRailHandlersChange({
+      onLike: () => handleLikePress(opportunity),
+      onSave: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setSavedItemsMap((prev) => ({
+          ...prev,
+          [item.id]: !(prev[item.id] ?? item.isSaved ?? false),
+        }));
+      },
+      onUser: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        navigation.navigate('UserProfile', {
+          userId: user?.id,
+          userName: userProfile?.full_name || 'User',
+        });
+      },
+      onReviews: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (isDesktop && onDesktopReviewsRequest) {
+          onDesktopReviewsRequest(opportunity, item.name || 'Post');
+        } else {
+          setSelectedOpportunity(opportunity);
+          setShowReviewsModal(true);
+        }
+      },
+      onDirections: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (isDesktop && onDesktopDirectionsRequest) {
+          onDesktopDirectionsRequest(opportunity);
+        } else {
+          setSelectedOpportunity(opportunity);
+          setShowDirectionsModal(true);
+        }
+      },
+      onShare: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      },
+      onAI: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        if (isDesktop && onDesktopAIRequest) {
+          onDesktopAIRequest(opportunity);
+        } else {
+          setSelectedOpportunity(opportunity);
+          setShowAIModal(true);
+        }
+      },
+    });
+  }, [
+    isDesktop,
+    activeItems,
+    fullscreenIndex,
+    savedItemsMap,
+    likedItemsMap,
+    likeCountMap,
+    userProfile,
+    user?.id,
+    navigation,
+    handleLikePress,
+    onDesktopRailHandlersChange,
+    onDesktopReviewsRequest,
+    onDesktopDirectionsRequest,
+    onDesktopAIRequest,
+  ]);
 
   const renderEditProfileModal = () => {
     const avatarUrl =
@@ -2636,7 +2855,6 @@ const AccountContent = ({ navigation }: any) => {
 
                 <View style={styles.formGroup}>
                   <Text style={styles.formLabel}>Phone Number</Text>
-                  {/* ✅ Fixed +256 country code, only the local part is editable */}
                   <View style={styles.phoneInput}>
                     <View style={styles.countryCode}>
                       <Text style={styles.countryCodeText}>+256</Text>
@@ -2786,7 +3004,6 @@ const AccountContent = ({ navigation }: any) => {
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.modalBodyContent}
             >
-              {/* MEDIA */}
               <View style={styles.mediaSection}>
                 <Text style={styles.formLabel}>Media</Text>
                 <Text style={styles.formHelperText}>
@@ -2853,7 +3070,6 @@ const AccountContent = ({ navigation }: any) => {
                 </ScrollView>
               </View>
 
-              {/* THUMBNAIL */}
               {postForm.video && (
                 <View style={styles.formGroup}>
                   <Text style={styles.formLabel}>Video Thumbnail</Text>
@@ -2897,7 +3113,6 @@ const AccountContent = ({ navigation }: any) => {
                 </View>
               )}
 
-              {/* TITLE */}
               <View style={styles.formGroup}>
                 <TextInput
                   style={styles.formInput}
@@ -2911,7 +3126,6 @@ const AccountContent = ({ navigation }: any) => {
                 />
               </View>
 
-              {/* PRICE TYPE */}
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>Post Type</Text>
                 <Text style={styles.formHelperText}>
@@ -2963,7 +3177,6 @@ const AccountContent = ({ navigation }: any) => {
                 </View>
               </View>
 
-              {/* PRICE */}
               {priceEditable && (
                 <View style={styles.formGroup}>
                   <Text style={styles.formLabel}>
@@ -2989,7 +3202,6 @@ const AccountContent = ({ navigation }: any) => {
                 </View>
               )}
 
-              {/* DESCRIPTION */}
               <View style={styles.formGroup}>
                 <TextInput
                   style={[styles.formInput, styles.formTextArea]}
@@ -3109,136 +3321,220 @@ const AccountContent = ({ navigation }: any) => {
     return <GuestAccountScreen navigation={navigation} />;
   }
 
+  // -------- FULLSCREEN ----------
   if (viewMode === 'fullscreen' && selectedItem) {
     const allItems = activeItems;
     const currentIndex = allItems.findIndex((i) => i.id === selectedItem.id);
     const initialIndex = currentIndex !== -1 ? currentIndex : 0;
 
     return (
-      <GestureHandlerRootView style={styles.fullscreenContainer}>
-        <BottomSheetModalProvider>
-          <View style={styles.fullscreenContainer}>
-            <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+      <View style={styles.fullscreenContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-            <TouchableOpacity
-              style={styles.fullscreenBackButton}
-              onPress={handleBackToGrid}
-            >
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-              <Text style={styles.fullscreenBackText}>Back</Text>
-            </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.fullscreenBackButton}
+          onPress={handleBackToGrid}
+        >
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Text style={styles.fullscreenBackText}>Back</Text>
+        </TouchableOpacity>
 
-            <FlatList
-              ref={flatListRef}
-              data={allItems}
-              renderItem={({ item, index }) => (
-                <View style={{ height: height, width: width }}>
-                  <FullscreenItem
-                    item={item}
-                    index={index}
-                    fullscreenIndex={fullscreenIndex}
-                    isFocused={isFocused}
-                    isDesktop={isDesktop}
-                    winWidth={width}
-                    winHeight={height}
-                    userProfile={userProfile}
-                    userId={user?.id}
-                    isSaved={savedItemsMap[item.id] || false}
-                    isLiked={likedItemsMap[item.id] || false}
-                    likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
-                    isItemLoading={loadingItemsMap[item.id] === true}
-                    isMine={item.user_id === user?.id}
-                    onShowMore={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSelectedOpportunity(
-                        buildOpportunityFromCatalogItem(p, userProfile, false)
-                      );
+        <View
+          style={{ flex: 1, width: '100%' }}
+          onLayout={(e) => {
+            if (!isDesktop) return;
+            const { width: w, height: h } = e.nativeEvent.layout;
+            if (
+              h > 0 &&
+              (Math.abs(h - (desktopItemHeight ?? 0)) > 1 ||
+                Math.abs(w - (desktopItemWidth ?? 0)) > 1)
+            ) {
+              setDesktopItemHeight(h);
+              setDesktopItemWidth(w);
+            }
+          }}
+        >
+          <FlatList
+            ref={flatListRef}
+            data={allItems}
+            renderItem={({ item, index }) => (
+              <View
+                style={{
+                  height: isDesktop ? itemHeight : height,
+                  width: isDesktop ? itemWidth : width,
+                }}
+              >
+                <FullscreenItem
+                  item={item}
+                  index={index}
+                  fullscreenIndex={fullscreenIndex}
+                  isFocused={isFocused}
+                  isDesktop={isDesktop}
+                  cardWidth={isDesktop ? itemWidth : width}
+                  cardHeight={isDesktop ? itemHeight : height}
+                  userProfile={userProfile}
+                  userId={user?.id}
+                  isSaved={
+                    savedItemsMap[item.id] !== undefined
+                      ? savedItemsMap[item.id]
+                      : item.isSaved || false
+                  }
+                  isLiked={likedItemsMap[item.id] || false}
+                  likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
+                  isItemLoading={loadingItemsMap[item.id] === true}
+                  isMine={item.user_id === user?.id}
+                  onShowMore={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const opp = buildOpportunityFromCatalogItem(
+                      p,
+                      userProfile,
+                      false
+                    );
+                    if (isDesktop && onDesktopDetailsRequest) {
+                      onDesktopDetailsRequest(opp);
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowAIModal(true);
-                    }}
-                    onShare={() =>
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                     }
-                    onSave={(p) => {
-                      if (!user?.id) return;
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSavedItemsMap((prev) => ({
-                        ...prev,
-                        [p.id]: !(prev[p.id] ?? p.isSaved ?? false),
-                      }));
-                    }}
-                    onLike={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      handleLikePress(
-                        buildOpportunityFromCatalogItem(p, userProfile, false)
-                      );
-                    }}
-                    onInbox={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      navigation.navigate('Inbox', {
-                        userId: user?.id,
-                        userName: userProfile?.full_name || 'User',
-                      });
-                    }}
-                    onMediaLoadStateChange={(isLoading) =>
-                      handleMediaLoadStateChange(item.id, isLoading)
-                    }
-                    onUserPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      navigation.navigate('UserProfile', {
-                        userId: user?.id,
-                        userName: userProfile?.full_name || 'User',
-                      });
-                    }}
-                    onReviewsPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSelectedOpportunity(
-                        buildOpportunityFromCatalogItem(p, userProfile, false)
-                      );
+                  }}
+                  onShare={() =>
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                  }
+                  onSave={(p) => {
+                    if (!user?.id) return;
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setSavedItemsMap((prev) => ({
+                      ...prev,
+                      [p.id]: !(prev[p.id] ?? p.isSaved ?? false),
+                    }));
+                  }}
+                  onLike={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    handleLikePress(
+                      buildOpportunityFromCatalogItem(p, userProfile, false)
+                    );
+                  }}
+                  onInbox={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    navigation.navigate('Inbox', {
+                      userId: user?.id,
+                      userName: userProfile?.full_name || 'User',
+                    });
+                  }}
+                  onMediaLoadStateChange={(isLoading) =>
+                    handleMediaLoadStateChange(item.id, isLoading)
+                  }
+                  onUserPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    navigation.navigate('UserProfile', {
+                      userId: user?.id,
+                      userName: userProfile?.full_name || 'User',
+                    });
+                  }}
+                  onReviewsPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const opp = buildOpportunityFromCatalogItem(
+                      p,
+                      userProfile,
+                      false
+                    );
+                    if (isDesktop && onDesktopReviewsRequest) {
+                      onDesktopReviewsRequest(opp, p.name || 'Post');
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowReviewsModal(true);
-                    }}
-                    onDirectionsPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setSelectedOpportunity(
-                        buildOpportunityFromCatalogItem(p, userProfile, false)
-                      );
+                    }
+                  }}
+                  onDirectionsPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const opp = buildOpportunityFromCatalogItem(
+                      p,
+                      userProfile,
+                      false
+                    );
+                    if (isDesktop && onDesktopDirectionsRequest) {
+                      onDesktopDirectionsRequest(opp);
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowDirectionsModal(true);
-                    }}
-                    onAIPress={(p) => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                      setSelectedOpportunity(
-                        buildOpportunityFromCatalogItem(p, userProfile, false)
-                      );
+                    }
+                  }}
+                  onAIPress={(p) => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                    const opp = buildOpportunityFromCatalogItem(
+                      p,
+                      userProfile,
+                      false
+                    );
+                    if (isDesktop && onDesktopAIRequest) {
+                      onDesktopAIRequest(opp);
+                    } else {
+                      setSelectedOpportunity(opp);
                       setShowAIModal(true);
-                    }}
-                    onOverflowPress={(p) => showPostActions(p)}
-                  />
-                </View>
-              )}
-              keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
-              pagingEnabled={!isDesktop}
-              showsVerticalScrollIndicator={false}
-              snapToInterval={height}
-              snapToAlignment="start"
-              decelerationRate="fast"
-              initialScrollIndex={initialIndex}
-              getItemLayout={(data, index) => ({
-                length: height,
-                offset: height * index,
+                    }
+                  }}
+                  onOverflowPress={(p) => showPostActions(p)}
+                  onNaturalSize={(size) => {
+                    if (!isDesktop) return;
+                    if (index !== fullscreenIndex) return;
+                    if (size && size.width > 0 && size.height > 0) {
+                      const aspect = size.width / size.height;
+                      if (!aspectCacheRef.current.has(item.id)) {
+                        aspectCacheRef.current.set(item.id, aspect);
+                        setAspectCacheVersion((v) => v + 1);
+                      }
+                      setReportedAspect(aspect);
+                      reportedAspectPostIdRef.current = item.id;
+                    }
+                  }}
+                  fillMode={desktopFillMode}
+                />
+              </View>
+            )}
+            keyExtractor={(item, index) => `fullscreen-${item.id}-${index}`}
+            pagingEnabled={!isDesktop}
+            showsVerticalScrollIndicator={false}
+            snapToInterval={isDesktop ? undefined : height}
+            snapToAlignment="start"
+            decelerationRate="fast"
+            initialScrollIndex={initialIndex}
+            getItemLayout={(data, index) => {
+              const h = isDesktop ? itemHeight : height;
+              return {
+                length: h,
+                offset: h * index,
                 index,
-              })}
-              viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
-              onViewableItemsChanged={handleFullscreenViewableItemsChanged}
-              extraData={`${fullscreenIndex}-${isFocused}-${Object.keys(
-                loadingItemsMap
-              )
-                .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
-                .join(',')}`}
-              removeClippedSubviews={false}
-              maxToRenderPerBatch={isDesktop ? 3 : 2}
-              windowSize={isDesktop ? 5 : 3}
-              scrollEventThrottle={16}
-            />
+              };
+            }}
+            viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
+            onViewableItemsChanged={handleFullscreenViewableItemsChanged}
+            extraData={`${fullscreenIndex}-${isFocused}-${
+              isDesktop ? currentMediaAspect ?? 'na' : 'na'
+            }-${Object.keys(loadingItemsMap)
+              .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
+              .join(',')}`}
+            removeClippedSubviews={false}
+            maxToRenderPerBatch={isDesktop ? 3 : 2}
+            windowSize={isDesktop ? 5 : 3}
+            scrollEventThrottle={16}
+            onScrollToIndexFailed={(info) => {
+              setTimeout(() => {
+                try {
+                  flatListRef.current?.scrollToIndex({
+                    index: info.index,
+                    animated: false,
+                    viewPosition: 0,
+                  });
+                } catch {
+                  /* noop */
+                }
+              }, 200);
+            }}
+          />
+        </View>
 
+        {!isDesktop && (
+          <>
             <ReviewsBottomSheet
               visible={showReviewsModal}
               productId={selectedOpportunity?.id || ''}
@@ -3255,31 +3551,32 @@ const AccountContent = ({ navigation }: any) => {
                   : ''
               }
               onClose={handleCloseAI}
-              isDesktopView={isDesktop}
+              isDesktopView={false}
             />
 
             <DirectionsBottomSheet
               visible={showDirectionsModal}
               opportunity={selectedOpportunity}
               onClose={handleCloseDirections}
-              isDesktopView={isDesktop}
+              isDesktopView={false}
             />
+          </>
+        )}
 
-            <StyledAlert
-              visible={styledAlertConfig.visible}
-              title={styledAlertConfig.title}
-              message={styledAlertConfig.message}
-              icon={styledAlertConfig.icon}
-              iconColor={styledAlertConfig.iconColor}
-              buttons={styledAlertConfig.buttons}
-              onClose={hideStyledAlert}
-            />
-          </View>
-        </BottomSheetModalProvider>
-      </GestureHandlerRootView>
+        <StyledAlert
+          visible={styledAlertConfig.visible}
+          title={styledAlertConfig.title}
+          message={styledAlertConfig.message}
+          icon={styledAlertConfig.icon}
+          iconColor={styledAlertConfig.iconColor}
+          buttons={styledAlertConfig.buttons}
+          onClose={hideStyledAlert}
+        />
+      </View>
     );
   }
 
+  // -------- GRID ----------
   return (
     <SafeAreaView
       style={[
@@ -3441,7 +3738,6 @@ const AccountContent = ({ navigation }: any) => {
         <View style={styles.bottomSpacer} />
       </ScrollView>
 
-      {/* ✅ FAB anchored above the tab bar */}
       <TouchableOpacity
         style={[styles.fab, { bottom: FAB_BOTTOM_OFFSET }]}
         onPress={openUploadCamera}
@@ -3475,19 +3771,264 @@ const AccountContent = ({ navigation }: any) => {
   );
 };
 
+// ============================================================
+// MAIN EXPORT
+// ============================================================
 export const AccountScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
 
+  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
+
+  const [fsState, setFsState] = useState<{
+    fullscreenIndex: number;
+    totalCount: number;
+    currentItem: CatalogItem | null;
+    isSaved: boolean;
+    isLiked: boolean;
+    likeCount: number;
+    userProfile: UserProfile | null;
+  } | null>(null);
+
+  const scrollToFullscreenIndexRef = useRef<((idx: number) => void) | null>(
+    null
+  );
+
+  const [railHandlers, setRailHandlers] = useState<{
+    onLike: () => void;
+    onSave: () => void;
+    onUser: () => void;
+    onReviews: () => void;
+    onDirections: () => void;
+    onShare: () => void;
+    onAI: () => void;
+  } | null>(null);
+
+  const [contextPanelView, setContextPanelView] = useState<
+    'details' | 'reviews' | 'directions' | null
+  >(null);
+  const [aiViewActive, setAiViewActive] = useState(false);
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState<Opportunity | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [selectedProductTitle, setSelectedProductTitle] =
+    useState<string>('');
+
+  if (!isDesktop) {
+    return (
+      <AccountContent
+        navigation={navigation}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+      />
+    );
+  }
+
+  const currentItem = fsState?.currentItem || null;
+  const currentUserProfile = fsState?.userProfile || null;
+  const currentOpportunity = currentItem
+    ? buildOpportunityFromCatalogItem(
+        currentItem,
+        currentUserProfile,
+        fsState?.isSaved || false
+      )
+    : null;
+
+  const renderDesktopActionRail = () => {
+    if (viewMode !== 'fullscreen') return null;
+    if (!currentItem || !railHandlers) return null;
+
+    return (
+      <FloatingActionRail
+        key={`account-rail-${currentItem.id}`}
+        opportunity={currentOpportunity!}
+        bottomInset={0}
+        rightShift={0}
+        isLiked={fsState?.isLiked || false}
+        likeCount={fsState?.likeCount || 0}
+        onLikePress={railHandlers.onLike}
+        onUserPress={railHandlers.onUser}
+        onReviewsPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setSelectedProductId(currentOpportunity.id);
+          setSelectedProductTitle(currentOpportunity.title || 'Post');
+          setAiViewActive(false);
+          setContextPanelView('reviews');
+        }}
+        onDirectionsPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setAiViewActive(false);
+          setContextPanelView('directions');
+        }}
+        onSharePress={railHandlers.onShare}
+        onAIPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setContextPanelView(null);
+          setAiViewActive(true);
+        }}
+        onSavePress={railHandlers.onSave}
+        isSaved={fsState?.isSaved || false}
+        savedCount={currentItem.saveCount || 0}
+        shareCount={currentItem.share_count || 0}
+        reviewCount={currentItem.comment_count || 0}
+        distance={currentItem.distance || 0}
+        userAvatar={currentUserProfile?.avatar_url || null}
+      />
+    );
+  };
+
+  const renderDesktopNavArrows = () => {
+    if (viewMode !== 'fullscreen') return null;
+    if (!fsState) return null;
+
+    const atStart = fsState.fullscreenIndex === 0;
+    const atEnd = fsState.fullscreenIndex >= fsState.totalCount - 1;
+
+    return (
+      <View style={{ alignItems: 'center', gap: 8 }}>
+        <TouchableOpacity
+          style={[styles.navArrow, atStart && styles.navArrowDisabled]}
+          onPress={() => {
+            if (!atStart) {
+              scrollToFullscreenIndexRef.current?.(
+                fsState.fullscreenIndex - 1
+              );
+            }
+          }}
+          disabled={atStart}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="chevron-up"
+            size={28}
+            color={atStart ? '#555' : '#FFFFFF'}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.navArrow, atEnd && styles.navArrowDisabled]}
+          onPress={() => {
+            if (!atEnd) {
+              scrollToFullscreenIndexRef.current?.(
+                fsState.fullscreenIndex + 1
+              );
+            }
+          }}
+          disabled={atEnd}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="chevron-down"
+            size={28}
+            color={atEnd ? '#555' : '#FFFFFF'}
+          />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const isGrid = viewMode === 'grid';
+
   return (
-    <ResponsiveLayout
-      currentRoute="Account"
-      onNavigate={(route) => navigation?.navigate(route)}
-      floatingActions={null}
-      hideContextPanel={true}
-      fullWidth={true}
-    >
-      <AccountContent navigation={navigation} />
-    </ResponsiveLayout>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
+      <BottomSheetModalProvider>
+        <ResponsiveLayout
+          currentRoute="Account"
+          fullWidth={isGrid}
+          hideContextPanel={isGrid}
+          desktopActionRail={renderDesktopActionRail()}
+          desktopNavArrows={renderDesktopNavArrows()}
+          feedAspectRatio={undefined}
+          selectedOpportunity={
+            selectedOpportunity || currentOpportunity || null
+          }
+          featuredOpportunities={[]}
+          contextPanelView={contextPanelView}
+          onContextPanelViewChange={setContextPanelView}
+          selectedProductId={selectedProductId}
+          selectedProductTitle={selectedProductTitle}
+          selectedOpportunityForModal={selectedOpportunity}
+          aiViewActive={aiViewActive}
+          onAIClose={() => {
+            setAiViewActive(false);
+            setSelectedOpportunity(null);
+            setContextPanelView(null);
+          }}
+          aiContextHint={
+            selectedOpportunity
+              ? `My post: ${selectedOpportunity.title}`
+              : ''
+          }
+          directionsViewActive={contextPanelView === 'directions'}
+          onDirectionsClose={() => {
+            setContextPanelView(null);
+            setSelectedOpportunity(null);
+          }}
+          onReviewsPress={(productId, productTitle) => {
+            setSelectedProductId(productId);
+            setSelectedProductTitle(productTitle || '');
+            setAiViewActive(false);
+            setContextPanelView('reviews');
+          }}
+          onShowMorePress={(opp) => {
+            setSelectedOpportunity(opp);
+            setAiViewActive(false);
+            setContextPanelView('details');
+          }}
+          onSharePress={() => {
+            /* handled inside AccountContent */
+          }}
+          onAIPress={(opp) => {
+            setSelectedOpportunity(opp);
+            setContextPanelView(null);
+            setAiViewActive(true);
+          }}
+          onCloseReviews={() => {
+            setContextPanelView(null);
+            setSelectedProductId('');
+            setSelectedProductTitle('');
+          }}
+          onCloseDetails={() => {
+            setContextPanelView(null);
+            setSelectedOpportunity(null);
+          }}
+        >
+          <AccountContent
+            navigation={navigation}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            onDesktopFullscreenStateChange={setFsState}
+            onDesktopScrollToIndex={(fn) => {
+              scrollToFullscreenIndexRef.current = fn;
+            }}
+            onDesktopRailHandlersChange={setRailHandlers}
+            onDesktopReviewsRequest={(opp, title) => {
+              setSelectedOpportunity(opp);
+              setSelectedProductId(opp.id);
+              setSelectedProductTitle(title);
+              setAiViewActive(false);
+              setContextPanelView('reviews');
+            }}
+            onDesktopDirectionsRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setAiViewActive(false);
+              setContextPanelView('directions');
+            }}
+            onDesktopAIRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setContextPanelView(null);
+              setAiViewActive(true);
+            }}
+            onDesktopDetailsRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setAiViewActive(false);
+              setContextPanelView('details');
+            }}
+          />
+        </ResponsiveLayout>
+      </BottomSheetModalProvider>
+    </GestureHandlerRootView>
   );
 };
 
@@ -3801,6 +4342,20 @@ const styles = StyleSheet.create({
     transform: [{ translateY: -150 }],
     zIndex: 50,
   },
+  navArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  navArrowDisabled: {
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
   fab: {
     position: 'absolute',
     right: 24,
@@ -3859,8 +4414,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
-
-  // ✅ Phone input with hardcoded country code (matches Join/SignIn)
   phoneInput: {
     flexDirection: 'row',
     backgroundColor: 'rgba(255,255,255,0.05)',
@@ -3883,10 +4436,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
   },
-
   formInputDisabled: { opacity: 0.5 },
   formTextArea: { height: 80, textAlignVertical: 'top' },
-
   priceTypeRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
   priceTypeChip: {
     flex: 1,

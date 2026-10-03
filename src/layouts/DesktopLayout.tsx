@@ -2,58 +2,36 @@
 
 import React, { ReactNode } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Sidebar } from '../components/Sidebar';
+import { Sidebar, SidebarRouteKind } from '../components/Sidebar';
 import { ContextPanel } from '../components/ContextPanel';
 import { Opportunity } from '../services/feed.service';
+import { navigationRef } from '../navigation/navigationRef';
 
-// ----------------------------------------------------------------
-// Desktop feed rectangle geometry
-// ----------------------------------------------------------------
-// Default aspect ratio used until the current post's media reports
-// its natural dimensions.
 const DEFAULT_FEED_ASPECT_RATIO = 9 / 16;
-
-// Widths reserved by the surrounding chrome.
 const SIDEBAR_WIDTH = 220;
 const CONTEXT_PANEL_WIDTH = 360;
-
-// Horizontal room reserved to the RIGHT of the rectangle for the
-// rail + nav arrows. Rail column + arrows column sit side by side.
 const RIGHT_RAIL_WIDTH = 168;
-
-// Extra right-shift applied to the feed rectangle beyond the
-// compensation for the gutter. Increase to push the rectangle
-// further right; decrease (or use a negative value) to push left.
 const FEED_RIGHT_SHIFT = 60;
 
-// Clamp the feed rectangle so it stays usable on very short or
-// very tall desktop windows.
 const MAX_FEED_HEIGHT = 900;
 const MIN_FEED_HEIGHT = 420;
 const MIN_FEED_WIDTH = 320;
 const MAX_FEED_WIDTH = 720;
 
-// Fallback used until the first onLayout fires.
 const FALLBACK_FEED_WIDTH = 420;
 const FALLBACK_FEED_HEIGHT = FALLBACK_FEED_WIDTH / DEFAULT_FEED_ASPECT_RATIO;
 
 interface Props {
   children: ReactNode;
   currentRoute?: string;
-  onNavigate?: (route: string) => void;
+  onNavigate?: (route: string, kind: SidebarRouteKind) => void;
   floatingActions?: ReactNode;
   hideContextPanel?: boolean;
   fullWidth?: boolean;
   desktopNavArrows?: ReactNode;
-  // ✅ Rail rendered to the right of the rectangle, in the same
-  // gutter as the nav arrows (desktop only).
   desktopActionRail?: ReactNode;
-  // ✅ Aspect ratio of the *current* post's media (width / height).
-  // When supplied, the rectangle sizes itself to this ratio
-  // (no cropping), clamped between MIN/MAX. Falls back to 9:16.
   feedAspectRatio?: number;
 
-  // Context Panel props
   selectedOpportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
@@ -146,8 +124,6 @@ export function DesktopLayout({
       };
     }
 
-    // Fit the largest box of the *current* aspect ratio inside
-    // availW × availH, so the media fills the box edge-to-edge.
     let h = availH;
     let w = h * effectiveAspect;
     if (w > availW) {
@@ -155,7 +131,6 @@ export function DesktopLayout({
       h = w / effectiveAspect;
     }
 
-    // Clamp to sane desktop bounds.
     h = Math.max(MIN_FEED_HEIGHT, Math.min(MAX_FEED_HEIGHT, h));
     w = h * effectiveAspect;
     if (w < MIN_FEED_WIDTH) {
@@ -170,22 +145,62 @@ export function DesktopLayout({
     return { feedWidth: w, feedHeight: h };
   }, [viewport, fullWidth, effectiveAspect]);
 
+  const handleSidebarNavigate = React.useCallback(
+    (route: string, kind: SidebarRouteKind) => {
+      if (onNavigate) {
+        onNavigate(route, kind);
+        return;
+      }
+
+      try {
+        if (!navigationRef.isReady()) {
+          if (__DEV__) {
+            console.warn(
+              '[Sidebar] navigationRef not ready for route:',
+              route
+            );
+          }
+          return;
+        }
+
+        if (kind === 'tab') {
+          navigationRef.navigate('MainTabs' as any, {
+            screen: route,
+          } as any);
+        } else {
+          navigationRef.navigate(route as any);
+        }
+      } catch (err) {
+        if (__DEV__) {
+          console.warn('[Sidebar] navigate failed:', route, err);
+        }
+      }
+    },
+    [onNavigate]
+  );
+
   const showContextPanel = !hideContextPanel && !fullWidth;
 
-  // ✅ Centering math + optional right shift:
-  //
-  // `centerGroup` = [ rectangle (W) ] [ gutter (G) ], total width W+G.
-  // `feedContainer` centers the row, so its left edge would land at
-  // (C − W − G) / 2 — putting the rectangle's center at C/2 − G/2,
-  // i.e. shifted LEFT by G/2. Adding `marginLeft: G/2` moves the row
-  // right by G/2, so the rectangle's center lands on C/2. The extra
-  // FEED_RIGHT_SHIFT nudges it further right, past the screen center.
+  // ✅ When we're in a "fill the remaining area" mode (fullWidth),
+  // the feedContainer must stop shrink-to-fit centering and instead
+  // stretch to fill everything to the right of the sidebar.
+  const feedContainerFills =
+    fullWidth || hideContextPanel || !showContextPanel;
+
   return (
     <View style={styles.container} onLayout={handleLayout}>
       <View style={styles.main}>
-        <Sidebar currentRoute={currentRoute} onNavigate={onNavigate} />
+        <Sidebar
+          currentRoute={currentRoute}
+          onNavigate={handleSidebarNavigate}
+        />
 
-        <View style={styles.feedContainer}>
+        <View
+          style={[
+            styles.feedContainer,
+            feedContainerFills && styles.feedContainerFill,
+          ]}
+        >
           <View
             style={[
               styles.centerGroup,
@@ -260,15 +275,8 @@ export function DesktopLayout({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#1A1A2E',
-  },
-  main: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: '#1A1A2E',
-  },
+  container: { flex: 1, backgroundColor: '#1A1A2E' },
+  main: { flex: 1, flexDirection: 'row', backgroundColor: '#1A1A2E' },
   feedContainer: {
     flex: 1,
     backgroundColor: '#0D0D1A',
@@ -276,9 +284,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
-  // Row: [ rectangle ] [ gutter ]. `feedContainer` centers the row;
-  // the inline `marginLeft` compensates for the gutter and applies
-  // the extra FEED_RIGHT_SHIFT.
+  // ✅ Used when there's no context panel (or we're in `fullWidth`
+  // mode): stretch the content to fill the whole area to the right
+  // of the sidebar instead of shrink-wrapping and centering.
+  feedContainerFill: {
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+  },
   centerGroup: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -289,6 +301,7 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'stretch',
     justifyContent: 'flex-start',
+    width: '100%',
   },
   feedWrapper: {
     borderRadius: 12,
@@ -297,12 +310,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   feedWrapperFull: {
+    flex: 1,
     width: '100%',
-    height: '100%',
     justifyContent: 'flex-start',
   },
-  // Right gutter: rail on the LEFT track, nav arrows on the RIGHT
-  // track. Both vertically centered against the rectangle.
   rightGutterColumn: {
     width: RIGHT_RAIL_WIDTH,
     marginLeft: 8,
@@ -312,14 +323,12 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     position: 'relative',
   },
-  // Left track: the action rail.
   railSlot: {
     alignItems: 'flex-start',
     justifyContent: 'center',
     paddingRight: 12,
     paddingLeft: 0,
   },
-  // Right track: nav arrows, sitting to the RIGHT of the rail.
   navArrowsSlot: {
     alignItems: 'center',
     justifyContent: 'center',

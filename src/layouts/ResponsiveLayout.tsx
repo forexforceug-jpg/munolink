@@ -5,16 +5,18 @@ import { useBreakpoint } from '../hooks/useBreakpoint';
 import { MobileLayout } from './MobileLayout';
 import { DesktopLayout } from './DesktopLayout';
 import { Opportunity } from '../services/feed.service';
+import { SidebarRouteKind } from '../components/Sidebar';
 
 interface Props {
   children: ReactNode;
   currentRoute?: string;
-  onNavigate?: (route: string) => void;
+  onNavigate?: (route: string, kind: SidebarRouteKind) => void;
   floatingActions?: ReactNode;
   hideContextPanel?: boolean;
   fullWidth?: boolean;
   desktopNavArrows?: ReactNode;
   desktopActionRail?: ReactNode;
+  feedAspectRatio?: number;
   selectedOpportunity?: Opportunity | null;
   onReviewsPress?: (productId: string, productTitle?: string) => void;
   onShowMorePress?: (opportunity: Opportunity) => void;
@@ -46,6 +48,7 @@ export function ResponsiveLayout({
   fullWidth = false,
   desktopNavArrows,
   desktopActionRail,
+  feedAspectRatio,
   selectedOpportunity,
   onReviewsPress,
   onShowMorePress,
@@ -77,6 +80,7 @@ export function ResponsiveLayout({
         fullWidth={fullWidth}
         desktopNavArrows={desktopNavArrows}
         desktopActionRail={desktopActionRail}
+        feedAspectRatio={feedAspectRatio}
         selectedOpportunity={selectedOpportunity}
         onReviewsPress={onReviewsPress}
         onShowMorePress={onShowMorePress}

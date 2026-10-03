@@ -4,12 +4,10 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TabNavigator } from './TabNavigator';
 import { UserProfileScreen } from '../features/profile/UserProfileScreen';
-import { SearchScreen } from '../features/search/SearchScreen';
 import { ForgotPasswordScreen } from '../features/auth/ForgotPasswordScreen';
 import { SearchResultsScreen } from '../features/search/SearchResultsScreen';
 import { JoinScreen } from '../features/auth/JoinScreen';
 import { SignInScreen } from '../features/auth/SignInScreen';
-import { ExploreScreen } from '../features/explore/ExploreScreen';
 import { ProfileScreen } from '../features/profile/ProfileScreen';
 import { HelpSupportScreen } from '../features/help/HelpSupportScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
@@ -21,29 +19,11 @@ import { TermsOfServiceScreen } from '../features/legal/TermsOfServiceScreen';
 import { useDeepLinks } from '../hooks/useDeepLinks';
 import type { RootStackParamList } from './types';
 
-// Re-export so existing imports of RootStackParamList from
-// `../navigation/RootNavigator` keep working.
 export type { RootStackParamList };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export const RootNavigator = () => {
-  // ✅ Turns incoming URLs into navigation actions.
-  //
-  // Handles:
-  //   • cold start   (app opened via link while closed)
-  //   • warm start   (app already running and receives a link)
-  //   • web          (window.location + popstate)
-  //
-  // Shared post links look like:
-  //   https://www.munolink.com/s/<postId>
-  //   munolink://s/<postId>
-  //
-  // The hook resolves them to:
-  //   navigate('MainTabs', { screen: 'Discover', params: { openPostId } })
-  //
-  // FeedScreen already reads `route.params.openPostId` and scrolls to
-  // that specific post, so the recipient lands directly on it.
   useDeepLinks();
 
   return (
@@ -69,7 +49,7 @@ export const RootNavigator = () => {
       <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
       <Stack.Screen name="TermsOfService" component={TermsOfServiceScreen} />
 
-      {/* Pay */}
+      {/* Pay (still available as a pushed screen for deep flows) */}
       <Stack.Screen name="PayScreen" component={PayScreen} />
 
       {/* Account */}
@@ -84,12 +64,10 @@ export const RootNavigator = () => {
         options={{ headerShown: false }}
       />
 
-      {/* Search */}
-      <Stack.Screen name="Search" component={SearchScreen} />
+      {/* Search results — still a stack screen because it's a
+          detail pushed on top of the Search tab. The Search *tab*
+          itself is registered inside TabNavigator. */}
       <Stack.Screen name="SearchResults" component={SearchResultsScreen} />
-
-      {/* Explore */}
-      <Stack.Screen name="Explore" component={ExploreScreen} />
 
       {/* ✅ Upload flow */}
       <Stack.Screen
@@ -113,11 +91,6 @@ export const RootNavigator = () => {
       {/* Placeholders */}
       <Stack.Screen
         name="Notifications"
-        component={() => null}
-        options={{ headerShown: false }}
-      />
-      <Stack.Screen
-        name="Hub"
         component={() => null}
         options={{ headerShown: false }}
       />

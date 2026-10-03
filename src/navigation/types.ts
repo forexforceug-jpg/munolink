@@ -7,7 +7,6 @@ export type RootStackParamList = {
   Join: undefined;
   SignIn: undefined;
   ShopProfile: { shopId: string; shopName?: string };
-  Search: undefined;
   PrivacyPolicy: undefined;
   ForgotPassword: { email?: string } | undefined;
   TermsOfService: undefined;
@@ -20,7 +19,6 @@ export type RootStackParamList = {
     totalResults?: number;
     recommendationsCount?: number;
   };
-  Explore: undefined;
   BusinessRegistration: undefined;
   BusinessDashboard: undefined;
   Profile: undefined;

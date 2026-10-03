@@ -48,9 +48,10 @@ const FULLSCREEN_VIEWABILITY_CONFIG: ViewabilityConfig = {
   minimumViewTime: 100,
 };
 
-// ============================================================
-// TYPES
-// ============================================================
+const DESKTOP_FEED_ASPECT = 9 / 16;
+const DESKTOP_FALLBACK_MAX_HEIGHT = 900;
+const DESKTOP_GRID_COLUMNS = 6;
+
 interface SearchResult {
   id: string;
   title: string;
@@ -126,9 +127,6 @@ const DEFAULT_CATEGORIES = [
   { key: 'jobs', label: 'Jobs' },
 ];
 
-// ============================================================
-// PRICE TYPE — now includes 'showcase'
-// ============================================================
 const VALID_PRICE_TYPES = [
   'fixed',
   'negotiable',
@@ -156,7 +154,6 @@ function resolvePriceType(item: SearchResult): PriceType {
   const raw = fromRow || fromSpecs;
 
   if (raw && (VALID_PRICE_TYPES as readonly string[]).includes(raw)) {
-    // 'showcase' and 'free' never carry a price — pass through.
     if (
       (raw === 'fixed' || raw === 'negotiable') &&
       (!item.price || item.price <= 0)
@@ -191,9 +188,6 @@ const FilterChip = React.memo(({ label, selected, onPress, count }: any) => (
   </TouchableOpacity>
 ));
 
-// ============================================================
-// GRID RESULT CARD
-// ============================================================
 const GridResultCard = React.memo(({ item, onPress }: any) => {
   let imageUrl = '';
   if (item.catalogImages && item.catalogImages.length > 0) {
@@ -282,9 +276,6 @@ const ItemMediaLoadingSpinner: React.FC = () => {
   );
 };
 
-// ============================================================
-// HELPER: build Opportunity from SearchResult
-// ============================================================
 function buildOpportunityFromResult(item: SearchResult): any {
   const effectivePriceType = resolvePriceType(item);
   const specs = (item as any).specifications || {};
@@ -329,17 +320,14 @@ function buildOpportunityFromResult(item: SearchResult): any {
   };
 }
 
-// ============================================================
-// FULLSCREEN ITEM
-// ============================================================
 interface FullscreenItemProps {
   item: SearchResult;
   index: number;
   fullscreenIndex: number;
   isFocused: boolean;
   isDesktop: boolean;
-  winWidth: number;
-  winHeight: number;
+  cardWidth: number;
+  cardHeight: number;
   isSaved: boolean;
   isLiked: boolean;
   likeCount: number;
@@ -355,6 +343,10 @@ interface FullscreenItemProps {
   onReviewsPress: (item: SearchResult) => void;
   onDirectionsPress: (item: SearchResult) => void;
   onAIPress: (item: SearchResult) => void;
+  onNaturalSize?: (
+    size: { width: number; height: number } | null
+  ) => void;
+  fillMode?: 'contain' | 'cover';
 }
 
 const FullscreenItem: React.FC<FullscreenItemProps> = ({
@@ -363,8 +355,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   fullscreenIndex,
   isFocused,
   isDesktop,
-  winWidth,
-  winHeight,
+  cardWidth,
+  cardHeight,
   isSaved,
   isLiked,
   likeCount,
@@ -379,6 +371,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onReviewsPress,
   onDirectionsPress,
   onAIPress,
+  onNaturalSize,
+  fillMode = 'contain',
 }) => {
   const opportunity = buildOpportunityFromResult(item);
 
@@ -422,11 +416,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   }
 
   const priceType = resolvePriceType(item);
-
   const displayName = item.userFullName || 'User';
-  const cardWidth = isDesktop ? 420 : winWidth;
-  const cardHeight = isDesktop ? winHeight : winHeight;
-
   const isVisible = isFocused && index === fullscreenIndex;
   const specs = (item as any).specifications || {};
 
@@ -477,46 +467,87 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         autoPlay={true}
         autoPlayInterval={5000}
         resetKey={item.id}
+        useExplicitBottomOffset={isDesktop ? false : true}
         bottomOffset={0}
         isVisible={isVisible}
+        onNaturalSize={onNaturalSize}
+        fillMode={isDesktop ? fillMode : 'contain'}
       />
 
       {isItemLoading && isVisible && <ItemMediaLoadingSpinner />}
 
-      <View style={styles.actionRailWrapper}>
-        <FloatingActionRail
-          key={`rail-${item.id}`}
-          opportunity={opportunity}
-          isLiked={isLiked}
-          bottomInset={80}
-          rightShift={-6}
-          likeCount={likeCount}
-          onLikePress={() => onLike(item)}
-          onUserPress={() => onUserPress(item)}
-          onReviewsPress={() => onReviewsPress(item)}
-          onDirectionsPress={() => onDirectionsPress(item)}
-          onSharePress={onShare}
-          onAIPress={() => onAIPress(item)}
-          onSavePress={() => onSave(item)}
-          isSaved={isSaved}
-          savedCount={0}
-          shareCount={item.shareCount || 0}
-          reviewCount={0}
-          distance={0}
-          userAvatar={item.userAvatar || null}
-        />
-      </View>
+      {!isDesktop && (
+        <View style={styles.actionRailWrapper}>
+          <FloatingActionRail
+            key={`rail-${item.id}`}
+            opportunity={opportunity}
+            isLiked={isLiked}
+            bottomInset={80}
+            rightShift={-6}
+            likeCount={likeCount}
+            onLikePress={() => onLike(item)}
+            onUserPress={() => onUserPress(item)}
+            onReviewsPress={() => onReviewsPress(item)}
+            onDirectionsPress={() => onDirectionsPress(item)}
+            onSharePress={onShare}
+            onAIPress={() => onAIPress(item)}
+            onSavePress={() => onSave(item)}
+            isSaved={isSaved}
+            savedCount={0}
+            shareCount={item.shareCount || 0}
+            reviewCount={0}
+            distance={0}
+            userAvatar={item.userAvatar || null}
+          />
+        </View>
+      )}
     </View>
   );
 };
 
-// ============================================================
-// MAIN CONTENT
-// ============================================================
-const SearchResultsContent = ({
+interface SearchResultsContentProps extends SearchResultsScreenProps {
+  viewMode: 'grid' | 'fullscreen';
+  setViewMode: (mode: 'grid' | 'fullscreen') => void;
+  onDesktopFullscreenStateChange?: (state: {
+    fullscreenIndex: number;
+    totalCount: number;
+    currentItem: SearchResult | null;
+    isSaved: boolean;
+    isLiked: boolean;
+    likeCount: number;
+  }) => void;
+  onDesktopScrollToIndex?: (fn: (idx: number) => void) => void;
+  onDesktopRailHandlersChange?: (handlers: {
+    onLike: () => void;
+    onSave: () => void;
+    onUser: () => void;
+    onReviews: () => void;
+    onDirections: () => void;
+    onShare: () => void;
+    onAI: () => void;
+  }) => void;
+  onDesktopReviewsRequest?: (
+    opportunity: any,
+    productTitle: string
+  ) => void;
+  onDesktopDirectionsRequest?: (opportunity: any) => void;
+  onDesktopAIRequest?: (opportunity: any) => void;
+  onDesktopDetailsRequest?: (opportunity: any) => void;
+}
+
+const SearchResultsContent: React.FC<SearchResultsContentProps> = ({
   route,
   navigation,
-}: SearchResultsScreenProps) => {
+  viewMode,
+  setViewMode,
+  onDesktopFullscreenStateChange,
+  onDesktopScrollToIndex,
+  onDesktopRailHandlersChange,
+  onDesktopReviewsRequest,
+  onDesktopDirectionsRequest,
+  onDesktopAIRequest,
+  onDesktopDetailsRequest,
+}) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
@@ -557,7 +588,6 @@ const SearchResultsContent = ({
     Record<string, boolean>
   >({});
 
-  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
   const [selectedItem, setSelectedItem] = useState<SearchResult | null>(null);
 
   const [selectedOpportunity, setSelectedOpportunity] =
@@ -566,6 +596,32 @@ const SearchResultsContent = ({
   const [showAIModal, setShowAIModal] = useState(false);
   const [showDirectionsModal, setShowDirectionsModal] = useState(false);
   const [aiContextHint, setAiContextHint] = useState('');
+
+  const aspectCacheRef = useRef<Map<string, number>>(new Map());
+  const [aspectCacheVersion, setAspectCacheVersion] = useState(0);
+  const [reportedAspect, setReportedAspect] = useState<number | null>(null);
+  const reportedAspectPostIdRef = useRef<string | null>(null);
+  const [currentMediaAspect, setCurrentMediaAspect] = useState<number | null>(
+    null
+  );
+
+  const [desktopItemHeight, setDesktopItemHeight] = useState<number | null>(
+    null
+  );
+  const [desktopItemWidth, setDesktopItemWidth] = useState<number | null>(
+    null
+  );
+
+  const desktopFallbackHeight = Math.min(
+    height * 0.92,
+    DESKTOP_FALLBACK_MAX_HEIGHT
+  );
+  const desktopFallbackWidth = desktopFallbackHeight * DESKTOP_FEED_ASPECT;
+
+  const itemHeight = isDesktop
+    ? desktopItemHeight ?? desktopFallbackHeight
+    : height;
+  const itemWidth = isDesktop ? desktopItemWidth ?? desktopFallbackWidth : width;
 
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
     visible: boolean;
@@ -705,7 +761,6 @@ const SearchResultsContent = ({
     });
   }, [filteredResults]);
 
-  // Prefetch likes
   useEffect(() => {
     if (!user?.id) return;
     const postIds = filteredResults.map((r) => r.id);
@@ -766,14 +821,14 @@ const SearchResultsContent = ({
         setFullscreenIndex(index);
       }
     },
-    [memoizedResults]
+    [memoizedResults, setViewMode]
   );
 
   const handleBackToGrid = useCallback(() => {
     setViewMode('grid');
     setSelectedItem(null);
     setFullscreenIndex(0);
-  }, []);
+  }, [setViewMode]);
 
   const onViewableItemsChangedRef = useRef<
     | ((info: {
@@ -811,18 +866,6 @@ const SearchResultsContent = ({
   const keyExtractor = useCallback(
     (item: SearchResult, index: number) => `result-${item.id}-${index}`,
     []
-  );
-
-  const getItemLayout = useCallback(
-    (data: any, index: number) => {
-      const itemHeight = isDesktop ? height : height;
-      return {
-        length: itemHeight,
-        offset: itemHeight * index,
-        index,
-      };
-    },
-    [isDesktop, height]
   );
 
   const renderGridItem = useCallback(
@@ -949,16 +992,235 @@ const SearchResultsContent = ({
     ]
   );
 
+  // ============================================================
+  // ASPECT RESOLUTION
+  // ============================================================
+  const getPostAspect = useCallback(
+    (item: SearchResult | null | undefined) => {
+      if (!item) return null;
+      const cached = aspectCacheRef.current.get(item.id);
+      if (cached && isFinite(cached) && cached > 0) return cached;
+      return null;
+    },
+    []
+  );
+
+  const resolvePostAspect = useCallback(async (item: SearchResult) => {
+    if (!item?.id) return;
+    if (aspectCacheRef.current.has(item.id)) return;
+
+    const url =
+      (item.catalogImages && item.catalogImages[0]) ||
+      item.video_thumbnail ||
+      item.imageUrl ||
+      undefined;
+    if (!url || typeof url !== 'string') return;
+
+    try {
+      const size = await new Promise<{ width: number; height: number }>(
+        (resolve, reject) => {
+          (Image as any).getSize(
+            url,
+            (w: number, h: number) => resolve({ width: w, height: h }),
+            (err: any) => reject(err)
+          );
+        }
+      );
+      if (size.width > 0 && size.height > 0) {
+        aspectCacheRef.current.set(item.id, size.width / size.height);
+        setAspectCacheVersion((v) => v + 1);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (viewMode !== 'fullscreen') return;
+    const start = Math.max(0, fullscreenIndex - 1);
+    const end = Math.min(filteredResults.length - 1, fullscreenIndex + 3);
+    for (let i = start; i <= end; i++) {
+      const post = filteredResults[i];
+      if (post) resolvePostAspect(post);
+    }
+  }, [
+    isDesktop,
+    viewMode,
+    filteredResults,
+    fullscreenIndex,
+    resolvePostAspect,
+  ]);
+
+  useEffect(() => {
+    if (!isDesktop) {
+      setCurrentMediaAspect(null);
+      return;
+    }
+    const post = filteredResults[fullscreenIndex] ?? null;
+    if (!post) {
+      setCurrentMediaAspect(null);
+      return;
+    }
+    const cached = getPostAspect(post);
+    if (cached) {
+      setCurrentMediaAspect(cached);
+      return;
+    }
+    if (reportedAspect && reportedAspectPostIdRef.current === post.id) {
+      setCurrentMediaAspect(reportedAspect);
+    } else {
+      setCurrentMediaAspect(null);
+    }
+  }, [
+    isDesktop,
+    filteredResults,
+    fullscreenIndex,
+    aspectCacheVersion,
+    reportedAspect,
+    getPostAspect,
+  ]);
+
+  const desktopFillMode: 'contain' | 'cover' =
+    isDesktop && currentMediaAspect ? 'contain' : 'cover';
+
+  // ============================================================
+  // Report fullscreen state upward
+  // ============================================================
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (viewMode !== 'fullscreen') return;
+    if (!onDesktopFullscreenStateChange) return;
+
+    const item = filteredResults[fullscreenIndex] ?? null;
+    if (!item) return;
+
+    const isSaved = savedItemsMap[item.id] ?? item.isSaved ?? false;
+    const isLiked = likedItemsMap[item.id] || false;
+    const likeCount = likeCountMap[item.id] ?? item.likeCount ?? 0;
+
+    onDesktopFullscreenStateChange({
+      fullscreenIndex,
+      totalCount: filteredResults.length,
+      currentItem: item,
+      isSaved,
+      isLiked,
+      likeCount,
+    });
+  }, [
+    isDesktop,
+    viewMode,
+    filteredResults,
+    fullscreenIndex,
+    savedItemsMap,
+    likedItemsMap,
+    likeCountMap,
+    onDesktopFullscreenStateChange,
+  ]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!onDesktopScrollToIndex) return;
+
+    const fn = (idx: number) => {
+      if (flatListRef.current && idx >= 0 && idx < filteredResults.length) {
+        try {
+          flatListRef.current.scrollToIndex({ index: idx, animated: true });
+          setFullscreenIndex(idx);
+          setCurrentIndex(idx);
+        } catch {
+          /* noop */
+        }
+      }
+    };
+
+    onDesktopScrollToIndex(fn);
+  }, [isDesktop, filteredResults.length, onDesktopScrollToIndex]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!onDesktopRailHandlersChange) return;
+
+    const item = filteredResults[fullscreenIndex] ?? null;
+    if (!item) return;
+
+    const isSaved = savedItemsMap[item.id] ?? item.isSaved ?? false;
+    const opportunity = buildOpportunityFromResult(item);
+
+    onDesktopRailHandlersChange({
+      onLike: () => handleLikePress(opportunity),
+      onSave: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setSavedItemsMap((prev) => ({
+          ...prev,
+          [item.id]: !(prev[item.id] ?? item.isSaved ?? false),
+        }));
+      },
+      onUser: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        navigation.navigate('UserProfile', {
+          userId: item.userId || '',
+          userName: item.userFullName || 'User',
+        });
+      },
+      onReviews: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (isDesktop && onDesktopReviewsRequest) {
+          onDesktopReviewsRequest(opportunity, item.title || 'Post');
+        } else {
+          setSelectedOpportunity(item);
+          setShowReviewsModal(true);
+        }
+      },
+      onDirections: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (isDesktop && onDesktopDirectionsRequest) {
+          onDesktopDirectionsRequest(opportunity);
+        } else {
+          setSelectedOpportunity(item);
+          setShowDirectionsModal(true);
+        }
+      },
+      onShare: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      },
+      onAI: () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        if (isDesktop && onDesktopAIRequest) {
+          onDesktopAIRequest(opportunity);
+        } else {
+          setSelectedOpportunity(item);
+          setAiContextHint(`Search results for "${query}"`);
+          setShowAIModal(true);
+        }
+      },
+    });
+  }, [
+    isDesktop,
+    filteredResults,
+    fullscreenIndex,
+    savedItemsMap,
+    likedItemsMap,
+    likeCountMap,
+    query,
+    handleLikePress,
+    navigation,
+    onDesktopRailHandlersChange,
+    onDesktopReviewsRequest,
+    onDesktopDirectionsRequest,
+    onDesktopAIRequest,
+  ]);
+
   if (!memoizedResults) {
     return (
       <SafeAreaView
-  style={[
-    styles.container,
-    styles.centered,
-    Platform.OS === 'web' && styles.containerWeb,
-  ]}
-  edges={['top']}
->
+        style={[
+          styles.container,
+          styles.centered,
+          Platform.OS === 'web' && styles.containerWeb,
+        ]}
+        edges={['top']}
+      >
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <ActivityIndicator size="large" color="#4A7DFF" />
         <Text style={styles.loadingText}>Loading results...</Text>
@@ -969,12 +1231,12 @@ const SearchResultsContent = ({
   if (memoizedResults.length === 0) {
     return (
       <SafeAreaView
-  style={[
-    styles.emptyContainer,
-    Platform.OS === 'web' && styles.containerWeb,
-  ]}
-  edges={['top']}
->
+        style={[
+          styles.emptyContainer,
+          Platform.OS === 'web' && styles.containerWeb,
+        ]}
+        edges={['top']}
+      >
         <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
         <TouchableOpacity
           style={styles.emptyBackButton}
@@ -996,37 +1258,50 @@ const SearchResultsContent = ({
 
   if (viewMode === 'fullscreen') {
     return (
-      <GestureHandlerRootView style={styles.container}>
-        <BottomSheetModalProvider>
-          <SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' && styles.containerWeb,
-  ]}
-  edges={['top']}
->
-            <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={handleBackToGrid}
-            >
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-              <Text style={styles.backButtonText}>Back to results</Text>
-            </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBackToGrid}
+        >
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Text style={styles.backButtonText}>Back to results</Text>
+        </TouchableOpacity>
 
-            <FlatList
-              ref={flatListRef}
-              data={filteredResults}
-              renderItem={({ item, index }) => (
+        <View
+          style={{ flex: 1, width: '100%' }}
+          onLayout={(e) => {
+            if (!isDesktop) return;
+            const { width: w, height: h } = e.nativeEvent.layout;
+            if (
+              h > 0 &&
+              (Math.abs(h - (desktopItemHeight ?? 0)) > 1 ||
+                Math.abs(w - (desktopItemWidth ?? 0)) > 1)
+            ) {
+              setDesktopItemHeight(h);
+              setDesktopItemWidth(w);
+            }
+          }}
+        >
+          <FlatList
+            ref={flatListRef}
+            data={filteredResults}
+            renderItem={({ item, index }) => (
+              <View
+                style={{
+                  height: isDesktop ? itemHeight : height,
+                  width: isDesktop ? itemWidth : width,
+                }}
+              >
                 <FullscreenItem
                   item={item}
                   index={index}
                   fullscreenIndex={fullscreenIndex}
                   isFocused={isFocused}
                   isDesktop={isDesktop}
-                  winWidth={width}
-                  winHeight={height}
+                  cardWidth={isDesktop ? itemWidth : width}
+                  cardHeight={isDesktop ? itemHeight : height}
                   isSaved={savedItemsMap[item.id] || false}
                   isLiked={likedItemsMap[item.id] || false}
                   likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
@@ -1034,7 +1309,12 @@ const SearchResultsContent = ({
                   query={query}
                   onShowMore={(p) => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setSelectedOpportunity(p);
+                    const opp = buildOpportunityFromResult(p);
+                    if (isDesktop && onDesktopDetailsRequest) {
+                      onDesktopDetailsRequest(opp);
+                    } else {
+                      setSelectedOpportunity(p);
+                    }
                   }}
                   onShare={() =>
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -1118,45 +1398,85 @@ const SearchResultsContent = ({
                   }}
                   onReviewsPress={(p) => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setSelectedOpportunity(p);
-                    setShowReviewsModal(true);
+                    const opp = buildOpportunityFromResult(p);
+                    if (isDesktop && onDesktopReviewsRequest) {
+                      onDesktopReviewsRequest(opp, p.title || 'Post');
+                    } else {
+                      setSelectedOpportunity(p);
+                      setShowReviewsModal(true);
+                    }
                   }}
                   onDirectionsPress={(p) => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setSelectedOpportunity(p);
-                    setShowDirectionsModal(true);
+                    const opp = buildOpportunityFromResult(p);
+                    if (isDesktop && onDesktopDirectionsRequest) {
+                      onDesktopDirectionsRequest(opp);
+                    } else {
+                      setSelectedOpportunity(p);
+                      setShowDirectionsModal(true);
+                    }
                   }}
                   onAIPress={(p) => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                    setSelectedOpportunity(p);
-                    setAiContextHint(`Search results for "${query}"`);
-                    setShowAIModal(true);
+                    const opp = buildOpportunityFromResult(p);
+                    if (isDesktop && onDesktopAIRequest) {
+                      onDesktopAIRequest(opp);
+                    } else {
+                      setSelectedOpportunity(p);
+                      setAiContextHint(`Search results for "${query}"`);
+                      setShowAIModal(true);
+                    }
                   }}
+                  onNaturalSize={(size) => {
+                    if (!isDesktop) return;
+                    if (index !== fullscreenIndex) return;
+                    if (size && size.width > 0 && size.height > 0) {
+                      const aspect = size.width / size.height;
+                      if (!aspectCacheRef.current.has(item.id)) {
+                        aspectCacheRef.current.set(item.id, aspect);
+                        setAspectCacheVersion((v) => v + 1);
+                      }
+                      setReportedAspect(aspect);
+                      reportedAspectPostIdRef.current = item.id;
+                    }
+                  }}
+                  fillMode={desktopFillMode}
                 />
-              )}
-              keyExtractor={keyExtractor}
-              pagingEnabled={!isDesktop}
-              showsVerticalScrollIndicator={false}
-              snapToInterval={isDesktop ? undefined : height}
-              snapToAlignment="start"
-              decelerationRate="fast"
-              viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
-              onViewableItemsChanged={handleViewableItemsChanged}
-              getItemLayout={getItemLayout}
-              initialScrollIndex={currentIndex}
-              extraData={`${fullscreenIndex}-${isFocused}-${Object.keys(
-                loadingItemsMap
-              )
-                .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
-                .join(',')}`}
-              removeClippedSubviews={false}
-              maxToRenderPerBatch={isDesktop ? 3 : 2}
-              windowSize={isDesktop ? 5 : 3}
-              onScrollToIndexFailed={() => {}}
-              scrollEventThrottle={16}
-              style={styles.list}
-            />
+              </View>
+            )}
+            keyExtractor={keyExtractor}
+            pagingEnabled={!isDesktop}
+            showsVerticalScrollIndicator={false}
+            snapToInterval={isDesktop ? undefined : height}
+            snapToAlignment="start"
+            decelerationRate="fast"
+            viewabilityConfig={FULLSCREEN_VIEWABILITY_CONFIG}
+            onViewableItemsChanged={handleViewableItemsChanged}
+            getItemLayout={(data, index) => {
+              const h = isDesktop ? itemHeight : height;
+              return {
+                length: h,
+                offset: h * index,
+                index,
+              };
+            }}
+            initialScrollIndex={currentIndex}
+            extraData={`${fullscreenIndex}-${isFocused}-${
+              isDesktop ? currentMediaAspect ?? 'na' : 'na'
+            }-${Object.keys(loadingItemsMap)
+              .map((k) => `${k}:${loadingItemsMap[k] ? 1 : 0}`)
+              .join(',')}`}
+            removeClippedSubviews={false}
+            maxToRenderPerBatch={isDesktop ? 3 : 2}
+            windowSize={isDesktop ? 5 : 3}
+            onScrollToIndexFailed={() => {}}
+            scrollEventThrottle={16}
+            style={styles.list}
+          />
+        </View>
 
+        {!isDesktop && (
+          <>
             <ReviewsBottomSheet
               visible={showReviewsModal}
               productId={selectedOpportunity?.id || ''}
@@ -1178,34 +1498,34 @@ const SearchResultsContent = ({
               onClose={handleCloseDirections}
               isDesktopView={false}
             />
+          </>
+        )}
 
-            <StyledAlert
-              visible={styledAlertConfig.visible}
-              title={styledAlertConfig.title}
-              message={styledAlertConfig.message}
-              icon={styledAlertConfig.icon}
-              iconColor={styledAlertConfig.iconColor}
-              buttons={styledAlertConfig.buttons}
-              onClose={hideStyledAlert}
-            />
-          </SafeAreaView>
-        </BottomSheetModalProvider>
-      </GestureHandlerRootView>
+        <StyledAlert
+          visible={styledAlertConfig.visible}
+          title={styledAlertConfig.title}
+          message={styledAlertConfig.message}
+          icon={styledAlertConfig.icon}
+          iconColor={styledAlertConfig.iconColor}
+          buttons={styledAlertConfig.buttons}
+          onClose={hideStyledAlert}
+        />
+      </View>
     );
   }
 
-  const numColumns = isDesktop ? 4 : 3;
-  const gridKey = isDesktop ? 'desktop-grid' : 'mobile-grid';
+  const numColumns = isDesktop ? DESKTOP_GRID_COLUMNS : 3;
+  const gridKey = isDesktop ? 'desktop-grid-6col' : 'mobile-grid';
 
   return (
     <SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' && styles.containerWeb,
-    isDesktop && styles.containerDesktop,
-  ]}
-  edges={['top']}
->
+      style={[
+        styles.container,
+        Platform.OS === 'web' && styles.containerWeb,
+        isDesktop && styles.containerDesktop,
+      ]}
+      edges={['top']}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
 
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
@@ -1317,28 +1637,6 @@ const SearchResultsContent = ({
         stickyHeaderIndices={[0]}
       />
 
-      <ReviewsBottomSheet
-        visible={showReviewsModal}
-        productId={selectedOpportunity?.id || ''}
-        productTitle={selectedOpportunity?.title || ''}
-        onClose={handleCloseReviews}
-      />
-
-      <AIBottomSheet
-        visible={showAIModal}
-        opportunity={selectedOpportunity as any}
-        contextHint={aiContextHint}
-        onClose={handleCloseAI}
-        isDesktopView={false}
-      />
-
-      <DirectionsBottomSheet
-        visible={showDirectionsModal}
-        opportunity={selectedOpportunity as any}
-        onClose={handleCloseDirections}
-        isDesktopView={false}
-      />
-
       <StyledAlert
         visible={styledAlertConfig.visible}
         title={styledAlertConfig.title}
@@ -1361,16 +1659,254 @@ export const SearchResultsScreen = ({
 }: SearchResultsScreenProps) => {
   const { isDesktop } = useBreakpoint();
 
+  const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
+
+  const [fsState, setFsState] = useState<{
+    fullscreenIndex: number;
+    totalCount: number;
+    currentItem: SearchResult | null;
+    isSaved: boolean;
+    isLiked: boolean;
+    likeCount: number;
+  } | null>(null);
+
+  const scrollToFullscreenIndexRef = useRef<((idx: number) => void) | null>(
+    null
+  );
+
+  const [railHandlers, setRailHandlers] = useState<{
+    onLike: () => void;
+    onSave: () => void;
+    onUser: () => void;
+    onReviews: () => void;
+    onDirections: () => void;
+    onShare: () => void;
+    onAI: () => void;
+  } | null>(null);
+
+  const [contextPanelView, setContextPanelView] = useState<
+    'details' | 'reviews' | 'directions' | null
+  >(null);
+  const [aiViewActive, setAiViewActive] = useState(false);
+  const [selectedOpportunity, setSelectedOpportunity] =
+    useState<any | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [selectedProductTitle, setSelectedProductTitle] =
+    useState<string>('');
+
+  if (!isDesktop) {
+    return (
+      <SearchResultsContent
+        route={route}
+        navigation={navigation}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+      />
+    );
+  }
+
+  const currentItem = fsState?.currentItem || null;
+  const currentOpportunity = currentItem
+    ? buildOpportunityFromResult(currentItem)
+    : null;
+
+  const renderDesktopActionRail = () => {
+    if (viewMode !== 'fullscreen') return null;
+    if (!currentItem || !railHandlers) return null;
+
+    return (
+      <FloatingActionRail
+        key={`search-rail-${currentItem.id}`}
+        opportunity={currentOpportunity}
+        bottomInset={0}
+        rightShift={0}
+        isLiked={fsState?.isLiked || false}
+        likeCount={fsState?.likeCount || 0}
+        onLikePress={railHandlers.onLike}
+        onUserPress={railHandlers.onUser}
+        onReviewsPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setSelectedProductId(currentOpportunity.id);
+          setSelectedProductTitle(currentOpportunity.title || 'Post');
+          setAiViewActive(false);
+          setContextPanelView('reviews');
+        }}
+        onDirectionsPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setAiViewActive(false);
+          setContextPanelView('directions');
+        }}
+        onSharePress={railHandlers.onShare}
+        onAIPress={() => {
+          if (!currentOpportunity) return;
+          setSelectedOpportunity(currentOpportunity);
+          setContextPanelView(null);
+          setAiViewActive(true);
+        }}
+        onSavePress={railHandlers.onSave}
+        isSaved={fsState?.isSaved || false}
+        savedCount={0}
+        shareCount={currentItem.shareCount || 0}
+        reviewCount={0}
+        distance={0}
+        userAvatar={currentItem.userAvatar || null}
+      />
+    );
+  };
+
+  const renderDesktopNavArrows = () => {
+    if (viewMode !== 'fullscreen') return null;
+    if (!fsState) return null;
+
+    const atStart = fsState.fullscreenIndex === 0;
+    const atEnd = fsState.fullscreenIndex >= fsState.totalCount - 1;
+
+    return (
+      <View style={{ alignItems: 'center', gap: 8 }}>
+        <TouchableOpacity
+          style={[styles.navArrow, atStart && styles.navArrowDisabled]}
+          onPress={() => {
+            if (!atStart) {
+              scrollToFullscreenIndexRef.current?.(
+                fsState.fullscreenIndex - 1
+              );
+            }
+          }}
+          disabled={atStart}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="chevron-up"
+            size={28}
+            color={atStart ? '#555' : '#FFFFFF'}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.navArrow, atEnd && styles.navArrowDisabled]}
+          onPress={() => {
+            if (!atEnd) {
+              scrollToFullscreenIndexRef.current?.(
+                fsState.fullscreenIndex + 1
+              );
+            }
+          }}
+          disabled={atEnd}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="chevron-down"
+            size={28}
+            color={atEnd ? '#555' : '#FFFFFF'}
+          />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const isGrid = viewMode === 'grid';
+
   return (
-    <ResponsiveLayout
-      currentRoute="Search"
-      onNavigate={(route) => navigation?.navigate(route)}
-      floatingActions={null}
-      hideContextPanel={true}
-      fullWidth={true}
-    >
-      <SearchResultsContent route={route} navigation={navigation} />
-    </ResponsiveLayout>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
+      <BottomSheetModalProvider>
+        <ResponsiveLayout
+          currentRoute="Search"
+          fullWidth={isGrid}
+          hideContextPanel={isGrid}
+          desktopActionRail={renderDesktopActionRail()}
+          desktopNavArrows={renderDesktopNavArrows()}
+          feedAspectRatio={undefined}
+          selectedOpportunity={
+            selectedOpportunity || currentOpportunity || null
+          }
+          featuredOpportunities={[]}
+          contextPanelView={contextPanelView}
+          onContextPanelViewChange={setContextPanelView}
+          selectedProductId={selectedProductId}
+          selectedProductTitle={selectedProductTitle}
+          selectedOpportunityForModal={selectedOpportunity}
+          aiViewActive={aiViewActive}
+          onAIClose={() => {
+            setAiViewActive(false);
+            setSelectedOpportunity(null);
+            setContextPanelView(null);
+          }}
+          aiContextHint={
+            selectedOpportunity
+              ? `Search: ${selectedOpportunity.title}`
+              : ''
+          }
+          directionsViewActive={contextPanelView === 'directions'}
+          onDirectionsClose={() => {
+            setContextPanelView(null);
+            setSelectedOpportunity(null);
+          }}
+          onReviewsPress={(productId, productTitle) => {
+            setSelectedProductId(productId);
+            setSelectedProductTitle(productTitle || '');
+            setAiViewActive(false);
+            setContextPanelView('reviews');
+          }}
+          onShowMorePress={(opp) => {
+            setSelectedOpportunity(opp);
+            setAiViewActive(false);
+            setContextPanelView('details');
+          }}
+          onSharePress={() => {
+            /* handled inside SearchResultsContent */
+          }}
+          onAIPress={(opp) => {
+            setSelectedOpportunity(opp);
+            setContextPanelView(null);
+            setAiViewActive(true);
+          }}
+          onCloseReviews={() => {
+            setContextPanelView(null);
+            setSelectedProductId('');
+            setSelectedProductTitle('');
+          }}
+          onCloseDetails={() => {
+            setContextPanelView(null);
+            setSelectedOpportunity(null);
+          }}
+        >
+          <SearchResultsContent
+            route={route}
+            navigation={navigation}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            onDesktopFullscreenStateChange={setFsState}
+            onDesktopScrollToIndex={(fn) => {
+              scrollToFullscreenIndexRef.current = fn;
+            }}
+            onDesktopRailHandlersChange={setRailHandlers}
+            onDesktopReviewsRequest={(opp, title) => {
+              setSelectedOpportunity(opp);
+              setSelectedProductId(opp.id);
+              setSelectedProductTitle(title);
+              setAiViewActive(false);
+              setContextPanelView('reviews');
+            }}
+            onDesktopDirectionsRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setAiViewActive(false);
+              setContextPanelView('directions');
+            }}
+            onDesktopAIRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setContextPanelView(null);
+              setAiViewActive(true);
+            }}
+            onDesktopDetailsRequest={(opp) => {
+              setSelectedOpportunity(opp);
+              setAiViewActive(false);
+              setContextPanelView('details');
+            }}
+          />
+        </ResponsiveLayout>
+      </BottomSheetModalProvider>
+    </GestureHandlerRootView>
   );
 };
 
@@ -1413,13 +1949,13 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   containerWeb: {
-  flex: 1,
-  backgroundColor: '#0D0D1A',
-  height: '100dvh' as any,
-  maxHeight: '100dvh' as any,
-  overflow: 'hidden',
-  position: 'relative' as any,
-},
+    flex: 1,
+    backgroundColor: '#0D0D1A',
+    height: '100dvh' as any,
+    maxHeight: '100dvh' as any,
+    overflow: 'hidden',
+    position: 'relative' as any,
+  },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1618,6 +2154,20 @@ const styles = StyleSheet.create({
     top: '50%',
     transform: [{ translateY: -150 }],
     zIndex: 50,
+  },
+  navArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  navArrowDisabled: {
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderColor: 'rgba(255,255,255,0.05)',
   },
 
   emptyContainer: { flex: 1, backgroundColor: '#0D0D1A' },

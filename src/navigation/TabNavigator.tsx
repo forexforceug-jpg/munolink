@@ -1,6 +1,12 @@
 // src/navigation/TabNavigator.tsx
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
   View,
@@ -13,13 +19,17 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, Feather, MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets, EdgeInsets } from 'react-native-safe-area-context';
+import {
+  useSafeAreaInsets,
+  EdgeInsets,
+} from 'react-native-safe-area-context';
 
 import { FeedScreen } from '../features/feed/FeedScreen';
 import { ExploreScreen } from '../features/explore/ExploreScreen';
 import { PayScreen } from '../features/pay/PayScreen';
 import { InboxScreen } from '../features/inbox/InboxScreen';
 import { AccountScreen } from '../features/account/AccountScreen';
+import { SearchScreen } from '../features/search/SearchScreen';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useAuth } from '../../src/context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -36,13 +46,7 @@ const isMediumDevice = width >= 375 && width < 420;
 
 export const BASE_TAB_HEIGHT = 60;
 
-// Minimum bottom buffer to keep the tab bar clear of browser chrome
-// on web (Safari URL bar, Android Chrome gesture area, etc.).
 const WEB_BOTTOM_BUFFER = 12;
-
-// Extra vertical padding baked into the tab bar's rendered style.
-// These are used by getTabBarHeight() so consumers get the exact
-// rendered height, not an approximation.
 const TAB_BAR_PADDING_TOP = 8;
 const TAB_BAR_PADDING_BOTTOM_EXTRA = 6;
 
@@ -86,14 +90,6 @@ function getWebSafeAreaBottom(): number {
   }
 }
 
-// ----------------------------------------------------------------
-// getTabBarHeight — single source of truth
-//
-// Returns the EXACT rendered height of the tab bar for the current
-// platform + device. Any screen that needs to clear the tab bar
-// (e.g. FeedScreen's info panel) should call this with the same
-// `insets` from `useSafeAreaInsets()`.
-// ----------------------------------------------------------------
 export function getTabBarHeight(insets: EdgeInsets): number {
   const webSafeBottom = getWebSafeAreaBottom();
 
@@ -361,14 +357,21 @@ export const TabNavigator = () => {
       ? Math.max(insets.bottom, webSafeBottom) + WEB_BOTTOM_BUFFER
       : insets.bottom;
 
-  // The tab bar's rendered height includes the top padding and the
-  // extra bottom padding baked into the style below. Keep this in
-  // sync with getTabBarHeight().
   const tabBarHeight =
     BASE_TAB_HEIGHT +
     effectiveBottomInset +
     TAB_BAR_PADDING_TOP +
     TAB_BAR_PADDING_BOTTOM_EXTRA;
+
+  // ✅ Hidden-tab options for sidebar-only destinations. These are
+  // registered inside the tab navigator so the sidebar can always
+  // dispatch `navigate('MainTabs', { screen: '<name>' })` without
+  // pushing a new screen on top of the tabs. On mobile they render
+  // no tab button at all.
+  const hiddenTabOptions = {
+    tabBarButton: () => null,
+    tabBarItemStyle: { display: 'none' as const },
+  };
 
   if (isDesktop) {
     return (
@@ -383,6 +386,12 @@ export const TabNavigator = () => {
         <Tab.Screen name="Pay" component={PayScreen} />
         <Tab.Screen name="Inbox" component={InboxScreen} />
         <Tab.Screen name="Account" component={AccountScreen} />
+        {/* ✅ Sidebar-only destinations live inside the tab nav too */}
+        <Tab.Screen
+          name="Search"
+          component={SearchScreen}
+          options={hiddenTabOptions}
+        />
       </Tab.Navigator>
     );
   }
@@ -396,7 +405,8 @@ export const TabNavigator = () => {
             styles.tabBar,
             {
               height: tabBarHeight,
-              paddingBottom: effectiveBottomInset + TAB_BAR_PADDING_BOTTOM_EXTRA,
+              paddingBottom:
+                effectiveBottomInset + TAB_BAR_PADDING_BOTTOM_EXTRA,
               paddingTop: TAB_BAR_PADDING_TOP,
             },
           ],
@@ -476,6 +486,13 @@ export const TabNavigator = () => {
               />
             ),
           }}
+        />
+
+        {/* ✅ Sidebar-only destinations, hidden on mobile. */}
+        <Tab.Screen
+          name="Search"
+          component={SearchScreen}
+          options={hiddenTabOptions}
         />
       </Tab.Navigator>
     </View>

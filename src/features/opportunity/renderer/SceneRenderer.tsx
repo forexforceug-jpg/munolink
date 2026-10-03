@@ -105,19 +105,22 @@ interface Props {
   showInboxButton?: boolean;
   onMediaLoadStateChange?: (isLoading: boolean) => void;
   /**
-   * ✅ NEW: reports the natural (intrinsic) pixel size of the
-   * currently visible media, so a parent (e.g. FeedScreen on
-   * desktop) can size its container to the media's aspect ratio
-   * and render the media contain-to-fill with no cropping.
-   *
-   *   • Image → fires with the decoded image's { width, height }.
-   *   • Video → fires with `null` for now (VideoItem handles its
-   *             own contain-to-fill internally).
-   *   • Unknown / loading → fires with `null`.
+   * ✅ Reports the natural (intrinsic) pixel size of the currently
+   * visible media so a parent can size its container to the media's
+   * aspect ratio, letting the media render edge-to-edge.
    */
   onNaturalSize?: (
     size: { width: number; height: number } | null
   ) => void;
+  /**
+   * How the current media fills its box:
+   *   • 'contain' (default) — no crop. Used once we know the
+   *     media's aspect ratio and the box is sized to match it.
+   *   • 'cover' — fills the box even if the aspect doesn't match
+   *     yet (may crop for a single frame). Safety net while the
+   *     aspect ratio is being resolved.
+   */
+  fillMode?: 'contain' | 'cover';
   width?: number;
   height?: number;
   autoPlay?: boolean;
@@ -125,11 +128,6 @@ interface Props {
   resetKey?: string | number;
   isDesktop?: boolean;
   bottomOffset?: number;
-  /**
-   * When true, `bottomOffset` is used verbatim for the info panel's
-   * bottom offset, and SceneRenderer skips its internal tab-bar
-   * computation.
-   */
   useExplicitBottomOffset?: boolean;
   title?: string;
   price?: number;
@@ -497,6 +495,7 @@ interface VideoItemProps {
   onPlayingChange: (playing: boolean) => void;
   onReadyChange: (isLoading: boolean) => void;
   onPlayerReady: (player: any) => void;
+  fillMode?: 'contain' | 'cover';
 }
 
 const VideoItem = memo(
@@ -509,6 +508,7 @@ const VideoItem = memo(
     onPlayingChange,
     onReadyChange,
     onPlayerReady,
+    fillMode = 'contain',
   }: VideoItemProps) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [hasEnded, setHasEnded] = useState(false);
@@ -674,7 +674,7 @@ const VideoItem = memo(
           <VideoView
             player={player}
             style={{ width: videoW, height: videoH, backgroundColor: '#000' }}
-            contentFit="contain"
+            contentFit={fillMode}
             nativeControls={false}
             allowsPictureInPicture={false}
           />
@@ -705,7 +705,8 @@ const VideoItem = memo(
     prev.isCurrent === next.isCurrent &&
     prev.isVisible === next.isVisible &&
     prev.width === next.width &&
-    prev.height === next.height
+    prev.height === next.height &&
+    prev.fillMode === next.fillMode
 );
 
 // ============================================================
@@ -827,17 +828,6 @@ const MediaOverlays: React.FC<MediaOverlaysProps> = ({
 // ============================================================
 // SAFE TAB BAR HEIGHT HOOK
 // ============================================================
-//
-// `useBottomTabBarHeight()` throws if called outside a bottom tab
-// navigator. SceneRenderer is mounted both inside tab screens
-// (Feed, Explore, Inbox, Account) AND inside fullscreen modals
-// rendered from AccountScreen / ExploreScreen / SearchResultsScreen
-// / UserProfileScreen. We must handle both cases.
-//
-// React's rules of hooks prevent calling it conditionally, so we
-// wrap it in a try/catch. When it throws, we treat the height as 0
-// and rely on the safe-area inset.
-//
 function useSafeTabBarHeight(): number {
   try {
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -861,7 +851,8 @@ export function SceneRenderer({
   onInboxPress,
   showInboxButton = true,
   onMediaLoadStateChange,
-  onNaturalSize, // ✅ NEW
+  onNaturalSize,
+  fillMode = 'contain',
   width = screenWidth,
   height = 600,
   autoPlay: _autoPlay,
@@ -911,23 +902,6 @@ export function SceneRenderer({
   const lastScrollIndexRef = useRef(0);
   const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ✅ Compute the info panel bottom offset.
-  //
-  //   Two modes:
-  //
-  //   1. useExplicitBottomOffset = true
-  //      → Use `bottomOffset` verbatim. Callers that already know the
-  //        exact tab-bar height (FeedScreen) use this so the info
-  //        panel clears the tab bar precisely.
-  //
-  //   2. useExplicitBottomOffset = false (default)
-  //      → Compute it from:
-  //        - insets.bottom: device home indicator / gesture bar.
-  //        - tabBarHeight:  actual tab-bar height if inside a tab
-  //                         navigator, 0 otherwise.
-  //        - SCENE_INFO_GAP: minimum visual gap.
-  //      → Plus any caller-supplied `bottomOffset` on top.
-  //
   const insets = useSafeAreaInsets();
   const tabBarHeight = useSafeTabBarHeight();
 
@@ -1024,11 +998,6 @@ export function SceneRenderer({
 
   // ============================================================
   // ✅ REPORT NATURAL SIZE UPWARD
-  //
-  // Fires whenever the current media changes, or when the decoded
-  // image's intrinsic dimensions become known. Parent (FeedScreen)
-  // uses this to size its desktop rectangle to the media's aspect
-  // ratio, so `resizeMode="contain"` fills the box edge-to-edge.
   // ============================================================
   useEffect(() => {
     if (!onNaturalSize) return;
@@ -1049,14 +1018,9 @@ export function SceneRenderer({
           height: activeImageNaturalSize.height,
         });
       } else {
-        // Not decoded yet — tell the parent to keep its previous
-        // aspect ratio rather than flashing the default.
         onNaturalSize(null);
       }
     } else if (current.type === 'video') {
-      // VideoItem handles contain-to-fill internally. Leave the
-      // parent's ratio alone (fire null) until a future refactor
-      // lifts the video's natural size up.
       onNaturalSize(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1249,6 +1213,7 @@ export function SceneRenderer({
             height={height}
             isCurrent={isCurrent}
             isVisible={isVisible}
+            fillMode={fillMode}
             onPlayingChange={(playing) => {
               setIsVideoPlaying(playing);
             }}
@@ -1265,7 +1230,11 @@ export function SceneRenderer({
           <Image
             source={{ uri: item.url }}
             style={[styles.mediaImage, { width, height }]}
-            resizeMode="contain"
+            // ✅ Fill mode is supplied by the parent. 'contain' when
+            // the box matches the media's aspect (no crop, no
+            // letterbox); 'cover' as a safety net while the aspect
+            // is still being resolved.
+            resizeMode={fillMode}
             onLoad={(e: any) => {
               if (isCurrent) {
                 const src = e?.nativeEvent?.source;
@@ -1289,7 +1258,7 @@ export function SceneRenderer({
         </View>
       );
     },
-    [width, height, currentIndex, isVisible, handleVideoReady]
+    [width, height, currentIndex, isVisible, handleVideoReady, fillMode]
   );
 
   const shouldShowSeeDetails = description && description.length > 100;
