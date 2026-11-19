@@ -16,9 +16,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { useAuth } from '../../context/AuthContext';
 import { StyledAlert } from '../feed/components/StyledAlert';
 
@@ -61,54 +60,20 @@ async function uploadLocalFile(
   contentType: string
 ): Promise<{ publicUrl: string | null; error: string | null }> {
   try {
-    if (Platform.OS === 'web') {
-      const blob = await uriToBlob(uri);
-      if (!blob || blob.size === 0) {
-        return { publicUrl: null, error: 'File is empty' };
-      }
-      const { error } = await supabase.storage
-        .from('catalog-images')
-        .upload(destinationPath, blob, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: blob.type || contentType,
-        });
-      if (error) return { publicUrl: null, error: error.message };
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from('catalog-images').getPublicUrl(destinationPath);
-      return { publicUrl, error: null };
+    const blob = await uriToBlob(uri);
+    if (!blob || blob.size === 0) {
+      return { publicUrl: null, error: 'File is empty' };
     }
-
-    const supabaseUrl =
-      process.env.EXPO_PUBLIC_SUPABASE_URL ||
-      'https://ffbjvrwkvnwocuyapajo.supabase.co';
-    const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-    if (!anonKey) return { publicUrl: null, error: 'Missing Supabase anon key' };
-
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/catalog-images/${destinationPath}`;
-    const result = await FileSystem.uploadAsync(uploadUrl, uri, {
-      httpMethod: 'POST',
-      uploadType: (FileSystem as any).FileSystemUploadType?.BINARY_CONTENT
-        ? (FileSystem as any).FileSystemUploadType.BINARY_CONTENT
-        : 0,
-      headers: {
-        Authorization: `Bearer ${anonKey}`,
-        apikey: anonKey,
-        'Content-Type': contentType,
-        'x-upsert': 'false',
-      },
-    });
-
-    if (result.status < 200 || result.status >= 300) {
-      return {
-        publicUrl: null,
-        error: `Upload failed (HTTP ${result.status}): ${result.body}`,
-      };
-    }
+    const { error } = await backendData.storage
+      .from('catalog-images')
+      .upload(destinationPath, blob, {
+        upsert: false,
+        contentType: blob.type || contentType,
+      });
+    if (error) return { publicUrl: null, error: error.message };
     const {
       data: { publicUrl },
-    } = supabase.storage.from('catalog-images').getPublicUrl(destinationPath);
+    } = backendData.storage.from('catalog-images').getPublicUrl(destinationPath);
     return { publicUrl, error: null };
   } catch (err: any) {
     return { publicUrl: null, error: err?.message || 'Upload failed' };
@@ -365,7 +330,7 @@ export const UploadEditorScreen = ({ navigation, route }: any) => {
         insertData.video_thumbnail = uploadedImages[0];
       }
 
-      const { error } = await supabase.from('catalog').insert(insertData);
+      const { error } = await backendData.from('catalog').insert(insertData);
       if (error) throw error;
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

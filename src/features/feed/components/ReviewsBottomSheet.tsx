@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { supabase } from '../../../lib/supabase';
+import { backendData } from '../../../lib/backendData';
 import { useAuth } from '../../../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
@@ -221,7 +221,7 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
     setError(null);
 
     try {
-      const { data: commentsData, error: commentsError } = await (supabase
+      const { data: commentsData, error: commentsError } = await (backendData
         .from('comments' as any)
         .select(
           `
@@ -247,7 +247,7 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
 
       const commentsWithReplies = await Promise.all(
         commentsData.map(async (comment: any) => {
-          const { data: repliesData, error: repliesError } = await (supabase
+          const { data: repliesData, error: repliesError } = await (backendData
             .from('comments' as any)
             .select(
               `
@@ -301,7 +301,7 @@ export const ReviewsBottomSheet: React.FC<ReviewsBottomSheetProps> = ({
 
       if (replyTo) commentData.parent_id = replyTo.id;
 
-      const { data, error: insertError } = await (supabase
+      const { data, error: insertError } = await (backendData
         .from('comments' as any)
         .insert(commentData)
         .select(

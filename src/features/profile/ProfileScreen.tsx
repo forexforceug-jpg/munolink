@@ -19,7 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { StyledAlert } from '../feed/components/StyledAlert';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -88,7 +88,7 @@ const ProfileContent = ({ navigation }: any) => {
 
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('users')
         .select('full_name, phone_number, avatar_url')
         .eq('id', user.id)
@@ -247,7 +247,7 @@ const ProfileContent = ({ navigation }: any) => {
       const bucket = 'avatars';
       const path = `${user.id}/avatar_${Date.now()}.jpg`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { data: uploadData, error: uploadError } = await backendData.storage
         .from(bucket)
         .upload(path, dataUrl, {
           contentType: mimeType,
@@ -262,9 +262,9 @@ const ProfileContent = ({ navigation }: any) => {
 
       const {
         data: { publicUrl },
-      } = supabase.storage.from(bucket).getPublicUrl(path);
+      } = backendData.storage.from(bucket).getPublicUrl(path);
 
-      const { error: updateError } = await supabase
+      const { error: updateError } = await backendData
         .from('users')
         .update({ avatar_url: publicUrl })
         .eq('id', user.id);
@@ -310,7 +310,7 @@ const ProfileContent = ({ navigation }: any) => {
 
     setSaving(true);
     try {
-      const { error } = await supabase
+      const { error } = await backendData
         .from('users')
         .update({
           full_name: fullName,

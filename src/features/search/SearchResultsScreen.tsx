@@ -28,7 +28,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
@@ -328,6 +328,7 @@ interface FullscreenItemProps {
   isDesktop: boolean;
   cardWidth: number;
   cardHeight: number;
+  currentUserId: string | undefined;
   isSaved: boolean;
   isLiked: boolean;
   likeCount: number;
@@ -338,6 +339,7 @@ interface FullscreenItemProps {
   onSave: (item: SearchResult) => void;
   onLike: (item: SearchResult) => void;
   onInbox: (item: SearchResult) => void;
+  onCheckout: (item: SearchResult) => void;
   onMediaLoadStateChange: (isLoading: boolean) => void;
   onUserPress: (item: SearchResult) => void;
   onReviewsPress: (item: SearchResult) => void;
@@ -357,6 +359,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   isDesktop,
   cardWidth,
   cardHeight,
+  currentUserId,
   isSaved,
   isLiked,
   likeCount,
@@ -366,6 +369,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onSave,
   onLike,
   onInbox,
+  onCheckout,
   onMediaLoadStateChange,
   onUserPress,
   onReviewsPress,
@@ -454,9 +458,9 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         onShowMore={() => onShowMore(item)}
         onShare={onShare}
         onSave={() => onSave(item)}
-        onPrimaryAction={() => onInbox(item)}
+        onCheckoutPress={item.userId ? () => onCheckout(item) : undefined}
         onInboxPress={() => onInbox(item)}
-        showInboxButton={true}
+        showInboxButton={item.userId !== currentUserId}
         onMediaLoadStateChange={onMediaLoadStateChange}
         onSceneChange={(idx, source) => {
           if (__DEV__) console.log('Scene changed to:', idx, source);
@@ -769,7 +773,7 @@ const SearchResultsContent: React.FC<SearchResultsContentProps> = ({
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await (supabase as any)
+        const { data, error } = await (backendData as any)
           .from('likes')
           .select('post_id')
           .eq('user_id', user.id)
@@ -953,12 +957,12 @@ const SearchResultsContent: React.FC<SearchResultsContentProps> = ({
 
       try {
         if (nextLiked) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .insert({ user_id: user.id, post_id: opportunity.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .delete()
             .eq('user_id', user.id)
@@ -1302,6 +1306,7 @@ const SearchResultsContent: React.FC<SearchResultsContentProps> = ({
                   isDesktop={isDesktop}
                   cardWidth={isDesktop ? itemWidth : width}
                   cardHeight={isDesktop ? itemHeight : height}
+                  currentUserId={user?.id}
                   isSaved={savedItemsMap[item.id] || false}
                   isLiked={likedItemsMap[item.id] || false}
                   likeCount={likeCountMap[item.id] ?? item.likeCount ?? 0}
@@ -1384,6 +1389,22 @@ const SearchResultsContent: React.FC<SearchResultsContentProps> = ({
                     navigation.navigate('Inbox', {
                       userId: p.userId || '',
                       userName: p.userFullName || 'User',
+                    });
+                  }}
+                  onCheckout={(p) => {
+                    if (!p.userId || p.userId === user?.id) return;
+                    navigation.navigate('MainTabs', {
+                      screen: 'Pay',
+                      params: {
+                        checkout: {
+                          sellerId: p.userId,
+                          sellerName: p.userFullName || 'User',
+                          title: p.title || 'Listing',
+                          unitPrice: p.price || 0,
+                          currency: p.currency || 'UGX',
+                          priceType: resolvePriceType(p),
+                        },
+                      },
                     });
                   }}
                   onMediaLoadStateChange={(isLoading) =>

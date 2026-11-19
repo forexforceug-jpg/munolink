@@ -21,7 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Opportunity } from '../../../services/feed.service';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { supabase } from '../../../lib/supabase';
+import { backendData } from '../../../lib/backendData';
 
 LogBox.ignoreLogs(['VirtualizedLists should never be nested']);
 
@@ -189,7 +189,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         const tableName = opp.type === 'product' ? 'catalog' : 'service_catalog';
         const categoryFilter = opp.category || '';
 
-        let query = supabase.from(tableName).select('*').limit(10);
+        let query = backendData.from(tableName).select('*').limit(10);
         if (categoryFilter) {
           query = query.eq('category', categoryFilter);
         }
@@ -200,14 +200,14 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         const isProduct = opp.type === 'product';
 
         if (isProduct) {
-          const { data } = await supabase
+          const { data } = await backendData
             .from('shop_products')
             .select('regular_price')
             .eq('in_stock', true)
             .limit(20);
           if (data) priceData = data;
         } else {
-          const { data } = await supabase
+          const { data } = await backendData
             .from('provider_services')
             .select('price')
             .eq('is_active', true)
@@ -218,7 +218,7 @@ export const AIBottomSheet: React.FC<AIBottomSheetProps> = ({
         const shopId = (opp as any).shopId;
         let sellerData: any = {};
         if (shopId) {
-          const { data } = await supabase
+          const { data } = await backendData
             .from('shops')
             .select('rating, review_count, is_verified')
             .eq('id', shopId)

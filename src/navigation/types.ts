@@ -1,9 +1,33 @@
 // src/navigation/types.ts
 
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
+export interface CheckoutRouteParams {
+  sellerId: string;
+  sellerName: string;
+  title: string;
+  unitPrice: number;
+  currency: string;
+  priceType: string;
+}
+
+export type MainTabParamList = {
+  Discover: undefined;
+  Explore: undefined;
+  Pay:
+    | {
+        checkout?: CheckoutRouteParams;
+        pendingPaymentId?: string;
+      }
+    | undefined;
+  Inbox: { userId?: string; userName?: string; shopId?: string } | undefined;
+  Account: undefined;
+  Search: undefined;
+};
 
 export type RootStackParamList = {
-  MainTabs: undefined;
+  MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   Join: undefined;
   SignIn: undefined;
   ShopProfile: { shopId: string; shopName?: string };
@@ -33,7 +57,7 @@ export type RootStackParamList = {
     userName?: string;
   };
   Notifications: undefined;
-  PayScreen: undefined;
+  PayScreen: { checkout?: CheckoutRouteParams } | undefined;
   Hub: undefined;
 
   UploadCamera: undefined;

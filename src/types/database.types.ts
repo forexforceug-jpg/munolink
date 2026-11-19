@@ -1,4 +1,4 @@
-﻿// src/types/database.types.ts
+// src/types/database.types.ts
 
 export type Json =
   | string
@@ -1394,6 +1394,7 @@ export type Database = {
           bio: string | null
           cover_url: string | null
           created_at: string | null
+          email: string | null
           full_name: string | null
           id: string
           kyc_verified: boolean | null
@@ -1404,7 +1405,7 @@ export type Database = {
           location_data: Json | null
           location_region: string | null
           longitude: number | null
-          phone_number: string
+          phone_number: string | null
           pin_hash: string | null
           role: string | null
           wallet_balance: number | null
@@ -1414,6 +1415,7 @@ export type Database = {
           bio?: string | null
           cover_url?: string | null
           created_at?: string | null
+          email?: string | null
           full_name?: string | null
           id?: string
           kyc_verified?: boolean | null
@@ -1424,7 +1426,7 @@ export type Database = {
           location_data?: Json | null
           location_region?: string | null
           longitude?: number | null
-          phone_number: string
+          phone_number?: string | null
           pin_hash?: string | null
           role?: string | null
           wallet_balance?: number | null
@@ -1434,6 +1436,7 @@ export type Database = {
           bio?: string | null
           cover_url?: string | null
           created_at?: string | null
+          email?: string | null
           full_name?: string | null
           id?: string
           kyc_verified?: boolean | null
@@ -1444,7 +1447,7 @@ export type Database = {
           location_data?: Json | null
           location_region?: string | null
           longitude?: number | null
-          phone_number?: string
+          phone_number?: string | null
           pin_hash?: string | null
           role?: string | null
           wallet_balance?: number | null

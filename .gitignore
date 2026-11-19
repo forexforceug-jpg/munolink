@@ -10,6 +10,9 @@ ios/
 .DS_Store
 coverage/
 *.tsbuildinfo
+munolink-backend/munolink.db
+munolink-backend/munolink.db-shm
+munolink-backend/munolink.db-wal
 npm-debug.*
 *.jks
 *.p8

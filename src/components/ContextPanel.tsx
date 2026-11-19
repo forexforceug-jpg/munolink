@@ -133,7 +133,10 @@ export function ContextPanel({
     return (
       <View style={[styles.container, { width: PANEL_WIDTH }]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>✨ Featured</Text>
+          <View style={styles.headerTitleRow}>
+            <Ionicons name="sparkles-outline" size={16} color="#AFC4FF" />
+            <Text style={styles.headerTitle}>Featured businesses</Text>
+          </View>
           <TouchableOpacity>
             <Text style={styles.viewAllText}>View All</Text>
           </TouchableOpacity>
@@ -159,7 +162,7 @@ export function ContextPanel({
             />
           )}
           keyExtractor={(item) => item.id}
-          numColumns={3}
+          numColumns={2}
           columnWrapperStyle={styles.gridRow}
           contentContainerStyle={styles.gridContent}
           showsVerticalScrollIndicator={false}
@@ -248,29 +251,35 @@ export function ContextPanel({
 // ============================================================
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#101113',
     borderLeftWidth: 1,
-    borderLeftColor: '#0D0D1A',
+    borderLeftColor: '#252629',
     flex: 1,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
-    minHeight: 44,
+    borderBottomColor: '#252629',
+    minHeight: 58,
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
   viewAllText: {
-    color: '#4A7DFF',
-    fontSize: 11,
+    color: '#AFC4FF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   backButton: {
     flexDirection: 'row',
@@ -286,50 +295,50 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A2E',
   },
   gridContent: {
-    padding: 8,
+    padding: 12,
     paddingBottom: 16,
   },
   gridRow: {
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   featuredItem: {
-    width: 104,
-    borderRadius: 6,
+    width: '48%',
+    borderRadius: 10,
     overflow: 'hidden',
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#191A1D',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: '#2A2B2F',
   },
   featuredImage: {
     width: '100%',
-    height: 85,
+    height: 116,
   },
   featuredOverlay: {
-    padding: 6,
+    padding: 9,
   },
   featuredTitle: {
     color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
   },
   featuredShop: {
-    color: '#8A8AAE',
-    fontSize: 9,
-    marginTop: 1,
+    color: '#A0A1A5',
+    fontSize: 10,
+    marginTop: 3,
   },
   featuredPrice: {
-    color: '#4A7DFF',
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 2,
+    color: '#AFC4FF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 6,
   },
   emptyGrid: {
     padding: 30,
     alignItems: 'center',
   },
   emptyGridText: {
-    color: '#8A8AAE',
+    color: '#A0A1A5',
     fontSize: 13,
   },
 });

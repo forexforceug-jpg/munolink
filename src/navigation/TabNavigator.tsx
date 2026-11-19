@@ -32,9 +32,10 @@ import { AccountScreen } from '../features/account/AccountScreen';
 import { SearchScreen } from '../features/search/SearchScreen';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useAuth } from '../../src/context/AuthContext';
-import { supabase } from '../lib/supabase';
+import { backendData } from '../lib/backendData';
+import type { MainTabParamList } from './types';
 
-const Tab = createBottomTabNavigator();
+const Tab = createBottomTabNavigator<MainTabParamList>();
 const { width } = Dimensions.get('window');
 const pixelRatio = PixelRatio.get();
 
@@ -183,7 +184,7 @@ const TabIcon = ({
 }: TabIconProps) => {
   if (isPay) return null;
 
-  const iconColor = focused ? '#4A7DFF' : 'rgba(255,255,255,0.6)';
+  const iconColor = focused ? '#FFFFFF' : 'rgba(255,255,255,0.62)';
 
   const baseIconSize = isSmallDevice ? 22 : isMediumDevice ? 24 : 26;
   const iconSize = getIconSize(baseIconSize);
@@ -264,7 +265,7 @@ const useUnreadMessageCount = (): number => {
     }
 
     try {
-      const { count: unread, error } = await supabase
+      const { count: unread, error } = await backendData
         .from('messages')
         .select('*', { count: 'exact', head: true })
         .eq('receiver_id', uid)
@@ -299,7 +300,7 @@ const useUnreadMessageCount = (): number => {
         .slice(2)}`;
 
       try {
-        const channel = supabase.channel(channelName);
+        const channel = backendData.channel(channelName);
 
         channel.on(
           'postgres_changes',
@@ -521,7 +522,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#1A2A4F',
+    backgroundColor: '#0B0B0D',
     borderTopWidth: 0,
     elevation: 0,
     ...Platform.select({
@@ -546,9 +547,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#1A2A4F',
+    backgroundColor: '#0B0B0D',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
+    borderTopColor: '#252629',
   },
 
   tabItem: {
@@ -570,7 +571,7 @@ const styles = StyleSheet.create({
   },
 
   iconWrapperFocused: {
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
 
   tabLabel: {
@@ -584,8 +585,8 @@ const styles = StyleSheet.create({
   },
 
   tabLabelFocused: {
-    color: '#4A7DFF',
-    fontWeight: '600',
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 
   payLabelInactive: {
@@ -595,10 +596,10 @@ const styles = StyleSheet.create({
   activeIndicator: {
     position: 'absolute',
     top: -14,
-    width: 16,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: '#4A7DFF',
+    width: 24,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#FFFFFF',
   },
 
   payCircle: {
@@ -631,7 +632,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#1A2A4F',
+    borderColor: '#0B0B0D',
     zIndex: 10,
   },
 

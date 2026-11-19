@@ -11,7 +11,10 @@ interface Props {
   children: ReactNode;
   currentRoute?: string;
   onNavigate?: (route: string, kind: SidebarRouteKind) => void;
+  onLogout?: () => void;
   floatingActions?: ReactNode;
+  searchPanelOpen?: boolean;
+  searchPanelContent?: ReactNode;
   hideContextPanel?: boolean;
   fullWidth?: boolean;
   desktopNavArrows?: ReactNode;
@@ -45,7 +48,10 @@ export function ResponsiveLayout({
   children,
   currentRoute,
   onNavigate,
+  onLogout,
   floatingActions,
+  searchPanelOpen = false,
+  searchPanelContent,
   hideContextPanel = false,
   fullWidth = false,
   desktopNavArrows,
@@ -78,7 +84,10 @@ export function ResponsiveLayout({
       <DesktopLayout
         currentRoute={currentRoute}
         onNavigate={onNavigate}
+        onLogout={onLogout}
         floatingActions={floatingActions}
+        searchPanelOpen={searchPanelOpen}
+        searchPanelContent={searchPanelContent}
         hideContextPanel={hideContextPanel}
         fullWidth={fullWidth}
         desktopNavArrows={desktopNavArrows}

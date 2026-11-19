@@ -1,6 +1,6 @@
 // src/services/upload.service.ts
 
-import { supabase } from '../lib/supabase';
+import { backendData } from '../lib/backendData';
 import * as ImagePicker from 'expo-image-picker';
 import { Platform, Alert } from 'react-native';
 
@@ -69,7 +69,7 @@ class UploadService {
         contentType = blob.type || 'image/jpeg';
       }
 
-      const { data, error } = await supabase.storage
+      const { data, error } = await backendData.storage
         .from(bucket)
         .upload(path, fileData, {
           contentType: contentType,
@@ -82,7 +82,7 @@ class UploadService {
         throw error;
       }
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: { publicUrl } } = backendData.storage
         .from(bucket)
         .getPublicUrl(path);
 
@@ -115,7 +115,7 @@ class UploadService {
 
   async updateUserAvatar(userId: string, avatarUrl: string): Promise<boolean> {
     try {
-      const { error } = await supabase
+      const { error } = await backendData
         .from('users')
         .update({ avatar_url: avatarUrl })
         .eq('id', userId);

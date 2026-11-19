@@ -2,15 +2,11 @@
 // Serves an OG-tagged HTML page for crawlers (WhatsApp, Facebook, etc.),
 // AND redirects real browsers straight to the web app at /?post=<id>.
 
-const SUPABASE_URL =
-  process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const BACKEND_URL = process.env.MUNOLINK_BACKEND_URL?.replace(/\/+$/, '');
 
 const FALLBACK_IMAGE =
   'https://placehold.co/1200x630/1A1A2E/4A7DFF/png?text=Munolink';
 const WEB_APP_BASE = 'https://www.munolink.com'; // web app root
-const APP_SCHEME = 'munolink://';
 
 export default async function handler(req, res) {
   const postId = req.query?.id || extractPostId(req.url);
@@ -19,55 +15,28 @@ export default async function handler(req, res) {
     return redirectTo(res, WEB_APP_BASE);
   }
 
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  if (!BACKEND_URL) {
     return redirectTo(res, WEB_APP_BASE);
   }
 
-  const headers = {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  };
-
-  // Fetch the post
+  // Fetch share data through the backend rather than calling Supabase here.
   let post = null;
+  let sellerName = 'a seller on Munolink';
   try {
     const r = await fetch(
-      `${SUPABASE_URL}/rest/v1/catalog?select=id,name,description,images,video_thumbnail,price,price_type,user_id&id=eq.${encodeURIComponent(
-        postId
-      )}`,
-      { headers }
+      `${BACKEND_URL}/api/v1/public/share/${encodeURIComponent(postId)}`,
+      { headers: { Accept: 'application/json' } }
     );
-    if (r.ok) {
-      const rows = await r.json();
-      post = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-    }
+    if (!r.ok) return redirectTo(res, WEB_APP_BASE);
+    const data = await r.json();
+    post = data.post || null;
+    sellerName = data.sellerName || sellerName;
   } catch (e) {
-    console.error('catalog fetch error:', e);
+    console.error('backend share fetch error:', e);
   }
 
   if (!post) {
     return redirectTo(res, WEB_APP_BASE);
-  }
-
-  // Fetch the seller
-  let sellerName = 'a seller on Munolink';
-  if (post.user_id) {
-    try {
-      const r = await fetch(
-        `${SUPABASE_URL}/rest/v1/users?select=full_name&id=eq.${encodeURIComponent(
-          post.user_id
-        )}`,
-        { headers }
-      );
-      if (r.ok) {
-        const users = await r.json();
-        if (Array.isArray(users) && users[0]?.full_name) {
-          sellerName = users[0].full_name;
-        }
-      }
-    } catch (e) {
-      console.error('user fetch error:', e);
-    }
   }
 
   const rawImage =
@@ -79,10 +48,10 @@ export default async function handler(req, res) {
     post.price != null && post.price > 0
       ? `UGX ${Number(post.price).toLocaleString()}`
       : post.price_type === 'showcase'
-      ? 'Showcase'
-      : post.price_type === 'free'
-      ? 'Free'
-      : 'Contact for price';
+        ? 'Showcase'
+        : post.price_type === 'free'
+          ? 'Free'
+          : 'Contact for price';
 
   const title = post.name || 'Munolink Post';
   const description = post.description

@@ -1,6 +1,6 @@
 // src/services/recommendation.service.ts
 
-import { supabase } from '../lib/supabase';
+import { backendData } from '../lib/backendData';
 import { Opportunity } from './feed.service';
 import { locationService, UserLocation } from './location.service';
 import { mapItemType } from '../utils/typeHelpers';
@@ -19,7 +19,6 @@ export interface UserPreferences {
   viewIntensity: Record<string, number>;
 }
 
-const supabaseAny = supabase as any;
 
 export const recommendationService = {
   // ============================================================
@@ -36,7 +35,7 @@ export const recommendationService = {
       const mappedType = mapItemType(itemType);
       console.log(`📊 Tracking ${action} for user ${userId} on item ${itemId}`);
 
-      const { data: user, error: userError } = await supabaseAny
+      const { data: user, error: userError } = await backendData
         .from('users')
         .select('id')
         .eq('id', userId)
@@ -50,7 +49,7 @@ export const recommendationService = {
       let itemExists = false;
       let finalItemType = mappedType;
 
-      const { data: catalogItem } = await supabaseAny
+      const { data: catalogItem } = await backendData
         .from('catalog')
         .select('id')
         .eq('id', itemId)
@@ -60,7 +59,7 @@ export const recommendationService = {
         itemExists = true;
         finalItemType = 'product';
       } else {
-        const { data: serviceItem } = await supabaseAny
+        const { data: serviceItem } = await backendData
           .from('service_catalog')
           .select('id')
           .eq('id', itemId)
@@ -77,7 +76,7 @@ export const recommendationService = {
         return;
       }
 
-      const { data: existing, error: findError } = await supabaseAny
+      const { data: existing, error: findError } = await backendData
         .from('user_interactions')
         .select('*')
         .eq('user_id', userId)
@@ -94,7 +93,7 @@ export const recommendationService = {
         const currentCount = existing.metadata?.count || 0;
         const currentTimeSpent = existing.time_spent || 0;
         
-        const { error: updateError } = await supabaseAny
+        const { error: updateError } = await backendData
           .from('user_interactions')
           .update({
             time_spent: currentTimeSpent + (timeSpent || 0),
@@ -129,7 +128,7 @@ export const recommendationService = {
           created_at: new Date().toISOString()
         };
 
-        const { error: insertError } = await supabaseAny
+        const { error: insertError } = await backendData
           .from('user_interactions')
           .insert(insertData);
 
@@ -175,7 +174,7 @@ export const recommendationService = {
     try {
       if (!userId || !location) return;
 
-      const { error } = await supabaseAny
+      const { error } = await backendData
         .from('users')
         .update({
           location_city: location.city || null,
@@ -203,7 +202,7 @@ export const recommendationService = {
   // ============================================================
   async getUserLocation(userId: string): Promise<{ location: UserLocation | null; label: string | null }> {
     try {
-      const { data, error } = await supabaseAny
+      const { data, error } = await backendData
         .from('users')
         .select('location_city, location_region, location_country, location_label, location_lat, location_lng')
         .eq('id', userId)
@@ -237,7 +236,7 @@ export const recommendationService = {
   // ============================================================
   async getUserPreferences(userId: string): Promise<UserPreferences | null> {
     try {
-      const { data: interactions, error } = await supabaseAny
+      const { data: interactions, error } = await backendData
         .from('user_interactions')
         .select('*')
         .eq('user_id', userId);
@@ -288,12 +287,12 @@ export const recommendationService = {
       // Get categories from viewed items
       let categories: string[] = [];
       if (viewedItems.length > 0) {
-        const { data: catalogItems } = await supabaseAny
+        const { data: catalogItems } = await backendData
           .from('catalog')
           .select('category')
           .in('id', viewedItems.slice(0, 20));
 
-        const { data: serviceItems } = await supabaseAny
+        const { data: serviceItems } = await backendData
           .from('service_catalog')
           .select('category')
           .in('id', viewedItems.slice(0, 20));
@@ -869,7 +868,7 @@ export const recommendationService = {
   // ============================================================
   async getUserSavedItems(userId: string): Promise<string[]> {
     try {
-      const { data, error } = await supabaseAny
+      const { data, error } = await backendData
         .from('user_interactions')
         .select('item_id')
         .eq('user_id', userId)

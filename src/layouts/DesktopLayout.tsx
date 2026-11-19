@@ -9,6 +9,8 @@ import { navigationRef } from '../navigation/navigationRef';
 
 const DEFAULT_FEED_ASPECT_RATIO = 9 / 16;
 const SIDEBAR_WIDTH = 220;
+const COLLAPSED_SIDEBAR_WIDTH = 64;
+const SEARCH_PANEL_WIDTH = 360;
 const CONTEXT_PANEL_WIDTH = 360;
 const RIGHT_RAIL_WIDTH = 168;
 const FEED_RIGHT_SHIFT = 60;
@@ -25,7 +27,10 @@ interface Props {
   children: ReactNode;
   currentRoute?: string;
   onNavigate?: (route: string, kind: SidebarRouteKind) => void;
+  onLogout?: () => void;
   floatingActions?: ReactNode;
+  searchPanelOpen?: boolean;
+  searchPanelContent?: ReactNode;
   hideContextPanel?: boolean;
   fullWidth?: boolean;
   desktopNavArrows?: ReactNode;
@@ -60,7 +65,10 @@ export function DesktopLayout({
   children,
   currentRoute,
   onNavigate,
+  onLogout,
   floatingActions,
+  searchPanelOpen = false,
+  searchPanelContent,
   hideContextPanel = false,
   fullWidth = false,
   desktopNavArrows,
@@ -87,6 +95,11 @@ export function DesktopLayout({
   onDirectionsClose,
 }: Props) {
   const [viewport, setViewport] = React.useState({ width: 0, height: 0 });
+  const showContextPanel =
+    !hideContextPanel && !fullWidth && !searchPanelOpen;
+  const sidebarGroupWidth = searchPanelOpen
+    ? COLLAPSED_SIDEBAR_WIDTH + SEARCH_PANEL_WIDTH
+    : SIDEBAR_WIDTH;
 
   const handleLayout = React.useCallback((e: any) => {
     const { width, height } = e.nativeEvent.layout;
@@ -114,8 +127,8 @@ export function DesktopLayout({
     const availW = Math.max(
       0,
       viewport.width -
-        SIDEBAR_WIDTH -
-        CONTEXT_PANEL_WIDTH -
+        sidebarGroupWidth -
+        (showContextPanel ? CONTEXT_PANEL_WIDTH : 0) -
         RIGHT_RAIL_WIDTH
     );
     const availH = Math.max(0, viewport.height);
@@ -146,7 +159,13 @@ export function DesktopLayout({
     }
 
     return { feedWidth: w, feedHeight: h };
-  }, [viewport, fullWidth, effectiveAspect]);
+  }, [
+    viewport,
+    fullWidth,
+    effectiveAspect,
+    sidebarGroupWidth,
+    showContextPanel,
+  ]);
 
   const handleSidebarNavigate = React.useCallback(
     (route: string, kind: SidebarRouteKind) => {
@@ -182,18 +201,23 @@ export function DesktopLayout({
     [onNavigate]
   );
 
-  const showContextPanel = !hideContextPanel && !fullWidth;
-
   const feedContainerFills =
     fullWidth || hideContextPanel || !showContextPanel;
 
   return (
     <View style={styles.container} onLayout={handleLayout}>
       <View style={styles.main}>
-        <Sidebar
-          currentRoute={currentRoute}
-          onNavigate={handleSidebarNavigate}
-        />
+        <View style={[styles.sidebarGroup, { width: sidebarGroupWidth }]}>
+          <Sidebar
+            currentRoute={currentRoute}
+            searchExpanded={searchPanelOpen}
+            onNavigate={handleSidebarNavigate}
+            onLogout={onLogout}
+          />
+          {searchPanelOpen && searchPanelContent && (
+            <View style={styles.searchPanelSlot}>{searchPanelContent}</View>
+          )}
+        </View>
 
         <View
           style={[
@@ -276,11 +300,22 @@ export function DesktopLayout({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1A1A2E' },
-  main: { flex: 1, flexDirection: 'row', backgroundColor: '#1A1A2E' },
+  container: { flex: 1, backgroundColor: '#0B0B0D' },
+  main: { flex: 1, flexDirection: 'row', backgroundColor: '#0B0B0D' },
+  sidebarGroup: {
+    flexDirection: 'row',
+    flexShrink: 0,
+    alignSelf: 'stretch',
+  },
+  searchPanelSlot: {
+    width: SEARCH_PANEL_WIDTH,
+    flexShrink: 0,
+    borderRightWidth: 1,
+    borderRightColor: '#252629',
+  },
   feedContainer: {
     flex: 1,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',

@@ -10,7 +10,7 @@ import React, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import {
@@ -67,6 +67,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { StyledAlert } from './components/StyledAlert';
 import { sharePost } from '../../utils/share';
 import { getTabBarHeight } from '../../navigation/TabNavigator';
+import { useSidebarSearch } from '../search/useSidebarSearch';
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 
@@ -120,7 +121,7 @@ const ItemMediaLoadingSpinner: React.FC = () => {
 export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
-  const { isAuthenticated, isGuest, user } = useAuth();
+  const { isAuthenticated, isGuest, user, logout } = useAuth();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
 
@@ -206,6 +207,12 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
   const [contextPanelView, setContextPanelView] = useState<
     'details' | 'reviews' | 'directions' | null
   >(null);
+  const {
+    searchPanelOpen,
+    searchPanelContent,
+    onNavigate: onSidebarNavigate,
+    closeSearchPanel,
+  } = useSidebarSearch(navigation, isDesktop);
 
   const [refreshing, setRefreshing] = useState(false);
   const [feedVersion, setFeedVersion] = useState(0);
@@ -435,7 +442,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     setIsLoadingFollowing(true);
     try {
       const { data: followRows, error: followError } = await (
-        supabase as any
+        backendData as any
       )
         .from('follows')
         .select('following_id')
@@ -661,7 +668,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await (supabase as any)
+        const { data, error } = await (backendData as any)
           .from('likes')
           .select('post_id')
           .eq('user_id', user.id)
@@ -1165,13 +1172,13 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
       try {
         if (nextSaved) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('saves')
             .insert({ user_id: user.id, post_id: opportunity.id });
 
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('saves')
             .delete()
             .eq('user_id', user.id)
@@ -1247,12 +1254,12 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
       try {
         if (nextLiked) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .insert({ user_id: user.id, post_id: opportunity.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .delete()
             .eq('user_id', user.id)
@@ -1628,12 +1635,24 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
             onShowMore={() => handleShowMorePress(item)}
             onShare={() => handleSharePress(item)}
             onSave={() => handleSavePress(item)}
-            onPrimaryAction={() => {
-              navigation.navigate('Inbox', {
-                userId: item.userId,
-                userName: item.userFullName || 'User',
-              });
-            }}
+            onCheckoutPress={
+              item.userId
+                ? () =>
+                    navigation.navigate('MainTabs', {
+                      screen: 'Pay',
+                      params: {
+                        checkout: {
+                          sellerId: item.userId,
+                          sellerName: item.userFullName || 'User',
+                          title: item.title || 'Listing',
+                          unitPrice: price,
+                          currency: item.currency || 'UGX',
+                          priceType,
+                        },
+                      },
+                    })
+                : undefined
+            }
             onInboxPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               if (!isAuthenticated) {
@@ -1666,7 +1685,7 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                 userName: item.userFullName || 'User',
               });
             }}
-            showInboxButton={true}
+            showInboxButton={item.userId !== user?.id}
             onMediaLoadStateChange={(isLoading) =>
               handleMediaLoadStateChange(item.id, isLoading)
             }
@@ -1758,7 +1777,99 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
     ]
   );
 
+  const handleSidebarLogout = useCallback(() => {
+    showStyledAlert({
+      title: 'Log Out',
+      message: 'Are you sure you want to log out?',
+      icon: 'log-out-outline',
+      iconColor: '#E74C3C',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            hideStyledAlert();
+            try {
+              await logout();
+              setSavedItemsMap({});
+              setLikedItemsMap({});
+              setLikeCountMap({});
+              setLoadingItemsMap({});
+              setFollowingOpportunities([]);
+              setActiveFeed('forYou');
+              setContextPanelView(null);
+              closeSearchPanel();
+              navigation.replace('Join');
+            } catch (error) {
+              console.error('Logout error:', error);
+              showStyledAlert({
+                title: 'Error',
+                message: 'Failed to log out. Please try again.',
+                icon: 'alert-circle-outline',
+                iconColor: '#E74C3C',
+                buttons: [
+                  {
+                    text: 'OK',
+                    style: 'primary',
+                    onPress: hideStyledAlert,
+                  },
+                ],
+              });
+            }
+          },
+        },
+      ],
+    });
+  }, [
+    hideStyledAlert,
+    closeSearchPanel,
+    logout,
+    navigation,
+    showStyledAlert,
+  ]);
+
   const isInitialLoading = !hasFetchedOnceRef.current && queryLoading;
+
+  const feedTabs = (
+    <View style={styles.feedTabsRow}>
+      <TouchableOpacity
+        style={styles.feedTab}
+        onPress={() => setActiveFeed('following')}
+        activeOpacity={0.8}
+        accessibilityRole="tab"
+        accessibilityState={{ selected: activeFeed === 'following' }}
+      >
+        <Text
+          style={[
+            styles.feedTabLabel,
+            activeFeed === 'following' && styles.feedTabLabelActive,
+          ]}
+        >
+          Following
+        </Text>
+        {activeFeed === 'following' && <View style={styles.feedTabUnderline} />}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.feedTab}
+        onPress={() => setActiveFeed('forYou')}
+        activeOpacity={0.8}
+        accessibilityRole="tab"
+        accessibilityState={{ selected: activeFeed === 'forYou' }}
+      >
+        <Text
+          style={[
+            styles.feedTabLabel,
+            activeFeed === 'forYou' && styles.feedTabLabelActive,
+          ]}
+        >
+          For You
+        </Text>
+        {activeFeed === 'forYou' && <View style={styles.feedTabUnderline} />}
+      </TouchableOpacity>
+    </View>
+  );
 
   if (
     activeFeed === 'forYou' &&
@@ -1805,10 +1916,11 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
 
   return (
     <ResponsiveLayout
-      currentRoute="Feed"
-      onNavigate={(route) => {
-        (navigation as any).navigate(route);
-      }}
+      currentRoute={searchPanelOpen ? 'Search' : 'Discover'}
+      onNavigate={onSidebarNavigate}
+      onLogout={handleSidebarLogout}
+      searchPanelOpen={searchPanelOpen}
+      searchPanelContent={searchPanelContent}
       desktopNavArrows={renderDesktopNavArrows()}
       desktopActionRail={renderDesktopActionRail()}
       selectedOpportunity={activeFeedItems[currentIndex] || null}
@@ -1914,8 +2026,10 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   <TouchableOpacity
                     style={styles.searchContainer}
                     onPress={() => {
-                      (navigation as any).navigate('Search');
+                      onSidebarNavigate('Search', 'stack');
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Search"
                   >
                     <Ionicons
                       name="search-outline"
@@ -1925,45 +2039,24 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   </TouchableOpacity>
                 </View>
 
-                <View style={styles.feedTabsRow}>
-                  <TouchableOpacity
-                    style={styles.feedTab}
-                    onPress={() => setActiveFeed('following')}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.feedTabLabel,
-                        activeFeed === 'following' &&
-                          styles.feedTabLabelActive,
-                      ]}
-                    >
-                      Following
-                    </Text>
-                    {activeFeed === 'following' && (
-                      <View style={styles.feedTabUnderline} />
-                    )}
-                  </TouchableOpacity>
+                {feedTabs}
+              </LinearGradient>
+            )}
 
-                  <TouchableOpacity
-                    style={styles.feedTab}
-                    onPress={() => setActiveFeed('forYou')}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.feedTabLabel,
-                        activeFeed === 'forYou' &&
-                          styles.feedTabLabelActive,
-                      ]}
-                    >
-                      For You
-                    </Text>
-                    {activeFeed === 'forYou' && (
-                      <View style={styles.feedTabUnderline} />
-                    )}
-                  </TouchableOpacity>
-                </View>
+            {isDesktop && (
+              <LinearGradient
+                colors={[
+                  'rgba(0,0,0,0.82)',
+                  'rgba(0,0,0,0.42)',
+                  'rgba(0,0,0,0)',
+                ]}
+                locations={[0, 0.6, 1]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={styles.desktopFeedHeader}
+                pointerEvents="box-none"
+              >
+                {feedTabs}
               </LinearGradient>
             )}
 
@@ -1979,11 +2072,13 @@ export const FeedScreen = ({ navigation, route }: FeedScreenProps) => {
                   </>
                 ) : (
                   <>
-                    <Ionicons
-                      name="people-outline"
-                      size={56}
-                      color="#8A8AAE"
-                    />
+                    <View style={styles.followingEmptyIcon}>
+                      <Ionicons
+                        name="people-outline"
+                        size={28}
+                        color="#9DB6FF"
+                      />
+                    </View>
                     <Text style={styles.followingEmptyTitle}>
                       No posts yet
                     </Text>
@@ -2212,35 +2307,37 @@ const styles = StyleSheet.create({
       },
     }),
     zIndex: 20,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingHorizontal: 18,
+    paddingBottom: 10,
   },
   topBarContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
-    gap: 8,
+    gap: 12,
   },
   logoContainer: {
     flexShrink: 0,
   },
   logoImage: {
-    width: 53,
-    height: 33,
+    width: 48,
+    height: 32,
   },
 
   openInAppButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
+    paddingVertical: 7,
+    borderRadius: 18,
     gap: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    maxWidth: 180,
+    borderColor: 'rgba(255,255,255,0.16)',
+    maxWidth: 160,
+    minHeight: 38,
+    flexShrink: 1,
     justifyContent: 'center',
   },
   openInAppIcon: {
@@ -2256,8 +2353,11 @@ const styles = StyleSheet.create({
   },
 
   searchContainer: {
-    padding: 6,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
     flexShrink: 0,
   },
 
@@ -2278,12 +2378,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     letterSpacing: 0.2,
-    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowColor: 'rgba(0,0,0,0.55)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
   feedTabLabelActive: {
     color: '#FFFFFF',
+    fontWeight: '700',
   },
   feedTabUnderline: {
     marginTop: 5,
@@ -2292,19 +2393,38 @@ const styles = StyleSheet.create({
     borderRadius: 1,
     backgroundColor: '#FFFFFF',
   },
+  desktopFeedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    alignItems: 'center',
+    paddingTop: 16,
+    paddingBottom: 14,
+  },
 
   followingEmptyContainer: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#0B0B0D',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
+  },
+  followingEmptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 2,
   },
   followingEmptyTitle: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '700',
-    marginTop: 16,
+    marginTop: 14,
   },
   followingEmptySubtext: {
     color: '#8A8AAE',
@@ -2315,13 +2435,15 @@ const styles = StyleSheet.create({
   },
   followingEmptyButton: {
     marginTop: 24,
-    backgroundColor: '#4A7DFF',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 28,
     paddingVertical: 12,
     borderRadius: 24,
+    minHeight: 46,
+    justifyContent: 'center',
   },
   followingEmptyButtonText: {
-    color: '#FFFFFF',
+    color: '#111111',
     fontSize: 14,
     fontWeight: '600',
   },

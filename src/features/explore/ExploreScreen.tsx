@@ -34,7 +34,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
@@ -51,6 +51,7 @@ import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { useIsFocused } from '@react-navigation/native';
+import { useSidebarSearch } from '../search/useSidebarSearch';
 
 const { width, height } = Dimensions.get('window');
 
@@ -215,7 +216,7 @@ const GridResultCard = React.memo(
           />
         ) : (
           <View style={[styles.gridImage, styles.gridImagePlaceholder]}>
-            <Ionicons name="image-outline" size={40} color="#4A7DFF" />
+            <Ionicons name="image-outline" size={40} color="#AAB4C0" />
           </View>
         )}
 
@@ -249,7 +250,10 @@ const GridResultCard = React.memo(
                 {displayName}
               </Text>
               {item.like_count && item.like_count > 0 && (
-                <Text style={styles.gridRating}>❤️ {item.like_count}</Text>
+                <View style={styles.gridRating}>
+                  <Ionicons name="heart-outline" size={12} color="#E18A96" />
+                  <Text style={styles.gridRatingText}>{item.like_count}</Text>
+                </View>
               )}
             </View>
           </View>
@@ -326,6 +330,7 @@ interface FullscreenItemProps {
   isDesktop: boolean;
   cardWidth: number;
   cardHeight: number;
+  currentUserId: string | undefined;
   isSaved: boolean;
   isLiked: boolean;
   likeCount: number;
@@ -335,6 +340,7 @@ interface FullscreenItemProps {
   onSave: (item: ExplorePost) => void;
   onLike: (item: ExplorePost) => void;
   onInbox: (item: ExplorePost) => void;
+  onCheckout: (item: ExplorePost) => void;
   onMediaLoadStateChange: (isLoading: boolean) => void;
   onUserPress: (item: ExplorePost) => void;
   onReviewsPress: (item: ExplorePost) => void;
@@ -354,6 +360,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   isDesktop,
   cardWidth,
   cardHeight,
+  currentUserId,
   isSaved,
   isLiked,
   likeCount,
@@ -363,6 +370,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onSave,
   onLike,
   onInbox,
+  onCheckout,
   onMediaLoadStateChange,
   onUserPress,
   onReviewsPress,
@@ -449,9 +457,9 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         filter={specs.filter ?? null}
         textOverlays={specs.text_overlays ?? null}
         onSave={() => onSave(item)}
-        onPrimaryAction={() => onInbox(item)}
+        onCheckoutPress={item.user_id ? () => onCheckout(item) : undefined}
         onInboxPress={() => onInbox(item)}
-        showInboxButton={true}
+        showInboxButton={item.user_id !== currentUserId}
         onMediaLoadStateChange={onMediaLoadStateChange}
         onSceneChange={(sceneIdx, source) => {
           if (__DEV__) console.log('Scene changed:', sceneIdx, source);
@@ -859,12 +867,12 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
     (async () => {
       try {
         const [likesRes, savesRes] = await Promise.all([
-          supabase
+          backendData
             .from('likes' as any)
             .select('post_id')
             .eq('user_id', user.id)
             .in('post_id', postIds),
-          supabase
+          backendData
             .from('saves' as any)
             .select('post_id')
             .eq('user_id', user.id)
@@ -994,10 +1002,10 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
     async (post: ExplorePost) => {
       if (!user?.id) {
         showStyledAlert({
-          title: '🔒 Join Munolink',
+          title: 'Join Munolink',
           message: 'Create a free account to like posts.',
           icon: 'lock-closed',
-          iconColor: '#4A7DFF',
+          iconColor: '#AAB4C0',
           buttons: [
             {
               text: 'Continue Browsing',
@@ -1031,12 +1039,12 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
 
       try {
         if (nextLiked) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .insert({ user_id: user.id, post_id: post.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .delete()
             .eq('user_id', user.id)
@@ -1062,10 +1070,10 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
     async (post: ExplorePost) => {
       if (!user?.id) {
         showStyledAlert({
-          title: '🔒 Join Munolink',
+          title: 'Join Munolink',
           message: 'Create a free account to save items.',
           icon: 'lock-closed',
-          iconColor: '#4A7DFF',
+          iconColor: '#AAB4C0',
           buttons: [
             {
               text: 'Continue Browsing',
@@ -1098,12 +1106,12 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
 
       try {
         if (nextSaved) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('saves')
             .insert({ user_id: user.id, post_id: post.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('saves')
             .delete()
             .eq('user_id', user.id)
@@ -1362,7 +1370,7 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
                 {option.label}
               </Text>
               {selectedSort === option.key && (
-                <Ionicons name="checkmark" size={20} color="#4A7DFF" />
+                <Ionicons name="checkmark" size={20} color="#D6DCE3" />
               )}
             </TouchableOpacity>
           ))}
@@ -1434,8 +1442,8 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
         ]}
         edges={['top']}
       >
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
-        <ActivityIndicator size="large" color="#4A7DFF" />
+        <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
+        <ActivityIndicator size="large" color="#D6DCE3" />
         <Text style={styles.loadingText}>Loading explore...</Text>
       </SafeAreaView>
     );
@@ -1451,7 +1459,7 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
 
     return (
       <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+        <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
 
         <TouchableOpacity
           style={styles.backButton}
@@ -1494,6 +1502,7 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
                   isDesktop={isDesktop}
                   cardWidth={isDesktop ? itemWidth : winWidth}
                   cardHeight={isDesktop ? itemHeight : winHeight}
+                  currentUserId={user?.id}
                   isSaved={
                     savedItemsMap[item.id] !== undefined
                       ? savedItemsMap[item.id]
@@ -1521,11 +1530,11 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     if (!user?.id) {
                       showStyledAlert({
-                        title: '🔒 Join Munolink',
+                        title: 'Join Munolink',
                         message:
                           'Create a free account to message sellers and providers.',
                         icon: 'lock-closed',
-                        iconColor: '#4A7DFF',
+                        iconColor: '#AAB4C0',
                         buttons: [
                           {
                             text: 'Continue Browsing',
@@ -1547,6 +1556,22 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
                     navigation.navigate('Inbox', {
                       userId: p.user_id || '',
                       userName: p.user_full_name || 'User',
+                    });
+                  }}
+                  onCheckout={(p) => {
+                    if (!p.user_id) return;
+                    navigation.navigate('MainTabs', {
+                      screen: 'Pay',
+                      params: {
+                        checkout: {
+                          sellerId: p.user_id,
+                          sellerName: p.user_full_name || 'User',
+                          title: p.name || 'Listing',
+                          unitPrice: p.price || 0,
+                          currency: p.currency || 'UGX',
+                          priceType: resolvePostPriceType(p),
+                        },
+                      },
                     });
                   }}
                   onMediaLoadStateChange={(isLoading) =>
@@ -1709,7 +1734,7 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
       ]}
       edges={['top']}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
 
       <View style={[styles.header, isDesktop && styles.headerDesktop]}>
         <View style={styles.headerLeft}>
@@ -1731,7 +1756,7 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
           style={styles.sortButtonHeader}
           onPress={() => setShowSortModal(true)}
         >
-          <Ionicons name="options-outline" size={24} color="#4A7DFF" />
+          <Ionicons name="options-outline" size={24} color="#C4CBD3" />
         </TouchableOpacity>
       </View>
 
@@ -1743,19 +1768,19 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
           ]}
         >
           <View style={styles.searchInputWrapper}>
-            <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+            <Ionicons name="search-outline" size={20} color="#A0A5AC" />
             <TextInput
               ref={searchInputRef}
               style={styles.searchInput}
               placeholder="Search posts..."
-              placeholderTextColor="#8A8AAE"
+              placeholderTextColor="#8F98A3"
               value={searchQuery}
               onChangeText={setSearchQuery}
               returnKeyType="search"
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Ionicons name="close-circle" size={20} color="#8A8AAE" />
+                <Ionicons name="close-circle" size={20} color="#A0A5AC" />
               </TouchableOpacity>
             )}
           </View>
@@ -1782,14 +1807,14 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#4A7DFF"
-            colors={['#4A7DFF']}
-            progressBackgroundColor="#1A2A4F"
+            tintColor="#C4CBD3"
+            colors={['#C4CBD3']}
+            progressBackgroundColor="#17191C"
           />
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="search-outline" size={48} color="#8A8AAE" />
+            <Ionicons name="search-outline" size={48} color="#AAB4C0" />
             <Text style={styles.emptyTitle}>No posts found</Text>
             <Text style={styles.emptySubtext}>
               Try adjusting your filters or search terms
@@ -1835,6 +1860,38 @@ const ExploreContent: React.FC<ExploreContentProps> = ({
 // ============================================================
 export const ExploreScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
+  const isFocused = useIsFocused();
+  const screenEntrance = useRef(new Animated.Value(0)).current;
+  const {
+    searchPanelOpen,
+    searchPanelContent,
+    onNavigate,
+  } = useSidebarSearch(navigation, isDesktop);
+
+  useEffect(() => {
+    if (!isFocused) return;
+
+    screenEntrance.setValue(0);
+    const animation = Animated.timing(screenEntrance, {
+      toValue: 1,
+      duration: 180,
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [isFocused, screenEntrance]);
+
+  const screenEntranceStyle = {
+    opacity: screenEntrance,
+    transform: [
+      {
+        translateY: screenEntrance.interpolate({
+          inputRange: [0, 1],
+          outputRange: [5, 0],
+        }),
+      },
+    ],
+  };
 
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
 
@@ -1887,11 +1944,13 @@ export const ExploreScreen = ({ navigation }: any) => {
 
   if (!isDesktop) {
     return (
-      <ExploreContent
-        navigation={navigation}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-      />
+      <Animated.View style={[styles.screenEntrance, screenEntranceStyle]}>
+        <ExploreContent
+          navigation={navigation}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+        />
+      </Animated.View>
     );
   }
 
@@ -1998,10 +2057,14 @@ export const ExploreScreen = ({ navigation }: any) => {
   const isGrid = viewMode === 'grid';
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0B0B0D' }}>
       <BottomSheetModalProvider>
+        <Animated.View style={[styles.screenEntrance, screenEntranceStyle]}>
         <ResponsiveLayout
-          currentRoute="Explore"
+          currentRoute={searchPanelOpen ? 'Search' : 'Explore'}
+          onNavigate={onNavigate}
+          searchPanelOpen={searchPanelOpen}
+          searchPanelContent={searchPanelContent}
           fullWidth={isGrid}
           hideContextPanel={isGrid}
           desktopActionRail={renderDesktopActionRail()}
@@ -2095,16 +2158,18 @@ export const ExploreScreen = ({ navigation }: any) => {
             }}
           />
         </ResponsiveLayout>
+        </Animated.View>
       </BottomSheetModalProvider>
     </GestureHandlerRootView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0D0D1A' },
-  containerDesktop: { backgroundColor: '#0D0D1A', padding: 24 },
+  screenEntrance: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#0B0B0D' },
+  containerDesktop: { backgroundColor: '#0B0B0D', padding: 24 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#8A8AAE', fontSize: 14, marginTop: 12 },
+  loadingText: { color: '#A0A5AC', fontSize: 14, marginTop: 12 },
 
   itemMediaSpinnerOverlay: {
     ...StyleSheet.absoluteFill,
@@ -2121,18 +2186,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 8,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
   },
   headerDesktop: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 12 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#FFFFFF' },
+  headerTitle: { fontSize: 24, fontWeight: '600', color: '#F3F4F6' },
   searchIconButton: { padding: 4 },
   sortButtonHeader: {
     padding: 8,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     minHeight: 40,
     minWidth: 40,
     justifyContent: 'center',
@@ -2143,7 +2208,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
     gap: 10,
   },
   searchContainerDesktop: { paddingHorizontal: 0 },
@@ -2151,19 +2216,19 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.045)',
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     minHeight: 44,
   },
   searchInput: { flex: 1, color: '#FFFFFF', fontSize: 14, padding: 0 },
 
   filterContainer: {
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
     paddingVertical: 8,
     paddingHorizontal: 4,
     borderBottomWidth: 1,
@@ -2189,13 +2254,13 @@ const styles = StyleSheet.create({
     minHeight: 32,
   },
   filterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
-    borderColor: '#4A7DFF',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.2)',
   },
-  filterChipText: { color: '#8A8AAE', fontSize: 12, fontWeight: '500' },
-  filterChipTextActive: { color: '#4A7DFF' },
+  filterChipText: { color: '#A0A5AC', fontSize: 12, fontWeight: '500' },
+  filterChipTextActive: { color: '#F3F4F6' },
   filterChipBadge: {
-    backgroundColor: '#4A7DFF',
+    backgroundColor: '#667A92',
     borderRadius: 8,
     paddingHorizontal: 4,
     paddingVertical: 1,
@@ -2207,14 +2272,14 @@ const styles = StyleSheet.create({
   gridContainer: { padding: 4, paddingBottom: 20 },
   gridCard: {
     flex: 1,
-    margin: 1,
-    borderRadius: 8,
+    margin: 2,
+    borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: '#1A1A2E',
+    backgroundColor: '#17191C',
     position: 'relative',
     aspectRatio: 0.9,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   gridImage: {
     width: '100%',
@@ -2254,9 +2319,9 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   gridTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
-  gridPrice: { color: '#4A7DFF', fontSize: 13, fontWeight: '700', marginTop: 2 },
+  gridPrice: { color: '#E1E5EA', fontSize: 13, fontWeight: '700', marginTop: 2 },
   gridShowcase: {
-    color: '#6C5CE7',
+    color: '#C4CBD3',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 2,
@@ -2268,7 +2333,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   gridShop: { color: 'rgba(255,255,255,0.7)', fontSize: 11, flex: 1 },
-  gridRating: { color: '#F1C40F', fontSize: 11 },
+  gridRating: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  gridRatingText: { color: '#E1E5EA', fontSize: 11 },
 
   emptyContainer: {
     flex: 1,
@@ -2282,7 +2348,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 12,
   },
-  emptySubtext: { color: '#8A8AAE', fontSize: 14, marginTop: 4 },
+  emptySubtext: { color: '#A0A5AC', fontSize: 14, marginTop: 4 },
 
   backButton: {
     position: 'absolute',
@@ -2333,7 +2399,7 @@ const styles = StyleSheet.create({
     bottom: 0,
   },
   modalContent: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: '#17191C',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -2358,13 +2424,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.03)',
   },
-  sortOptionActive: { backgroundColor: 'rgba(74, 125, 255, 0.08)' },
+  sortOptionActive: { backgroundColor: 'rgba(255,255,255,0.06)' },
   sortOptionText: { color: '#E8ECF4', fontSize: 16 },
-  sortOptionTextActive: { color: '#4A7DFF', fontWeight: '500' },
+  sortOptionTextActive: { color: '#F3F4F6', fontWeight: '600' },
 
   containerWeb: {
     flex: 1,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
     height: '100dvh' as any,
     maxHeight: '100dvh' as any,
     overflow: 'hidden',
@@ -2379,13 +2445,13 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(74, 125, 255, 0.9)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 30,
-    shadowColor: '#4A7DFF',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 6,
   },

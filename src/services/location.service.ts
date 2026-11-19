@@ -2,13 +2,7 @@
 
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
-
-// ✅ Supabase project URL
-const SUPABASE_URL =
-  process.env.EXPO_PUBLIC_SUPABASE_URL ||
-  'https://ffbjvrwkvnwocuyapajo.supabase.co';
-
-const SUPABASE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/places-reverse-geocode`;
+import { apiRequest } from '../lib/api';
 
 // ============================================================
 // Cache + in-flight dedupe
@@ -142,7 +136,7 @@ class LocationService {
   //   1. In-memory cache   (instant, no network)
   //   2. In-flight dedupe  (shares the pending promise with any
   //                         concurrent caller for the same point)
-  //   3. Supabase Edge fn  (proxies OpenStreetMap, 5s timeout)
+  //   3. Backend API      (proxies OpenStreetMap)
   //   4. Coordinate string (always resolves)
   //
   // 🚫 We deliberately do NOT call Location.reverseGeocodeAsync —
@@ -168,28 +162,30 @@ class LocationService {
 
     // ---- 3. Real lookup ----
     const lookup = (async (): Promise<PlaceInfo> => {
-      // ---- Try the Supabase Edge Function (proxies Nominatim) ----
+      // ---- Try the backend (proxies Nominatim) ----
       try {
-        const url = `${SUPABASE_FUNCTION_URL}?lat=${lat}&lng=${lng}`;
-        console.log('📍 Fetching address from OpenStreetMap via Supabase...');
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-          signal: controller.signal,
+        const query = new URLSearchParams({
+          lat: String(lat),
+          lng: String(lng),
         });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        console.log('📍 OpenStreetMap Result:', result);
+        const result = await apiRequest<{
+          success?: boolean;
+          data?: {
+            city?: string | null;
+            region?: string | null;
+            country?: string | null;
+            formatted_address?: string | null;
+            place_id?: string | null;
+            street?: string | null;
+            street_number?: string | null;
+            district?: string | null;
+            postal_code?: string | null;
+            display_name?: string | null;
+            house_name?: string | null;
+          };
+          fallback?: { formatted_address?: string | null };
+          error?: string;
+        }>(`/location/reverse-geocode?${query}`, { auth: false });
 
         if (result?.success && result?.data) {
           const data = result.data;

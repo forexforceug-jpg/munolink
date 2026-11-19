@@ -12,6 +12,7 @@ import {
   Dimensions,
   StatusBar,
   ActivityIndicator,
+  Animated,
   Keyboard,
   Platform,
   Alert,
@@ -19,11 +20,10 @@ import {
   FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 
@@ -159,26 +159,52 @@ const TrendingItem = React.memo(({ item, onPress }: any) => (
   </TouchableOpacity>
 ));
 
-const SuggestedPrompt = React.memo(({ item, onPress }: any) => (
-  <TouchableOpacity style={styles.suggestedPrompt} onPress={() => onPress(item.label)}>
-    <LinearGradient
-      colors={['rgba(74, 125, 255, 0.05)', 'rgba(74, 125, 255, 0.02)']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.suggestedPromptGradient}
+interface SuggestedPromptItem {
+  id: string;
+  icon:
+    | 'construct-outline'
+    | 'phone-portrait-outline'
+    | 'home-outline'
+    | 'calendar-outline'
+    | 'star-outline'
+    | 'car-outline';
+  label: string;
+}
+
+const SuggestedPrompt = React.memo(
+  ({
+    item,
+    onPress,
+  }: {
+    item: SuggestedPromptItem;
+    onPress: (query: string) => void;
+  }) => (
+    <TouchableOpacity
+      style={styles.suggestedPrompt}
+      onPress={() => onPress(item.label)}
+      activeOpacity={0.75}
     >
-      <Text style={styles.suggestedPromptIcon}>{item.icon}</Text>
-      <Text style={styles.suggestedPromptText} numberOfLines={2}>{item.label}</Text>
-      <Ionicons name="arrow-forward" size={16} color="#4A7DFF" style={styles.suggestedPromptArrow} />
-    </LinearGradient>
-  </TouchableOpacity>
-));
+      <View style={styles.suggestedPromptSurface}>
+        <Ionicons name={item.icon} size={18} color="#AAB4C0" />
+        <Text style={styles.suggestedPromptText} numberOfLines={2}>
+          {item.label}
+        </Text>
+        <Ionicons
+          name="arrow-forward"
+          size={15}
+          color="#8F98A3"
+          style={styles.suggestedPromptArrow}
+        />
+      </View>
+    </TouchableOpacity>
+  )
+);
 
 const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
   <TouchableOpacity style={styles.recentItem} onPress={() => onPress(item.label)}>
     <View style={styles.recentItemLeft}>
       <View style={styles.recentItemIcon}>
-        <Ionicons name="time-outline" size={16} color="#4A7DFF" />
+        <Ionicons name="time-outline" size={16} color="#AAB4C0" />
       </View>
       <View>
         <Text style={styles.recentItemLabel}>{item.label}</Text>
@@ -186,7 +212,7 @@ const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
       </View>
     </View>
     <TouchableOpacity style={styles.recentItemDelete} onPress={() => onDelete(item.id)}>
-      <Ionicons name="close" size={16} color="#8A8AAE" />
+      <Ionicons name="close" size={16} color="#929AA4" />
     </TouchableOpacity>
   </TouchableOpacity>
 ));
@@ -195,7 +221,17 @@ const RecentItem = React.memo(({ item, onPress, onDelete }: any) => (
 // MAIN SEARCH CONTENT
 // ============================================================
 
-const SearchContent = ({ navigation }: any) => {
+interface SearchContentProps {
+  navigation: any;
+  isPanel?: boolean;
+  onClose?: () => void;
+}
+
+const SearchContent = ({
+  navigation,
+  isPanel = false,
+  onClose,
+}: SearchContentProps) => {
   const { height, width } = useWindowDimensions();
   const { isDesktop } = useBreakpoint();
   const { user } = useAuth();
@@ -213,6 +249,18 @@ const SearchContent = ({ navigation }: any) => {
   
   const inputRef = useRef<TextInput>(null);
   const searchContainerRef = useRef<View>(null);
+  const entrance = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    entrance.setValue(0);
+    const animation = Animated.timing(entrance, {
+      toValue: 1,
+      duration: 180,
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [entrance]);
 
   // ============================================================
   // FETCH CATALOG POSTS
@@ -221,7 +269,7 @@ const SearchContent = ({ navigation }: any) => {
   const fetchCatalogPosts = useCallback(async () => {
     setIsLoadingCatalog(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('catalog')
         .select('*')
         .eq('status', 'active')
@@ -242,13 +290,13 @@ const SearchContent = ({ navigation }: any) => {
 
       // Fetch user info for all posts
       const userIds = data
-        .map(post => post.user_id)
-        .filter((id): id is string => id !== null && id !== undefined);
+        .map((post: Record<string, any>) => post.user_id)
+        .filter((id: unknown): id is string => typeof id === 'string');
 
       let userMap: Record<string, { full_name: string | null; avatar_url: string | null }> = {};
 
       if (userIds.length > 0) {
-        const { data: users, error: usersError } = await supabase
+        const { data: users, error: usersError } = await backendData
           .from('users')
           .select('id, full_name, avatar_url')
           .in('id', userIds);
@@ -294,7 +342,7 @@ const SearchContent = ({ navigation }: any) => {
     if (!user?.id) return;
     
     try {
-      const { error } = await supabase
+      const { error } = await backendData
         .from('search_history')
         .insert({
           user_id: user.id,
@@ -316,7 +364,7 @@ const SearchContent = ({ navigation }: any) => {
     if (!user?.id) return;
     
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('search_history')
         .select('id, query, created_at')
         .eq('user_id', user.id)
@@ -344,7 +392,7 @@ const SearchContent = ({ navigation }: any) => {
   const loadPopularSearches = useCallback(async () => {
     setIsLoadingPopular(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('search_history')
         .select('query')
         .limit(100);
@@ -400,7 +448,7 @@ const SearchContent = ({ navigation }: any) => {
     if (!user?.id) return;
     
     try {
-      const { error } = await supabase
+      const { error } = await backendData
         .from('search_history')
         .delete()
         .eq('id', searchId)
@@ -418,7 +466,7 @@ const SearchContent = ({ navigation }: any) => {
     if (!user?.id) return;
     
     try {
-      const { error } = await supabase
+      const { error } = await backendData
         .from('search_history')
         .delete()
         .eq('user_id', user.id);
@@ -498,13 +546,13 @@ const SearchContent = ({ navigation }: any) => {
 
   const trendingSearches = popularSearches.length > 0 ? popularSearches : getDefaultPopularSearches();
 
-  const suggestedPrompts = [
-    { id: '1', icon: '🎯', label: 'Find a mechanic who can come today' },
-    { id: '2', icon: '💰', label: 'Samsung phone under UGX 2 million' },
-    { id: '3', icon: '🏠', label: 'Home cleaning services nearby' },
-    { id: '4', icon: '📅', label: 'Available for booking this weekend' },
-    { id: '5', icon: '🌟', label: 'Highly rated restaurants in Jinja' },
-    { id: '6', icon: '🚚', label: 'Same-day delivery products' },
+  const suggestedPrompts: SuggestedPromptItem[] = [
+    { id: '1', icon: 'construct-outline', label: 'Find a mechanic who can come today' },
+    { id: '2', icon: 'phone-portrait-outline', label: 'Samsung phone under UGX 2 million' },
+    { id: '3', icon: 'home-outline', label: 'Home cleaning services nearby' },
+    { id: '4', icon: 'calendar-outline', label: 'Available for booking this weekend' },
+    { id: '5', icon: 'star-outline', label: 'Highly rated restaurants in Jinja' },
+    { id: '6', icon: 'car-outline', label: 'Same-day delivery products' },
   ];
 
   // ============================================================
@@ -874,26 +922,79 @@ const SearchContent = ({ navigation }: any) => {
   }, []);
 
   const handleGoBack = useCallback(() => {
+    if (isPanel) {
+      onClose?.();
+      return;
+    }
     navigation.goBack();
-  }, [navigation]);
+  }, [isPanel, navigation, onClose]);
+
+  const renderHeader = () => (
+    <View
+      style={[
+        styles.headerContainer,
+        isPanel && styles.panelHeader,
+      ]}
+    >
+      {!isPanel && (
+        <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+      <Text style={[styles.headerTitle, isPanel && styles.panelHeaderTitle]}>
+        Search
+      </Text>
+      {isPanel ? (
+        <TouchableOpacity
+          style={styles.panelCloseButton}
+          onPress={handleGoBack}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Close search"
+        >
+          <Ionicons name="close" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+      ) : (
+        <View style={{ width: 40 }} />
+      )}
+    </View>
+  );
+
+  const entranceStyle = {
+    opacity: entrance,
+    transform: [
+      {
+        translateY: entrance.interpolate({
+          inputRange: [0, 1],
+          outputRange: [5, 0],
+        }),
+      },
+    ],
+  };
 
   // ============================================================
   // LOADING STATES
   // ============================================================
 
-  if (isLoadingCatalog) {
+  if (isLoadingCatalog && !isPanel) {
     return (
-<SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' && styles.containerWeb,
-  ]}
-  edges={['top']}
->
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
-        <ActivityIndicator size="large" color="#4A7DFF" />
-        <Text style={styles.loadingText}>Loading search data...</Text>
-      </SafeAreaView>
+      <Animated.View style={[styles.entrance, entranceStyle]}>
+        <SafeAreaView
+          style={[
+            styles.container,
+            Platform.OS === 'web' && styles.containerWeb,
+            isDesktop && styles.containerDesktop,
+          ]}
+          edges={['top']}
+        >
+          <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
+          {renderHeader()}
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#D6DCE3" />
+            <Text style={styles.loadingText}>Loading search...</Text>
+          </View>
+        </SafeAreaView>
+      </Animated.View>
     );
   }
 
@@ -902,53 +1003,54 @@ const SearchContent = ({ navigation }: any) => {
   // ============================================================
 
   return (
-    <SafeAreaView
-  style={[
-    styles.container,
-    Platform.OS === 'web' && styles.containerWeb,
-    isDesktop && styles.containerDesktop,
-  ]}
-  edges={['top']}
->
-      <StatusBar barStyle="light-content" backgroundColor="#0D0D1A" />
+    <Animated.View style={[styles.entrance, entranceStyle]}>
+      <SafeAreaView
+        style={[
+          styles.container,
+          !isPanel && Platform.OS === 'web' && styles.containerWeb,
+          !isPanel && isDesktop && styles.containerDesktop,
+          isPanel && styles.panelContainer,
+        ]}
+        edges={['top']}
+      >
+      <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
 
-      <View style={styles.headerContainer}>
-        <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Search</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      {renderHeader()}
 
-      <View style={styles.searchWrapper} ref={searchContainerRef}>
+      <View
+        style={[styles.searchWrapper, isPanel && styles.panelSearchWrapper]}
+        ref={searchContainerRef}
+      >
         <View style={styles.searchInputWrapper}>
-          <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+          <Ionicons name="search-outline" size={20} color="#929AA4" />
           <TextInput
             ref={inputRef}
             style={styles.searchInput}
             placeholder="Search products and services..."
-            placeholderTextColor="#8A8AAE"
+            placeholderTextColor="#8F98A3"
             value={searchQuery}
             onChangeText={setSearchQuery}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
             autoFocus
-            onFocus={() => setShowSuggestions(true)}
+            onFocus={() => {
+              if (!isPanel || searchQuery.length > 0) {
+                setShowSuggestions(true);
+              }
+            }}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
-              <Ionicons name="close-circle" size={18} color="#8A8AAE" />
+              <Ionicons name="close-circle" size={18} color="#929AA4" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.searchButton} onPress={handleSearch}>
-            <LinearGradient
-              colors={['#4A7DFF', '#6C5CE7']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.searchButtonGradient}
-            >
-              <Ionicons name="search-outline" size={18} color="#FFFFFF" />
-            </LinearGradient>
+          <TouchableOpacity
+            style={styles.searchButton}
+            onPress={handleSearch}
+            accessibilityRole="button"
+            accessibilityLabel="Submit search"
+          >
+            <Ionicons name="search-outline" size={18} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </View>
@@ -963,7 +1065,7 @@ const SearchContent = ({ navigation }: any) => {
                 style={styles.suggestionItem}
                 onPress={() => handleSuggestionPress(item)}
               >
-                <Ionicons name="search-outline" size={16} color="#4A7DFF" />
+                <Ionicons name="search-outline" size={16} color="#AAB4C0" />
                 <Text style={styles.suggestionText}>{item}</Text>
               </TouchableOpacity>
             )}
@@ -975,7 +1077,7 @@ const SearchContent = ({ navigation }: any) => {
       {isLoading && (
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color="#4A7DFF" />
+            <ActivityIndicator size="large" color="#D6DCE3" />
             <Text style={styles.loadingOverlayText}>Searching...</Text>
           </View>
         </View>
@@ -984,14 +1086,24 @@ const SearchContent = ({ navigation }: any) => {
       {!isLoading && !showSuggestions && (
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            isPanel && styles.panelScrollContent,
+          ]}
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
+              <View style={styles.sectionTitleGroup}>
+                <Ionicons
+                  name="trending-up-outline"
+                  size={16}
+                  color="#AAB4C0"
+                />
+                <Text style={styles.sectionTitle}>Trending searches</Text>
+              </View>
               {isLoadingPopular && (
-                <ActivityIndicator size="small" color="#4A7DFF" />
+                <ActivityIndicator size="small" color="#AAB4C0" />
               )}
             </View>
             <View style={styles.trendingGrid}>
@@ -1003,7 +1115,10 @@ const SearchContent = ({ navigation }: any) => {
 
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>💡 Suggested Prompts</Text>
+              <View style={styles.sectionTitleGroup}>
+                <Ionicons name="sparkles-outline" size={16} color="#AAB4C0" />
+                <Text style={styles.sectionTitle}>Suggested searches</Text>
+              </View>
             </View>
             <View style={styles.suggestedGrid}>
               {suggestedPrompts.map((item) => (
@@ -1015,7 +1130,10 @@ const SearchContent = ({ navigation }: any) => {
           {recentSearches.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>🕐 Recent Searches</Text>
+                <View style={styles.sectionTitleGroup}>
+                  <Ionicons name="time-outline" size={16} color="#AAB4C0" />
+                  <Text style={styles.sectionTitle}>Recent searches</Text>
+                </View>
                 <TouchableOpacity onPress={handleClearAllRecent}>
                   <Text style={styles.clearRecentText}>Clear All</Text>
                 </TouchableOpacity>
@@ -1034,7 +1152,8 @@ const SearchContent = ({ navigation }: any) => {
           <View style={styles.bottomSpacer} />
         </ScrollView>
       )}
-    </SafeAreaView>
+      </SafeAreaView>
+    </Animated.View>
   );
 };
 
@@ -1053,7 +1172,7 @@ export const SearchScreen = ({ navigation }: any) => {
       hideContextPanel={true}
       fullWidth={true}
     >
-      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0B0B0D' }}>
         <BottomSheetModalProvider>
           <SearchContent navigation={navigation} />
         </BottomSheetModalProvider>
@@ -1062,17 +1181,45 @@ export const SearchScreen = ({ navigation }: any) => {
   );
 };
 
+interface SearchPanelProps {
+  navigation: any;
+  onClose: () => void;
+}
+
+export const SearchPanel = ({ navigation, onClose }: SearchPanelProps) => (
+  <GestureHandlerRootView style={styles.panelRoot}>
+    <BottomSheetModalProvider>
+      <SearchContent
+        navigation={navigation}
+        isPanel
+        onClose={onClose}
+      />
+    </BottomSheetModalProvider>
+  </GestureHandlerRootView>
+);
+
 // ============================================================
 // STYLES
 // ============================================================
 
 const styles = StyleSheet.create({
+  entrance: {
+    flex: 1,
+  },
   container: {
     flex: 1,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
   },
   containerDesktop: {
     paddingHorizontal: 24,
+  },
+  panelRoot: {
+    flex: 1,
+    backgroundColor: '#101113',
+  },
+  panelContainer: {
+    flex: 1,
+    backgroundColor: '#101113',
   },
 
   headerContainer: {
@@ -1082,34 +1229,60 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
+  },
+  panelHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    backgroundColor: '#101113',
+    borderBottomWidth: 1,
+    borderBottomColor: '#252629',
   },
   backButton: {
     padding: 4,
     width: 40,
   },
   headerTitle: {
-    color: '#FFFFFF',
+    color: '#F3F4F6',
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '600',
     flex: 1,
     textAlign: 'center',
+  },
+  panelHeaderTitle: {
+    fontSize: 18,
+    textAlign: 'left',
+  },
+  panelCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
 
   searchWrapper: {
     paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
+  },
+  panelSearchWrapper: {
+    paddingTop: 12,
+    backgroundColor: '#101113',
   },
   searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.09)',
   },
   searchInput: {
     flex: 1,
@@ -1122,19 +1295,18 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   searchButton: {
-    marginLeft: 4,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  searchButtonGradient: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    marginLeft: 6,
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
 
   suggestionsContainer: {
-    backgroundColor: 'rgba(20, 20, 40, 0.98)',
+    backgroundColor: 'rgba(20,21,24,0.98)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
     maxHeight: 250,
@@ -1178,13 +1350,13 @@ const styles = StyleSheet.create({
     zIndex: 30,
   },
   loadingCard: {
-    backgroundColor: 'rgba(20, 20, 40, 0.95)',
+    backgroundColor: 'rgba(24,25,28,0.96)',
     paddingHorizontal: 32,
     paddingVertical: 24,
     borderRadius: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.09)',
   },
   loadingOverlayText: {
     color: '#FFFFFF',
@@ -1199,23 +1371,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
+  },
+  sectionTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: '#E7EAEE',
+    fontSize: 14,
     fontWeight: '600',
   },
   clearRecentText: {
-    color: '#4A7DFF',
+    color: '#C4CBD3',
     fontSize: 12,
     fontWeight: '500',
   },
 
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 4,
+    paddingTop: 8,
     paddingBottom: 40,
+    maxWidth: 760,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  panelScrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
 
   trendingGrid: {
@@ -1224,15 +1408,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   trendingItem: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    paddingHorizontal: 13,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   trendingLabel: {
-    color: '#FFFFFF',
+    color: '#D5D9DE',
     fontSize: 13,
   },
 
@@ -1243,21 +1427,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
   },
-  suggestedPromptGradient: {
+  suggestedPromptSurface: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.035)',
     borderWidth: 1,
-    borderColor: 'rgba(74, 125, 255, 0.1)',
+    borderColor: 'rgba(255,255,255,0.075)',
     borderRadius: 12,
-  },
-  suggestedPromptIcon: {
-    fontSize: 18,
-    marginRight: 12,
   },
   suggestedPromptText: {
     flex: 1,
-    color: '#FFFFFF',
+    color: '#E2E5E9',
     fontSize: 14,
   },
   suggestedPromptArrow: {
@@ -1268,13 +1451,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: 'rgba(255,255,255,0.035)',
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 10,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
+    borderColor: 'rgba(255,255,255,0.075)',
   },
   recentItemLeft: {
     flexDirection: 'row',
@@ -1285,16 +1468,16 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   recentItemLabel: {
-    color: '#FFFFFF',
+    color: '#E2E5E9',
     fontSize: 14,
   },
   recentItemTime: {
-    color: '#8A8AAE',
+    color: '#8F98A3',
     fontSize: 11,
   },
   recentItemDelete: {
@@ -1305,22 +1488,22 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0D0D1A',
+    backgroundColor: '#0B0B0D',
     padding: 20,
   },
   loadingText: {
-    color: '#8A8AAE',
+    color: '#AAB2BC',
     fontSize: 14,
     marginTop: 12,
   },
-containerWeb: {
-  flex: 1,
-  backgroundColor: '#0D0D1A',
-  height: '100dvh' as any,
-  maxHeight: '100dvh' as any,
-  overflow: 'hidden',
-  position: 'relative' as any,
-},
+  containerWeb: {
+    flex: 1,
+    backgroundColor: '#0B0B0D',
+    height: '100dvh' as any,
+    maxHeight: '100dvh' as any,
+    overflow: 'hidden',
+    position: 'relative' as any,
+  },
   bottomSpacer: {
     height: 40,
   },

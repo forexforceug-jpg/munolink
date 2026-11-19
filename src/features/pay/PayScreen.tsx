@@ -18,15 +18,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { randomUUID } from 'expo-crypto';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { supabase } from '../../lib/supabase';
+import { useSidebarSearch } from '../search/useSidebarSearch';
+import { backendData } from '../../lib/backendData';
+import { paymentsApi } from '../../lib/payments';
 import { StyledAlert } from '../feed/components/StyledAlert';
 import { useFocusEffect } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
-const supabaseAny = supabase as any;
 
 // ============================================================
 // TYPES
@@ -98,6 +100,15 @@ interface PaymentMethod {
   };
 }
 
+interface CheckoutParams {
+  sellerId: string;
+  sellerName: string;
+  title: string;
+  unitPrice: number;
+  currency: string;
+  priceType: string;
+}
+
 // ============================================================
 // SUB-COMPONENTS
 // ============================================================
@@ -117,7 +128,7 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
   const statusLabels: Record<string, string> = {
     completed: 'Completed',
     pending: 'Pending',
-    locked: 'Locked',
+    locked: 'In progress',
     failed: 'Failed',
     disputed: 'Disputed',
     cancelled: 'Cancelled',
@@ -136,7 +147,11 @@ const TransactionItem = ({ item }: { item: Transaction }) => {
           },
         ]}
       >
-        <Text style={styles.transactionIcon}>{isIncoming ? '📥' : '📤'}</Text>
+        <Ionicons
+          name={isIncoming ? 'arrow-down-outline' : 'arrow-up-outline'}
+          size={18}
+          color={isIncoming ? '#79B895' : '#C97A7A'}
+        />
       </View>
       <View style={styles.transactionContent}>
         <Text style={styles.transactionMerchant}>{item.merchant}</Text>
@@ -194,6 +209,7 @@ const PendingTransactionCard = ({
   const isLocked = transaction.status === 'locked';
   const isPending = transaction.status === 'pending';
   const isDisputed = transaction.status === 'disputed';
+  const isCompleted = transaction.status === 'completed';
 
   const canConfirm = isLocked && isBuyer;
   const canActivate = isLocked && isSeller && timeRemaining <= 0;
@@ -206,16 +222,26 @@ const PendingTransactionCard = ({
     <View style={[styles.pendingCard, isDisputed && styles.pendingCardDisputed]}>
       <View style={styles.pendingCardHeader}>
         <View style={styles.pendingCardIcon}>
-          <Text style={styles.pendingCardIconText}>
-            {isDisputed ? '⚠️' : isLocked ? '🔒' : '⏳'}
-          </Text>
+          <Ionicons
+            name={
+              isDisputed
+                ? 'alert-circle-outline'
+                : isCompleted
+                ? 'checkmark-circle-outline'
+                : isLocked
+                ? 'time-outline'
+                : 'hourglass-outline'
+            }
+            size={18}
+            color={isCompleted ? '#79B895' : isDisputed ? '#C97A7A' : '#AAB4C0'}
+          />
         </View>
         <View style={styles.pendingCardInfo}>
           <Text style={styles.pendingCardTitle}>
             {transaction.merchant || 'Payment'}
           </Text>
           <Text style={styles.pendingCardAmount}>
-            UGX {transaction.amount.toLocaleString()}
+            UGX {Math.abs(transaction.amount).toLocaleString()}
           </Text>
         </View>
         <View
@@ -226,7 +252,15 @@ const PendingTransactionCard = ({
           ]}
         >
           <Text style={styles.pendingCardStatusText}>
-            {isDisputed ? 'Disputed' : isLocked ? 'Locked' : 'Pending'}
+            {isDisputed
+              ? 'Disputed'
+              : isCompleted
+              ? 'Completed'
+              : isLocked
+              ? 'In progress'
+              : isPending
+              ? 'Pending'
+              : transaction.status}
           </Text>
         </View>
       </View>
@@ -249,13 +283,13 @@ const PendingTransactionCard = ({
         )}
         {showBuyerPendingConfirm && timeRemaining > 0 && (
           <Text style={styles.pendingCardTimer}>
-            ⏰ Auto-confirm in {Math.floor(timeRemaining)}h{' '}
+            Auto-confirm in {Math.floor(timeRemaining)}h{' '}
             {Math.floor((timeRemaining % 1) * 60)}m
           </Text>
         )}
         {showSellerWaiting && (
           <Text style={styles.pendingCardTimer}>
-            ⏳ Buyer has {Math.floor(timeRemaining)}h{' '}
+            Buyer has {Math.floor(timeRemaining)}h{' '}
             {Math.floor((timeRemaining % 1) * 60)}m to confirm
           </Text>
         )}
@@ -334,7 +368,12 @@ const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
     style={[styles.paymentMethodItem, isSelected && styles.paymentMethodItemSelected]}
     onPress={() => onSelect(method.id)}
   >
-    <Text style={styles.paymentMethodIcon}>{method.icon}</Text>
+    <Ionicons
+      name={method.type === 'wallet' ? 'wallet-outline' : 'phone-portrait-outline'}
+      size={21}
+      color="#AAB4C0"
+      style={styles.paymentMethodIcon}
+    />
     <View style={styles.paymentMethodContent}>
       <Text style={styles.paymentMethodName}>{method.name}</Text>
       {method.default && (
@@ -356,7 +395,7 @@ const PaymentMethodItem = ({ method, onSelect, isSelected }: any) => (
 // MAIN COMPONENT
 // ============================================================
 
-const PayContent = ({ navigation }: any) => {
+const PayContent = ({ navigation, route }: any) => {
   const { isAuthenticated, user } = useAuth();
   const { isDesktop } = useBreakpoint();
 
@@ -375,6 +414,11 @@ const PayContent = ({ navigation }: any) => {
   const [showAddMoney, setShowAddMoney] = useState(false);
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [checkout, setCheckout] = useState<CheckoutParams | null>(null);
+  const [checkoutUnitPrice, setCheckoutUnitPrice] = useState('');
+  const [checkoutQuantity, setCheckoutQuantity] = useState(1);
+  const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [activeTab, setActiveTab] = useState<'pending' | 'locked' | 'completed' | 'disputed'>(
     'pending'
@@ -383,6 +427,8 @@ const PayContent = ({ navigation }: any) => {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [disputeReason, setDisputeReason] = useState('');
   const [timeRemainingMap, setTimeRemainingMap] = useState<Record<string, number>>({});
+  const checkoutIdempotencyKeyRef = useRef(randomUUID());
+  const consumedCheckoutRef = useRef<CheckoutParams | null>(null);
 
   // ✅ StyledAlert state
   const [styledAlertConfig, setStyledAlertConfig] = useState<{
@@ -427,6 +473,44 @@ const PayContent = ({ navigation }: any) => {
     setStyledAlertConfig((prev) => ({ ...prev, visible: false }));
   }, []);
 
+  useEffect(() => {
+    const params = route?.params?.checkout as CheckoutParams | undefined;
+    if (!params || consumedCheckoutRef.current === params) return;
+    if (!isAuthenticated || !user?.id) return;
+    consumedCheckoutRef.current = params;
+
+    if (
+      typeof params.sellerId !== 'string' ||
+      typeof params.title !== 'string' ||
+      !Number.isFinite(params.unitPrice) ||
+      params.unitPrice <= 0
+    ) {
+      showStyledAlert({
+        title: 'Unable to open checkout',
+        message: 'This listing does not have valid purchase details.',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
+      navigation.setParams?.({ checkout: undefined });
+      return;
+    }
+
+    setCheckout(params);
+    setCheckoutUnitPrice(String(params.unitPrice));
+    setCheckoutQuantity(1);
+    checkoutIdempotencyKeyRef.current = randomUUID();
+    setShowCheckout(true);
+    navigation.setParams?.({ checkout: undefined });
+  }, [
+    route?.params?.checkout,
+    navigation,
+    isAuthenticated,
+    user?.id,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
+
   const transactionFilters = ['All', 'Payments', 'Top Ups', 'Refunds', 'Withdrawals'];
 
   // ============================================================
@@ -436,13 +520,8 @@ const PayContent = ({ navigation }: any) => {
   const fetchWalletBalance = useCallback(async () => {
     if (!user?.id) return 0;
     try {
-      const { data, error } = await supabaseAny
-        .from('users')
-        .select('wallet_balance')
-        .eq('id', user.id)
-        .single();
-      if (error) return 0;
-      return data?.wallet_balance || 0;
+      const { balance } = await paymentsApi.walletBalance();
+      return balance;
     } catch {
       return 0;
     }
@@ -452,7 +531,7 @@ const PayContent = ({ navigation }: any) => {
     if (!user?.id) return [];
 
     try {
-      const { data, error } = await supabaseAny
+      const { data, error } = await backendData
         .from('transactions')
         .select('*')
         .or(`user_id.eq.${user.id},buyer_id.eq.${user.id},seller_id.eq.${user.id}`)
@@ -496,7 +575,7 @@ const PayContent = ({ navigation }: any) => {
     if (!user?.id) return [];
 
     try {
-      const { data: requests, error: requestsError } = await supabaseAny
+      const { data: requests, error: requestsError } = await backendData
         .from('payment_requests')
         .select('*')
         .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
@@ -521,7 +600,7 @@ const PayContent = ({ navigation }: any) => {
       > = {};
 
       if (userIds.size > 0) {
-        const { data: users, error: usersError } = await supabaseAny
+        const { data: users, error: usersError } = await backendData
           .from('users')
           .select('id, full_name, avatar_url')
           .in('id', Array.from(userIds));
@@ -560,7 +639,7 @@ const PayContent = ({ navigation }: any) => {
     if (!user?.id) return [];
 
     try {
-      const { data: userData, error: userError } = await supabaseAny
+      const { data: userData, error: userError } = await backendData
         .from('users')
         .select('phone_number')
         .eq('id', user.id)
@@ -575,7 +654,7 @@ const PayContent = ({ navigation }: any) => {
         methods.push({
           id: 'mtn',
           name: 'MTN Mobile Money',
-          icon: '📱',
+          icon: 'phone-portrait-outline',
           type: 'mobile_money',
           default: true,
           details: { phone },
@@ -583,7 +662,7 @@ const PayContent = ({ navigation }: any) => {
         methods.push({
           id: 'airtel',
           name: 'Airtel Money',
-          icon: '📱',
+          icon: 'phone-portrait-outline',
           type: 'mobile_money',
           default: false,
           details: { phone },
@@ -593,7 +672,7 @@ const PayContent = ({ navigation }: any) => {
       methods.push({
         id: 'wallet',
         name: 'Munolink Wallet',
-        icon: '💰',
+        icon: 'wallet-outline',
         type: 'wallet',
         default: phone ? false : true,
       });
@@ -663,7 +742,7 @@ const PayContent = ({ navigation }: any) => {
           id: pr.id,
           type: 'payment',
           merchant,
-          amount: pr.amount,
+          amount: isMeBuyer ? -pr.amount : pr.amount,
           date: pr.created_at,
           status: pr.status as any,
           method: 'Wallet',
@@ -792,7 +871,7 @@ const PayContent = ({ navigation }: any) => {
       showStyledAlert({
         title: 'Confirm Payment',
         message:
-          `You are about to confirm payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+          `You are about to confirm payment of UGX ${Math.abs(transaction.amount).toLocaleString()}\n\n` +
           `To: ${transaction.merchant || 'Seller'}\n\n` +
           `This action is irreversible. Only confirm if you have received the product/service.`,
         icon: 'checkmark-circle-outline',
@@ -805,74 +884,7 @@ const PayContent = ({ navigation }: any) => {
             onPress: async () => {
               hideStyledAlert();
               try {
-                const { data: paymentRequest } = await supabaseAny
-                  .from('payment_requests')
-                  .select('*')
-                  .eq('id', transaction.id)
-                  .single();
-
-                if (paymentRequest) {
-                  const now = new Date().toISOString();
-
-                  const { error: prError } = await supabaseAny
-                    .from('payment_requests')
-                    .update({ status: 'completed', completed_at: now })
-                    .eq('id', transaction.id);
-                  if (prError) throw prError;
-
-                  if (paymentRequest.transaction_id) {
-                    await supabaseAny
-                      .from('transactions')
-                      .update({ status: 'completed', confirmed_at: now })
-                      .eq('id', paymentRequest.transaction_id);
-                  }
-
-                  const sellerId = paymentRequest.is_request
-                    ? paymentRequest.from_user_id
-                    : paymentRequest.to_user_id;
-
-                  const { data: sellerData } = await supabaseAny
-                    .from('users')
-                    .select('wallet_balance')
-                    .eq('id', sellerId)
-                    .single();
-
-                  if (sellerData) {
-                    await supabaseAny
-                      .from('users')
-                      .update({
-                        wallet_balance:
-                          (sellerData.wallet_balance || 0) + paymentRequest.amount,
-                      })
-                      .eq('id', sellerId);
-                  }
-                } else {
-                  const { error: txError } = await supabaseAny
-                    .from('transactions')
-                    .update({
-                      status: 'completed',
-                      confirmed_at: new Date().toISOString(),
-                    })
-                    .eq('id', transaction.id);
-                  if (txError) throw txError;
-
-                  const sellerId = transaction.seller_id || transaction.user_id;
-                  const { data: sellerData } = await supabaseAny
-                    .from('users')
-                    .select('wallet_balance')
-                    .eq('id', sellerId)
-                    .single();
-
-                  if (sellerData) {
-                    await supabaseAny
-                      .from('users')
-                      .update({
-                        wallet_balance:
-                          (sellerData.wallet_balance || 0) + transaction.amount,
-                      })
-                      .eq('id', sellerId);
-                  }
-                }
+                await paymentsApi.complete(transaction.id);
 
                 showStyledAlert({
                   title: 'Success',
@@ -909,7 +921,7 @@ const PayContent = ({ navigation }: any) => {
       showStyledAlert({
         title: 'Activate Payment',
         message:
-          `You are about to activate payment of UGX ${transaction.amount.toLocaleString()}\n\n` +
+          `You are about to activate payment of UGX ${Math.abs(transaction.amount).toLocaleString()}\n\n` +
           `From: ${transaction.merchant || 'Buyer'}\n\n` +
           `This action will release the locked funds to your wallet. Only do this if the buyer has not confirmed within 24 hours.`,
         icon: 'rocket-outline',
@@ -922,60 +934,7 @@ const PayContent = ({ navigation }: any) => {
             onPress: async () => {
               hideStyledAlert();
               try {
-                const { data: paymentRequest } = await supabaseAny
-                  .from('payment_requests')
-                  .select('*')
-                  .eq('id', transaction.id)
-                  .single();
-
-                if (paymentRequest) {
-                  const now = new Date().toISOString();
-
-                  await supabaseAny
-                    .from('payment_requests')
-                    .update({ status: 'completed', completed_at: now })
-                    .eq('id', transaction.id);
-
-                  if (paymentRequest.transaction_id) {
-                    await supabaseAny
-                      .from('transactions')
-                      .update({
-                        status: 'completed',
-                        released_at: now,
-                        admin_confirmed_at: now,
-                      })
-                      .eq('id', paymentRequest.transaction_id);
-                  }
-
-                  const sellerId = paymentRequest.is_request
-                    ? paymentRequest.from_user_id
-                    : paymentRequest.to_user_id;
-
-                  const { data: sellerData } = await supabaseAny
-                    .from('users')
-                    .select('wallet_balance')
-                    .eq('id', sellerId)
-                    .single();
-
-                  if (sellerData) {
-                    await supabaseAny
-                      .from('users')
-                      .update({
-                        wallet_balance:
-                          (sellerData.wallet_balance || 0) + paymentRequest.amount,
-                      })
-                      .eq('id', sellerId);
-                  }
-                } else {
-                  await supabaseAny
-                    .from('transactions')
-                    .update({
-                      status: 'completed',
-                      released_at: new Date().toISOString(),
-                      admin_confirmed_at: new Date().toISOString(),
-                    })
-                    .eq('id', transaction.id);
-                }
+                await paymentsApi.release(transaction.id);
 
                 showStyledAlert({
                   title: 'Success',
@@ -1026,38 +985,7 @@ const PayContent = ({ navigation }: any) => {
     }
 
     try {
-      const { data: paymentRequest } = await supabaseAny
-        .from('payment_requests')
-        .select('*')
-        .eq('id', selectedTransaction.id)
-        .single();
-
-      if (paymentRequest) {
-        await supabaseAny
-          .from('payment_requests')
-          .update({ status: 'disputed' })
-          .eq('id', selectedTransaction.id);
-
-        if (paymentRequest.transaction_id) {
-          await supabaseAny
-            .from('transactions')
-            .update({
-              status: 'disputed',
-              disputed_at: new Date().toISOString(),
-              dispute_reason: disputeReason.trim(),
-            })
-            .eq('id', paymentRequest.transaction_id);
-        }
-      } else {
-        await supabaseAny
-          .from('transactions')
-          .update({
-            status: 'disputed',
-            disputed_at: new Date().toISOString(),
-            dispute_reason: disputeReason.trim(),
-          })
-          .eq('id', selectedTransaction.id);
-      }
+      await paymentsApi.dispute(selectedTransaction.id, disputeReason.trim());
 
       showStyledAlert({
         title: 'Dispute Raised',
@@ -1139,25 +1067,15 @@ const PayContent = ({ navigation }: any) => {
           onPress: async () => {
             hideStyledAlert();
             try {
-              const { error } = await supabaseAny
-                .from('users')
-                .update({ wallet_balance: walletBalance + amountNum })
-                .eq('id', user.id);
-              if (error) throw error;
+              const method =
+                paymentMethods.find((m) => m.id === selectedMethod)?.name ||
+                'Unknown';
+              const result = await paymentsApi.topUp(amountNum, method);
+              if (typeof result.balance !== 'number') {
+                throw new Error('Backend did not return the updated wallet balance.');
+              }
 
-              await supabaseAny.from('transactions').insert({
-                user_id: user.id,
-                type: 'topup',
-                amount: amountNum,
-                status: 'completed',
-                merchant: 'Munolink Wallet',
-                method:
-                  paymentMethods.find((m) => m.id === selectedMethod)?.name ||
-                  'Unknown',
-                reference: `TOP-${Date.now()}`,
-              });
-
-              setWalletBalance(walletBalance + amountNum);
+              setWalletBalance(result.balance);
               setAmount('');
               setShowAddMoney(false);
               showStyledAlert({
@@ -1174,7 +1092,10 @@ const PayContent = ({ navigation }: any) => {
               console.error('Error adding money:', error);
               showStyledAlert({
                 title: 'Error',
-                message: 'Failed to add money. Please try again.',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : 'Failed to add money. Please try again.',
                 icon: 'alert-circle-outline',
                 iconColor: '#E74C3C',
                 buttons: [
@@ -1258,27 +1179,15 @@ const PayContent = ({ navigation }: any) => {
           onPress: async () => {
             hideStyledAlert();
             try {
-              const { error } = await supabaseAny
-                .from('users')
-                .update({ wallet_balance: walletBalance - amountNum })
-                .eq('id', user.id);
-              if (error) throw error;
+              const method =
+                paymentMethods.find((m) => m.id === selectedMethod)?.name ||
+                'Unknown';
+              const result = await paymentsApi.withdraw(amountNum, method);
+              if (typeof result.balance !== 'number') {
+                throw new Error('Backend did not return the updated wallet balance.');
+              }
 
-              await supabaseAny.from('transactions').insert({
-                user_id: user.id,
-                type: 'withdrawal',
-                amount: -amountNum,
-                status: 'pending',
-                merchant:
-                  paymentMethods.find((m) => m.id === selectedMethod)?.name ||
-                  'Withdrawal',
-                method:
-                  paymentMethods.find((m) => m.id === selectedMethod)?.name ||
-                  'Unknown',
-                reference: `WTH-${Date.now()}`,
-              });
-
-              setWalletBalance(walletBalance - amountNum);
+              setWalletBalance(result.balance);
               setAmount('');
               setShowWithdraw(false);
               showStyledAlert({
@@ -1295,7 +1204,10 @@ const PayContent = ({ navigation }: any) => {
               console.error('Error withdrawing:', error);
               showStyledAlert({
                 title: 'Error',
-                message: 'Failed to withdraw. Please try again.',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : 'Failed to withdraw. Please try again.',
                 icon: 'alert-circle-outline',
                 iconColor: '#E74C3C',
                 buttons: [
@@ -1314,6 +1226,162 @@ const PayContent = ({ navigation }: any) => {
     paymentMethods,
     user?.id,
     loadAllData,
+    showStyledAlert,
+    hideStyledAlert,
+  ]);
+
+  const handleCheckout = useCallback(() => {
+    if (checkoutSubmitting || !checkout || !user?.id) return;
+    if (checkout.sellerId === user.id) {
+      showStyledAlert({
+        title: 'This is your listing',
+        message: 'You cannot purchase your own listing.',
+        icon: 'information-circle-outline',
+        iconColor: '#AAB4C0',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
+      return;
+    }
+    const unitPrice = Number(checkoutUnitPrice);
+    const quantity = checkoutQuantity;
+    const canChangePrice = checkout.priceType === 'negotiable';
+    const payableUnitPrice = canChangePrice
+      ? unitPrice
+      : checkout.unitPrice;
+
+    if (
+      !Number.isFinite(payableUnitPrice) ||
+      payableUnitPrice <= 0 ||
+      !Number.isInteger(quantity) ||
+      quantity < 1
+    ) {
+      showStyledAlert({
+        title: 'Check the order details',
+        message: 'Enter a valid unit price and quantity before continuing.',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
+      return;
+    }
+
+    const total = payableUnitPrice * quantity;
+    if (!Number.isFinite(total) || total > Number.MAX_SAFE_INTEGER) {
+      showStyledAlert({
+        title: 'Invalid total',
+        message: 'Reduce the quantity or unit price and try again.',
+        icon: 'alert-circle-outline',
+        iconColor: '#E74C3C',
+        buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+      });
+      return;
+    }
+    if (total > walletBalance) {
+      showStyledAlert({
+        title: 'Insufficient wallet balance',
+        message: `Your wallet has UGX ${walletBalance.toLocaleString()}. Add funds or adjust the order to continue.`,
+        icon: 'wallet-outline',
+        iconColor: '#E74C3C',
+        buttons: [
+          { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
+          {
+            text: 'Add money',
+            style: 'primary',
+            onPress: () => {
+              hideStyledAlert();
+              setShowCheckout(false);
+              setShowAddMoney(true);
+            },
+          },
+        ],
+      });
+      return;
+    }
+
+    showStyledAlert({
+      title: 'Confirm checkout',
+      message:
+        `Pay UGX ${total.toLocaleString()} directly to ${checkout.sellerName || 'the seller'}?\n\n` +
+        `${checkout.title} · ${quantity} × UGX ${payableUnitPrice.toLocaleString()}`,
+      icon: 'wallet-outline',
+      iconColor: '#4A7DFF',
+      buttons: [
+        { text: 'Cancel', style: 'cancel', onPress: hideStyledAlert },
+        {
+          text: 'Pay now',
+          style: 'primary',
+          onPress: async () => {
+            hideStyledAlert();
+            setCheckoutSubmitting(true);
+            try {
+              const result = await paymentsApi.transfer({
+                toUserId: checkout.sellerId,
+                amount: total,
+                reason: checkout.title,
+                idempotencyKey: checkoutIdempotencyKeyRef.current,
+              });
+              if (!result.payment || !result.transaction || typeof result.balance !== 'number') {
+                throw new Error('The payment service did not return a completed transfer.');
+              }
+              if (
+                typeof result.payment.id !== 'string' ||
+                typeof result.transaction.id !== 'string'
+              ) {
+                throw new Error('The payment service returned an invalid transaction record.');
+              }
+
+              setWalletBalance(result.balance);
+              const paymentId = result.payment.id;
+              const completedTransaction: Transaction = {
+                id: paymentId,
+                type: 'payment',
+                merchant: checkout.sellerName || 'Seller',
+                amount: -total,
+                date: new Date().toISOString(),
+                status: 'completed',
+                method: 'Wallet',
+                reference: `PAY-${paymentId.slice(0, 8)}`,
+                user_id: user.id,
+                buyer_id: user.id,
+                seller_id: checkout.sellerId,
+                payment_request_id: paymentId,
+                is_me_buyer: true,
+              };
+              setCompletedTransactions((current) => [completedTransaction, ...current]);
+              setTransactions((current) => [completedTransaction, ...current]);
+              setShowCheckout(false);
+              setCheckoutQuantity(1);
+              checkoutIdempotencyKeyRef.current = randomUUID();
+              showStyledAlert({
+                title: 'Payment sent',
+                message: `UGX ${total.toLocaleString()} was transferred to ${checkout.sellerName || 'the seller'}.`,
+                icon: 'checkmark-circle-outline',
+                iconColor: '#2ECC71',
+                buttons: [{ text: 'Done', style: 'primary', onPress: hideStyledAlert }],
+              });
+            } catch (error) {
+              console.error('Error completing checkout:', error);
+              showStyledAlert({
+                title: 'Payment failed',
+                message: error instanceof Error ? error.message : 'Please try again.',
+                icon: 'alert-circle-outline',
+                iconColor: '#E74C3C',
+                buttons: [{ text: 'OK', style: 'primary', onPress: hideStyledAlert }],
+              });
+            } finally {
+              setCheckoutSubmitting(false);
+            }
+          },
+        },
+      ],
+    });
+  }, [
+    checkoutSubmitting,
+    checkout,
+    user?.id,
+    checkoutUnitPrice,
+    checkoutQuantity,
+    walletBalance,
     showStyledAlert,
     hideStyledAlert,
   ]);
@@ -1362,6 +1430,155 @@ const PayContent = ({ navigation }: any) => {
   // ============================================================
   // RENDER FUNCTIONS
   // ============================================================
+
+  const renderCheckoutModal = () => {
+    const unitPrice = Number(checkoutUnitPrice) || 0;
+    const total = unitPrice * checkoutQuantity;
+    const canChangePrice = checkout?.priceType === 'negotiable';
+
+    return (
+      <Modal
+        visible={showCheckout}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!checkoutSubmitting) setShowCheckout(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.checkoutModal]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Checkout</Text>
+                <Text style={styles.checkoutSubtitle}>Pay directly from your Munolink Wallet</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowCheckout(false)}
+                disabled={checkoutSubmitting}
+                accessibilityLabel="Close checkout"
+              >
+                <Ionicons name="close" size={24} color="#AAB4C0" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.checkoutContent}
+            >
+              <View style={styles.checkoutListing}>
+                <View style={styles.checkoutListingIcon}>
+                  <Ionicons name="bag-handle-outline" size={21} color="#D6DCE3" />
+                </View>
+                <View style={styles.checkoutListingDetails}>
+                  <Text style={styles.checkoutListingTitle} numberOfLines={2}>
+                    {checkout?.title || 'Listing'}
+                  </Text>
+                  <Text style={styles.checkoutSeller}>
+                    Sold by {checkout?.sellerName || 'Seller'}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.checkoutLabel}>Unit price</Text>
+              <View style={styles.checkoutInputWrap}>
+                <Text style={styles.checkoutCurrency}>UGX</Text>
+                <TextInput
+                  style={[
+                    styles.checkoutInput,
+                    !canChangePrice && styles.checkoutInputReadOnly,
+                  ]}
+                  value={checkoutUnitPrice}
+                  onChangeText={setCheckoutUnitPrice}
+                  editable={canChangePrice}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  placeholderTextColor="#8F98A3"
+                />
+              </View>
+              {canChangePrice && (
+                <Text style={styles.checkoutHint}>
+                  This seller accepts offers. You can adjust the unit price.
+                </Text>
+              )}
+
+              <Text style={[styles.checkoutLabel, styles.checkoutQuantityLabel]}>
+                Quantity
+              </Text>
+              <View style={styles.checkoutQuantityRow}>
+                <TouchableOpacity
+                  style={styles.quantityButton}
+                  onPress={() => setCheckoutQuantity((value) => Math.max(1, value - 1))}
+                  accessibilityLabel="Decrease quantity"
+                >
+                  <Ionicons name="remove" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.quantityInput}
+                  value={String(checkoutQuantity)}
+                  onChangeText={(value) => {
+                    if (!/^\d*$/.test(value)) return;
+                    setCheckoutQuantity(value === '' ? 1 : Math.max(1, Number(value)));
+                  }}
+                  keyboardType="number-pad"
+                  accessibilityLabel="Quantity"
+                />
+                <TouchableOpacity
+                  style={styles.quantityButton}
+                  onPress={() => setCheckoutQuantity((value) => value + 1)}
+                  accessibilityLabel="Increase quantity"
+                >
+                  <Ionicons name="add" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.checkoutSummary}>
+                <View style={styles.checkoutSummaryRow}>
+                  <Text style={styles.checkoutSummaryLabel}>Available balance</Text>
+                  <Text style={styles.checkoutSummaryValue}>
+                    UGX {walletBalance.toLocaleString()}
+                  </Text>
+                </View>
+                <View style={styles.checkoutDivider} />
+                <View style={styles.checkoutSummaryRow}>
+                  <Text style={styles.checkoutTotalLabel}>Total</Text>
+                  <Text style={styles.checkoutTotalValue}>
+                    UGX {total.toLocaleString()}
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.fundButton,
+                  checkoutSubmitting && styles.checkoutButtonDisabled,
+                ]}
+                onPress={handleCheckout}
+                disabled={checkoutSubmitting}
+                activeOpacity={0.85}
+              >
+                <LinearGradient
+                  colors={['#536B88', '#647D9E']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.fundGradient}
+                >
+                  {checkoutSubmitting ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="wallet-outline" size={18} color="#FFFFFF" />
+                  )}
+                  <Text style={styles.fundButtonText}>
+                    {checkoutSubmitting ? 'Processing...' : 'Pay from wallet'}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
 
   const renderAddMoneyModal = () => (
     <Modal
@@ -1426,7 +1643,7 @@ const PayContent = ({ navigation }: any) => {
 
               <TouchableOpacity style={styles.fundButton} onPress={handleAddMoney}>
                 <LinearGradient
-                  colors={['#4A7DFF', '#6B94FF']}
+                  colors={['#27313D', '#394858']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.fundGradient}
@@ -1557,7 +1774,12 @@ const PayContent = ({ navigation }: any) => {
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
               <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>📭</Text>
+                <Ionicons
+                  name="receipt-outline"
+                  size={34}
+                  color="#8F98A3"
+                  style={styles.emptyIcon}
+                />
                 <Text style={styles.emptyTitle}>No transactions yet</Text>
                 <Text style={styles.emptySubtext}>
                   Your transactions will appear here
@@ -1638,7 +1860,7 @@ const PayContent = ({ navigation }: any) => {
   if (!isAuthenticated) {
     return (
       <View style={styles.guestContainer}>
-        <Text style={styles.guestIcon}>💳</Text>
+        <Ionicons name="wallet-outline" size={42} color="#AAB4C0" style={styles.guestIcon} />
         <Text style={styles.guestTitle}>Pay securely with your Munolink Wallet</Text>
         <Text style={styles.guestSubtext}>
           Create an account to:{'\n'}• Checkout{'\n'}• Add money{'\n'}• View receipts{'\n'}• Track
@@ -1674,7 +1896,7 @@ const PayContent = ({ navigation }: any) => {
   // ============================================================
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#1F2F5F" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Pay</Text>
@@ -1741,7 +1963,7 @@ const PayContent = ({ navigation }: any) => {
           <View style={styles.tabContainer}>
             {[
               { key: 'pending', label: `Pending (${pendingTransactions.length})` },
-              { key: 'locked', label: `Locked (${lockedTransactions.length})` },
+              { key: 'locked', label: `In progress (${lockedTransactions.length})` },
               { key: 'completed', label: `Completed (${completedTransactions.length})` },
               { key: 'disputed', label: `Disputed (${disputedTransactions.length})` },
             ].map((tab) => (
@@ -1759,11 +1981,16 @@ const PayContent = ({ navigation }: any) => {
 
           {currentTabData.length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>📭</Text>
+              <Ionicons
+                name="receipt-outline"
+                size={34}
+                color="#8F98A3"
+                style={styles.emptyIcon}
+              />
               <Text style={styles.emptyTitle}>No {activeTab} transactions</Text>
               <Text style={styles.emptySubtext}>
                 {activeTab === 'pending' && 'Your pending transactions will appear here'}
-                {activeTab === 'locked' && 'Your locked transactions will appear here'}
+                {activeTab === 'locked' && 'Your in-progress transactions will appear here'}
                 {activeTab === 'completed' && 'Your completed transactions will appear here'}
                 {activeTab === 'disputed' && 'Your disputed transactions will appear here'}
               </Text>
@@ -1794,6 +2021,7 @@ const PayContent = ({ navigation }: any) => {
       </ScrollView>
 
       {renderTransactionsModal()}
+      {renderCheckoutModal()}
       {renderAddMoneyModal()}
       {renderWithdrawModal()}
       {renderDisputeModal()}
@@ -1816,18 +2044,25 @@ const PayContent = ({ navigation }: any) => {
 // EXPORT
 // ============================================================
 
-export const PayScreen = ({ navigation }: any) => {
+export const PayScreen = ({ navigation, route }: any) => {
   const { isDesktop } = useBreakpoint();
+  const {
+    searchPanelOpen,
+    searchPanelContent,
+    onNavigate,
+  } = useSidebarSearch(navigation, isDesktop);
 
   return (
     <ResponsiveLayout
-      currentRoute="Pay"
-      onNavigate={(route) => navigation?.navigate(route)}
+      currentRoute={searchPanelOpen ? 'Search' : 'Pay'}
+      onNavigate={onNavigate}
+      searchPanelOpen={searchPanelOpen}
+      searchPanelContent={searchPanelContent}
       floatingActions={null}
       hideContextPanel={true}
       fullWidth={true}
     >
-      <PayContent navigation={navigation} />
+      <PayContent navigation={navigation} route={route} />
     </ResponsiveLayout>
   );
 };
@@ -1839,13 +2074,13 @@ export const PayScreen = ({ navigation }: any) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#0B0B0D',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#0B0B0D',
   },
   loadingText: {
     color: '#8A8AAE',
@@ -1859,7 +2094,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 12,
-    backgroundColor: 'rgba(31, 47, 95, 0.9)',
+    backgroundColor: 'rgba(18,21,26,0.92)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
@@ -2102,7 +2337,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1A2A4F',
+    backgroundColor: '#15191F',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 16,
@@ -2110,6 +2345,11 @@ const styles = StyleSheet.create({
   },
   transactionsModal: { height: height * 0.9 },
   addMoneyModal: { height: height * 0.75 },
+  checkoutModal: {
+    maxHeight: height * 0.88,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2118,6 +2358,152 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
     marginBottom: 12,
+  },
+  checkoutSubtitle: {
+    color: '#AAB4C0',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  checkoutContent: {
+    paddingBottom: 20,
+  },
+  checkoutListing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    marginBottom: 18,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  checkoutListingIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  checkoutListingDetails: {
+    flex: 1,
+  },
+  checkoutListingTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  checkoutSeller: {
+    color: '#AAB4C0',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  checkoutLabel: {
+    color: '#D6DCE3',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  checkoutInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 50,
+    paddingHorizontal: 14,
+    marginBottom: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.09)',
+  },
+  checkoutCurrency: {
+    color: '#AAB4C0',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 10,
+  },
+  checkoutInput: {
+    flex: 1,
+    paddingVertical: 11,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  checkoutInputReadOnly: {
+    color: '#C3CAD2',
+  },
+  checkoutHint: {
+    color: '#8F98A3',
+    fontSize: 11,
+    marginBottom: 14,
+  },
+  checkoutQuantityLabel: {
+    marginTop: 14,
+  },
+  checkoutQuantityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 12,
+  },
+  quantityButton: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.09)',
+  },
+  quantityInput: {
+    minWidth: 48,
+    paddingVertical: 7,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  checkoutSummary: {
+    padding: 14,
+    marginTop: 20,
+    marginBottom: 8,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  checkoutSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  checkoutSummaryLabel: {
+    color: '#AAB4C0',
+    fontSize: 12,
+  },
+  checkoutSummaryValue: {
+    color: '#D6DCE3',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  checkoutDivider: {
+    height: 1,
+    marginVertical: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  checkoutTotalLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  checkoutTotalValue: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  checkoutButtonDisabled: {
+    opacity: 0.65,
   },
   modalTitle: {
     color: '#FFFFFF',
@@ -2256,9 +2642,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   fundGradient: {
+    flexDirection: 'row',
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   fundButtonText: {
     color: '#FFFFFF',
@@ -2297,7 +2686,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#0B0B0D',
   },
   guestIcon: {
     fontSize: 48,

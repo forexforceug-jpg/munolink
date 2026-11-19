@@ -7,8 +7,7 @@ import React, {
   useMemo,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../lib/supabase';
-import { Session, User } from '@supabase/supabase-js';
+import type { AuthSession, AuthUser } from '../types/auth';
 import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
@@ -16,6 +15,8 @@ import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { locationService } from '../services/location.service';
+import { apiRequest, authApi } from '../lib/api';
+import { getStoredSession } from '../lib/sessionStorage';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -26,8 +27,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isGuest: boolean;
   isLoading: boolean;
-  user: User | null;
-  session: Session | null;
+  user: AuthUser | null;
+  session: AuthSession | null;
 
   signUpWithEmail: (
     email: string,
@@ -79,34 +80,11 @@ function generateNonce(length = 32): string {
 }
 
 async function upsertUserProfile(params: {
-  userId: string;
   fullName?: string | null;
-  email?: string | null;
-  phone?: string | null;
 }): Promise<void> {
-  const { userId, fullName, email, phone } = params;
-  if (!userId) return;
-
-  const patch: Record<string, any> = { id: userId };
-
-  if (fullName && fullName.trim().length > 0) {
-    patch.full_name = fullName.trim();
-  }
-  if (email) patch.email = email;
-  if (phone) patch.phone_number = phone;
-
-  if (Object.keys(patch).length <= 1) return;
-
-  try {
-    const { error } = await supabase
-      .from('users')
-      .upsert(patch, { onConflict: 'id' });
-    if (error && __DEV__) {
-      console.log('ℹ️ upsertUserProfile warning:', error.message);
-    }
-  } catch (err) {
-    if (__DEV__) console.log('ℹ️ upsertUserProfile threw:', err);
-  }
+  const patch: { fullName?: string } = {};
+  if (params.fullName?.trim()) patch.fullName = params.fullName.trim();
+  await apiRequest('/users/me/profile', { method: 'PUT', body: patch });
 }
 
 function normaliseUgandanPhone(raw: string): string {
@@ -167,35 +145,18 @@ async function reverseGeocode(
   region: string | null;
   country: string | null;
 }> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&zoom=10&addressdetails=1`;
-    const res = await fetch(url, {
-      headers: {
-        // Nominatim asks for a UA. Browsers ignore custom UA, this
-        // is mostly here for native where it's honoured.
-        'User-Agent': 'Munolink/1.0 (contact@munolink.com)',
-        Accept: 'application/json',
-      },
-    });
-    if (!res.ok) {
-      return { city: null, region: null, country: null };
-    }
-    const data = (await res.json()) as any;
-    const a = data?.address || {};
-    return {
-      city:
-        a.city ||
-        a.town ||
-        a.village ||
-        a.suburb ||
-        a.county ||
-        null,
-      region: a.state || a.region || null,
-      country: a.country || null,
+  const query = new URLSearchParams({
+    lat: String(latitude),
+    lng: String(longitude),
+  });
+  const result = await apiRequest<{
+    data: {
+      city: string | null;
+      region: string | null;
+      country: string | null;
     };
-  } catch {
-    return { city: null, region: null, country: null };
-  }
+  }>(`/location/reverse-geocode?${query}`, { auth: false });
+  return result.data;
 }
 
 /**
@@ -215,16 +176,15 @@ async function persistUserLocation(userId: string): Promise<void> {
   }
 
   try {
-    // Skip if the row already has location set.
-    const { data: row, error: readErr } = await supabase
-      .from('users')
-      .select('latitude, longitude, location_city, location_region, location_country')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (readErr && __DEV__) {
-      console.log('ℹ️ location read warning:', readErr.message);
-    }
+    const { location: row } = await apiRequest<{
+      location: {
+        latitude: number | null;
+        longitude: number | null;
+        location_city: string | null;
+        location_region: string | null;
+        location_country: string | null;
+      } | null;
+    }>('/users/me/location');
 
     if (
       row?.latitude != null &&
@@ -261,23 +221,16 @@ async function persistUserLocation(userId: string): Promise<void> {
       coords.longitude
     );
 
-    const patch: Record<string, any> = {
-      id: userId,
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-    };
-    if (city) patch.location_city = city;
-    if (region) patch.location_region = region;
-    if (country) patch.location_country = country;
-
-    const { error: upErr } = await supabase
-      .from('users')
-      .upsert(patch, { onConflict: 'id' });
-
-    if (upErr) {
-      if (__DEV__) console.log('ℹ️ location upsert warning:', upErr.message);
-      return;
-    }
+    await apiRequest('/users/me/location', {
+      method: 'PUT',
+      body: {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        city,
+        region,
+        country,
+      },
+    });
 
     try {
       await AsyncStorage.setItem(guardKey, '1');
@@ -293,15 +246,30 @@ async function persistUserLocation(userId: string): Promise<void> {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const rawNonceRef = React.useRef<string | null>(null);
+  const [, response, promptAsync] = Google.useIdTokenAuthRequest({
+    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+  });
 
-  // Deep link handler for Google OAuth on web
+  const activateSession = async (active: AuthSession | null) => {
+    setSession(active);
+    setUser(active?.user ?? null);
+    setIsAuthenticated(!!active);
+    setIsGuest(!active);
+    if (active?.user.id) {
+      void persistUserLocation(active.user.id);
+    }
+  };
+
   useEffect(() => {
     const handleDeepLink = async (event: { url: string }) => {
       try {
@@ -309,116 +277,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         if (errorCode) return;
         const { access_token, refresh_token } = params;
         if (access_token && refresh_token) {
-          await supabase.auth.setSession({ access_token, refresh_token });
+          const result = await authApi.adoptSession(
+            access_token,
+            refresh_token
+          );
+          await activateSession(result.session);
         }
       } catch (err) {
-        console.warn('Deep link error:', err);
+        console.error('Backend OAuth callback failed:', err);
       }
     };
-    Linking.getInitialURL().then((url) => {
-      if (url) handleDeepLink({ url });
+
+    void Linking.getInitialURL().then((url) => {
+      if (url) void handleDeepLink({ url });
     });
-    const sub = Linking.addEventListener('url', handleDeepLink);
+    const sub = Linking.addEventListener('url', (event) => {
+      void handleDeepLink(event);
+    });
     return () => sub.remove();
   }, []);
 
-  // Restore session on mount
   useEffect(() => {
     let cancelled = false;
     const initAuth = async () => {
       try {
-        const {
-          data: { session: restored },
-        } = await supabase.auth.getSession();
-        if (!cancelled && restored) {
-          setSession(restored);
-          setUser(restored.user);
-          setIsAuthenticated(true);
-          setIsGuest(false);
-          // Fire-and-forget location write for restored sessions.
-          persistUserLocation(restored.user.id).catch(() => {});
-        } else if (!cancelled) {
-          setIsGuest(true);
+        const stored = await getStoredSession();
+        if (!stored) {
+          if (!cancelled) setIsGuest(true);
+          return;
         }
-      } catch (e) {
-        console.error('Auth init error:', e);
+
+        const { user: restoredUser } = await authApi.me();
+        const current = await getStoredSession();
+        if (!cancelled && current) {
+          await activateSession({ ...current, user: restoredUser });
+        }
+      } catch (error) {
+        console.error('Backend auth session restore failed:', error);
         if (!cancelled) setIsGuest(true);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
     };
-    initAuth();
+    void initAuth();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Listen to all auth events — handles Google / OAuth completions
-  // that don't pass through our signup helpers.
-  useEffect(() => {
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-      setIsAuthenticated(!!newSession);
-      setIsGuest(!newSession);
-
-      // ✅ Any time a user becomes authenticated (including the
-      // Google redirect completing), make sure we have location.
-      if (
-        newSession?.user?.id &&
-        (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')
-      ) {
-        persistUserLocation(newSession.user.id).catch(() => {});
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Google OAuth (native)
-  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-    clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-  });
-
   useEffect(() => {
     if (response?.type === 'success' && response.params.id_token) {
-      supabase.auth
-        .signInWithIdToken({
-          provider: 'google',
-          token: response.params.id_token,
-          nonce: rawNonceRef.current || undefined,
-        })
-        .then(({ data, error }) => {
-          if (error) throw error;
-          // onAuthStateChange also fires, but call directly so the
-          // persistence happens immediately in this flow.
-          if (data?.user?.id) {
-            persistUserLocation(data.user.id).catch(() => {});
-          }
-        })
-        .catch(() => {
-          /* silent — UI handles */
-        });
+      void authApi
+        .signInWithGoogleToken(
+          response.params.id_token,
+          rawNonceRef.current || undefined
+        )
+        .then(({ session: active }) => activateSession(active))
+        .catch((error) => console.error('Google sign-in failed:', error));
     }
   }, [response]);
 
   const signInWithGoogle = async () => {
     if (Platform.OS === 'web') {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: window.location.origin },
-      });
-      if (error) throw error;
+      const url = await authApi.googleUrl(window.location.origin);
+      window.location.assign(url);
       return;
     }
     try {
       rawNonceRef.current = generateNonce();
       await promptAsync();
-    } catch (error: any) {
+    } catch {
       throw new Error('Failed to sign in with Google.');
     }
   };
@@ -432,24 +360,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     fullName?: string
   ) => {
     const trimmedName = fullName?.trim() || null;
-
-    const { data, error } = await supabase.auth.signUp({
+    const result = await authApi.signUp({
       email,
       password,
-      options: {
-        data: { full_name: trimmedName },
-      },
+      fullName: trimmedName || undefined,
     });
-    if (error) throw error;
-
-    if (data?.user?.id) {
-      await upsertUserProfile({
-        userId: data.user.id,
-        fullName: trimmedName,
-        email,
-      });
-      // ✅ Persist location for the new account.
-      persistUserLocation(data.user.id).catch(() => {});
+    if (result.session) {
+      await activateSession(result.session);
+      if (trimmedName) await upsertUserProfile({ fullName: trimmedName });
     }
   };
 
@@ -458,37 +376,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     token: string,
     fullName?: string
   ) => {
-    const { data, error } = await supabase.auth.verifyOtp({
+    const result = await authApi.verifyOtp({
       email,
       token,
       type: 'signup',
     });
-    if (error) throw error;
+    if (result.session) await activateSession(result.session);
 
     const fromArgs = fullName?.trim() || null;
     const fromMeta =
-      (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
+      (result.user?.user_metadata as any)?.full_name?.trim?.() || null;
     const resolvedName = fromArgs || fromMeta || null;
 
-    if (data?.user?.id) {
-      if (resolvedName) {
-        await upsertUserProfile({
-          userId: data.user.id,
-          fullName: resolvedName,
-          email,
-        });
-      }
-      // ✅ Persist location after verification.
-      persistUserLocation(data.user.id).catch(() => {});
-    }
+    if (resolvedName) await upsertUserProfile({ fullName: resolvedName });
   };
 
   const signInWithEmail = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) throw error;
+    const result = await authApi.signIn({ email, password });
+    await activateSession(result.session);
   };
 
   // ============================================================
@@ -501,24 +406,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   ) => {
     const trimmedName = fullName?.trim() || null;
     const e164 = normaliseUgandanPhone(phone);
-
-    const { data, error } = await supabase.auth.signUp({
+    const result = await authApi.signUp({
       phone: e164,
       password,
-      options: {
-        data: { full_name: trimmedName },
-      },
+      fullName: trimmedName || undefined,
     });
-    if (error) throw error;
-
-    if (data?.user?.id) {
-      await upsertUserProfile({
-        userId: data.user.id,
-        fullName: trimmedName,
-        phone: e164,
-      });
-      // ✅ Persist location for the new account.
-      persistUserLocation(data.user.id).catch(() => {});
+    if (result.session) {
+      await activateSession(result.session);
+      if (trimmedName) await upsertUserProfile({ fullName: trimmedName });
     }
   };
 
@@ -529,60 +424,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   ) => {
     const e164 = normaliseUgandanPhone(phone);
 
-    const { data, error } = await supabase.auth.verifyOtp({
+    const result = await authApi.verifyOtp({
       phone: e164,
       token,
       type: 'sms',
     });
-    if (error) throw error;
+    if (result.session) await activateSession(result.session);
 
     const fromArgs = fullName?.trim() || null;
     const fromMeta =
-      (data?.user?.user_metadata as any)?.full_name?.trim?.() || null;
+      (result.user?.user_metadata as any)?.full_name?.trim?.() || null;
     const resolvedName = fromArgs || fromMeta || null;
 
-    if (data?.user?.id) {
-      if (resolvedName) {
-        await upsertUserProfile({
-          userId: data.user.id,
-          fullName: resolvedName,
-          phone: e164,
-        });
-      }
-      // ✅ Persist location after verification.
-      persistUserLocation(data.user.id).catch(() => {});
-    }
+    if (resolvedName) await upsertUserProfile({ fullName: resolvedName });
   };
 
-  const signInWithPhonePassword = async (
-    phone: string,
-    password: string
-  ) => {
+  const signInWithPhonePassword = async (phone: string, password: string) => {
     const e164 = normaliseUgandanPhone(phone);
-    const { error } = await supabase.auth.signInWithPassword({
-      phone: e164,
-      password,
-    });
-    if (error) throw error;
+    const result = await authApi.signIn({ phone: e164, password });
+    await activateSession(result.session);
   };
 
   // ============================================================
   // EMAIL PASSWORD RESET
   // ============================================================
   const requestPasswordReset = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: undefined,
-    });
-    if (error) throw error;
+    await authApi.requestPasswordReset(email);
   };
 
   const verifyPasswordResetOtp = async (email: string, token: string) => {
-    const { error } = await supabase.auth.verifyOtp({
+    const result = await authApi.verifyOtp({
       email,
       token,
       type: 'recovery',
     });
-    if (error) throw error;
+    if (result.session) await activateSession(result.session);
   };
 
   // ============================================================
@@ -595,25 +471,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Please enter a valid phone number.');
     }
 
-    const { error } = await supabase.auth.signInWithOtp({
-      phone: e164,
-      options: { shouldCreateUser: false },
-    });
-    if (error) throw error;
+    await authApi.requestPhonePasswordReset(e164);
   };
 
-  const verifyPhonePasswordResetOtp = async (
-    phone: string,
-    token: string
-  ) => {
+  const verifyPhonePasswordResetOtp = async (phone: string, token: string) => {
     const e164 = normaliseUgandanPhone(phone);
 
-    const { error } = await supabase.auth.verifyOtp({
+    const result = await authApi.verifyOtp({
       phone: e164,
       token,
       type: 'sms',
     });
-    if (error) throw error;
+    if (result.session) await activateSession(result.session);
   };
 
   const updatePassword = async (newPassword: string) => {
@@ -621,22 +490,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Password must be at least 6 characters.');
     }
 
-    const {
-      data: { session: active },
-    } = await supabase.auth.getSession();
-
-    if (!active) {
+    if (!(await getStoredSession())) {
       throw new Error(
         'You must verify your code first before setting a new password.'
       );
     }
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
-
-    if (error) {
-      const raw = (error.message || '').toLowerCase();
+    try {
+      await authApi.updatePassword(newPassword);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const raw = message.toLowerCase();
       const code = (error as any)?.code || '';
 
       if (
@@ -666,7 +530,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         );
       }
 
-      throw new Error(error.message || 'Failed to update password.');
+      throw new Error(message || 'Failed to update password.');
     }
   };
 
@@ -674,7 +538,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   // SIGN OUT / GUEST
   // ============================================================
   const signOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await authApi.signOut();
+    } finally {
+      setSession(null);
+      setUser(null);
+      setIsAuthenticated(false);
+      setIsGuest(true);
+    }
   };
 
   const joinAsGuest = () => {

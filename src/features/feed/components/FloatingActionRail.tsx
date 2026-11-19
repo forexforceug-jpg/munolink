@@ -32,9 +32,9 @@ type IconName = keyof typeof Ionicons.glyphMap;
 const ICONS: Record<string, IconName> = {
   like: 'heart',
   likeOutline: 'heart-outline',
-  reviews: 'chatbubble-ellipses',
-  directions: 'location',
-  share: 'share-social',
+  reviews: 'chatbubble-ellipses-outline',
+  directions: 'location-outline',
+  share: 'share-social-outline',
   save: 'bookmark',
   saveOutline: 'bookmark-outline',
 };
@@ -273,7 +273,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
 
   const userLetter = opportunity.userFullName?.charAt(0).toUpperCase() || 'U';
 
-  const logoSize = isDesktop ? 64 : 70;
+  const logoSize = Math.round(shopButtonSize * 0.78);
 
   const effectiveDistance =
     typeof opportunity.distance === 'number' && opportunity.distance > 0
@@ -377,7 +377,7 @@ const FloatingActionRailComponent: React.FC<FloatingActionRailProps> = ({
         activeOpacity={0.7}
       >
         <Ionicons
-          name={isLikedState ? ICONS.like : ICONS.like}
+          name={isLikedState ? ICONS.like : ICONS.likeOutline}
           size={iconSize}
           color={isLikedState ? '#FF4D6D' : '#FFFFFF'}
         />
@@ -574,7 +574,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: '#FFFFFF',
   },
   userLetterContainer: {
     width: '100%',
@@ -582,16 +582,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 999,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   userAvatar: {
     borderRadius: 999,
-    backgroundColor: 'rgba(74, 125, 255, 0.08)',
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   userLetter: {
-    color: '#4A7DFF',
+    color: '#FFFFFF',
     fontWeight: '700',
-    textShadowColor: 'rgba(74, 125, 255, 0.2)',
+    textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
@@ -600,6 +600,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+    borderWidth: 0,
   },
   aiWrapper: {
     alignItems: 'center',

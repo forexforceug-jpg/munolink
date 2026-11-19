@@ -97,7 +97,7 @@ interface Props {
   media: MediaItem[];
   onSceneChange?: (index: number, source?: NavigationSource) => void;
   onBehavioralEvent?: (event: BehavioralEvent) => void;
-  onPrimaryAction?: () => void;
+  onCheckoutPress?: () => void;
   onShare?: () => void;
   onSave?: () => void;
   onShowMore?: () => void;
@@ -843,12 +843,12 @@ function useSafeTabBarHeight(): number {
 export function SceneRenderer({
   media,
   onSceneChange,
-  onPrimaryAction,
   onShare,
   onSave,
   onShowMore,
   onBehavioralEvent,
   onInboxPress,
+  onCheckoutPress,
   showInboxButton = true,
   onMediaLoadStateChange,
   onNaturalSize,
@@ -883,6 +883,7 @@ export function SceneRenderer({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [dotPulse] = useState(new Animated.Value(0));
   const [isExpanded, setIsExpanded] = useState(false);
+  const [commerceMenuOpen, setCommerceMenuOpen] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 
   const [activeVideoPlayer, setActiveVideoPlayer] = useState<any>(null);
@@ -922,6 +923,10 @@ export function SceneRenderer({
             url: 'https://via.placeholder.com/400x400/1A1A2E/8A8AAE?text=No+Image',
           },
         ];
+
+  useEffect(() => {
+    setCommerceMenuOpen(false);
+  }, [resetKey]);
   const totalItems = safeMedia.length;
 
   const currentMedia = safeMedia[currentIndex];
@@ -1277,7 +1282,15 @@ export function SceneRenderer({
       ? `From ${currency} ${(price || 0).toLocaleString()}`
       : `${currency} ${(price || 0).toLocaleString()}`;
 
-  const showInbox = !!onInboxPress && showInboxButton;
+  const canCheckout =
+    !!onCheckoutPress &&
+    price > 0 &&
+    effectivePriceType !== 'free' &&
+    effectivePriceType !== 'showcase';
+  const canNegotiate =
+    !!onInboxPress && effectivePriceType === 'negotiable';
+  const showCommerceActions =
+    showInboxButton && (canCheckout || canNegotiate);
 
   return (
     <View style={[styles.container, { width, height }]}>
@@ -1359,20 +1372,6 @@ export function SceneRenderer({
       <View
         style={[styles.bottomContainer, { bottom: computedBottomOffset }]}
       >
-        {showInbox && (
-          <TouchableOpacity
-            style={styles.inboxButton}
-            onPress={() => {
-              onInboxPress?.();
-              onPrimaryAction?.();
-            }}
-            activeOpacity={0.75}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="chatbubble-outline" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-        )}
-
         <View style={styles.dotsContainer}>
           {safeMedia.map((_, index) => {
             const isActive = index === currentIndex;
@@ -1462,6 +1461,51 @@ export function SceneRenderer({
             />
           )}
         </View>
+
+        {showCommerceActions && (
+          <View style={styles.commerceActions}>
+            {commerceMenuOpen && (
+              <View style={styles.commerceMenu}>
+                {canCheckout && (
+                  <TouchableOpacity
+                    style={styles.commerceMenuAction}
+                    onPress={() => {
+                      setCommerceMenuOpen(false);
+                      onCheckoutPress?.();
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="wallet-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.commerceMenuText}>Checkout</Text>
+                  </TouchableOpacity>
+                )}
+                {canNegotiate && (
+                  <TouchableOpacity
+                    style={styles.commerceMenuAction}
+                    onPress={() => {
+                      setCommerceMenuOpen(false);
+                      onInboxPress?.();
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="chatbubble-ellipses-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.commerceMenuText}>Negotiate</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+            <TouchableOpacity
+              style={styles.commerceTrigger}
+              onPress={() => setCommerceMenuOpen((isOpen) => !isOpen)}
+              activeOpacity={0.8}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={commerceMenuOpen ? 'Close purchase actions' : 'Purchase actions'}
+            >
+              <Ionicons name="bag-handle-outline" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <View style={styles.sceneCounter}>
@@ -1586,7 +1630,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 25,
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
   dotsContainer: {
     flexDirection: 'row',
@@ -1594,6 +1638,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     marginBottom: 8,
+  },
+  commerceActions: {
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    zIndex: 30,
+  },
+  commerceTrigger: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
+    backgroundColor: 'rgba(24,28,34,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  commerceMenu: {
+    position: 'absolute',
+    bottom: 52,
+    left: -59,
+    minWidth: 160,
+    padding: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(18,21,26,0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.13)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  commerceMenuAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 42,
+    paddingHorizontal: 10,
+    borderRadius: 9,
+  },
+  commerceMenuText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   dotWrapper: { paddingHorizontal: 4, paddingVertical: 6 },
   dot: {
@@ -1607,7 +1697,7 @@ const styles = StyleSheet.create({
   title: {
     color: '#FFFFFF',
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '700',
     maxWidth: '88%',
     textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowOffset: { width: 0, height: 1 },
@@ -1620,9 +1710,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   price: {
-    color: '#4A7DFF',
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
     textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -1664,24 +1754,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
     flexShrink: 0,
-  },
-
-  inboxButton: {
-    alignSelf: 'center',
-    marginBottom: 10,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.28)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
-    elevation: 4,
   },
 
   descriptionContainer: {

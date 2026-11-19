@@ -1,8 +1,7 @@
 // src/services/notification.service.ts
 
-import { supabase } from '../lib/supabase';
+import { backendData } from '../lib/backendData';
 
-const supabaseAny = supabase as any;
 
 export class NotificationService {
   // ============================================================
@@ -16,7 +15,7 @@ export class NotificationService {
   ): Promise<boolean> {
     try {
       // Save to notifications table
-      const { error } = await supabaseAny
+      const { error } = await backendData
         .from('notifications')
         .insert({
           user_id: userId,
@@ -31,7 +30,7 @@ export class NotificationService {
       if (error) throw error;
 
       // Get user's push tokens
-      const { data: tokens } = await supabaseAny
+      const { data: tokens } = await backendData
         .from('push_tokens')
         .select('token, device_type')
         .eq('user_id', userId)
@@ -76,7 +75,7 @@ export class NotificationService {
   // ============================================================
   async getUserNotifications(userId: string, limit: number = 20): Promise<any[]> {
     try {
-      const { data, error } = await supabaseAny
+      const { data, error } = await backendData
         .from('notifications')
         .select('*')
         .eq('user_id', userId)
@@ -96,7 +95,7 @@ export class NotificationService {
   // ============================================================
   async markAsRead(notificationId: string): Promise<boolean> {
     try {
-      const { error } = await supabaseAny
+      const { error } = await backendData
         .from('notifications')
         .update({ read: true })
         .eq('id', notificationId);
@@ -114,7 +113,7 @@ export class NotificationService {
   // ============================================================
   async markAllAsRead(userId: string): Promise<boolean> {
     try {
-      const { error } = await supabaseAny
+      const { error } = await backendData
         .from('notifications')
         .update({ read: true })
         .eq('user_id', userId)
@@ -133,7 +132,7 @@ export class NotificationService {
   // ============================================================
   async getUnreadCount(userId: string): Promise<number> {
     try {
-      const { count, error } = await supabaseAny
+      const { count, error } = await backendData
         .from('notifications')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)

@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Animated,
 } from 'react-native';
 import {
   SafeAreaView,
@@ -24,10 +25,14 @@ import {
 } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { randomUUID } from 'expo-crypto';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
+import { paymentsApi } from '../../lib/payments';
+import { useSidebarSearch } from '../search/useSidebarSearch';
+import { useIsFocused } from '@react-navigation/native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -113,7 +118,7 @@ const getAvatarSource = (name: string, avatarUrl?: string | null) => {
   }
   const safeName = encodeURIComponent(name || 'User');
   return {
-    uri: `https://ui-avatars.com/api/?name=${safeName}&background=4A7DFF&color=fff&size=200&bold=true`,
+    uri: `https://ui-avatars.com/api/?name=${safeName}&background=34383E&color=fff&size=200&bold=true`,
   };
 };
 
@@ -168,8 +173,7 @@ const ConversationCard = ({ item, onPress, onLongPress }: any) => (
 //            Sees: Edit + Cancel (pending), View Details (later)
 //
 // RECEIVER = payment.to_user_id (recipient)
-//            Sees: Accept / Pay Now + Reject (pending),
-//                  Confirm in Pay (locked), View Details (completed)
+//            Sees: Pay Now / Reject (requests), View Details (completed)
 // ============================================================
 
 const PaymentCard = ({
@@ -192,38 +196,38 @@ const PaymentCard = ({
   const getStatusDisplay = () => {
     switch (payment.status) {
       case 'pending':
-        return isRequest ? '⏳ Awaiting Payment' : '⏳ Pending';
+        return isRequest ? 'Awaiting payment' : 'Pending';
       case 'accepted':
-        return '🔒 Payment Locked';
+        return 'Processing';
       case 'locked':
-        return '🔒 Awaiting Confirmation';
+        return 'In progress';
       case 'completed':
-        return '✅ Completed';
+        return 'Completed';
       case 'cancelled':
-        return '❌ Cancelled';
+        return 'Cancelled';
       case 'disputed':
-        return '⚠️ Disputed';
+        return 'Disputed';
       default:
-        return '⏳ Pending';
+        return 'Pending';
     }
   };
 
   const getStatusColor = () => {
     switch (payment.status) {
       case 'pending':
-        return '#F1C40F';
+        return '#BDA66A';
       case 'accepted':
-        return '#4A7DFF';
+        return '#A6B7CC';
       case 'locked':
-        return '#4A7DFF';
+        return '#A6B7CC';
       case 'completed':
-        return '#2ECC71';
+        return '#79B895';
       case 'cancelled':
-        return '#E74C3C';
+        return '#C97A7A';
       case 'disputed':
-        return '#E74C3C';
+        return '#C97A7A';
       default:
-        return '#8A8AAE';
+        return '#929AA4';
     }
   };
 
@@ -248,9 +252,14 @@ const PaymentCard = ({
   return (
     <View style={[styles.paymentCard, { borderLeftColor: getStatusColor() }]}>
       <View style={styles.paymentCardHeader}>
-        <Text style={styles.paymentCardIcon}>{isRequest ? '💰' : '💳'}</Text>
+        <Ionicons
+          name={isRequest ? 'cash-outline' : 'card-outline'}
+          size={18}
+          color="#AAB4C0"
+          style={styles.paymentCardIcon}
+        />
         <Text style={styles.paymentCardTitle}>
-          {isRequest ? 'Payment Request' : 'Payment Initiated'}
+          {isRequest ? 'Payment Request' : 'Direct Payment'}
         </Text>
         <View
           style={[styles.paymentCardStatus, { backgroundColor: getStatusColor() + '20' }]}
@@ -336,7 +345,7 @@ const PaymentCard = ({
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={['#4A7DFF', '#6B94FF']}
+              colors={['#536B88', '#647D9E']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.paymentCardButtonGradient}
@@ -372,13 +381,13 @@ const PaymentCard = ({
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={['#4A7DFF', '#6B94FF']}
+              colors={['#536B88', '#647D9E']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.paymentCardButtonGradient}
             >
               <Ionicons name="checkmark-done-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.paymentCardButtonText}>Confirm in Pay</Text>
+              <Text style={styles.paymentCardButtonText}>Open transaction</Text>
             </LinearGradient>
           </TouchableOpacity>
         )}
@@ -390,7 +399,7 @@ const PaymentCard = ({
             activeOpacity={0.7}
           >
             <Text style={styles.paymentCardViewText}>View Details</Text>
-            <Ionicons name="chevron-forward" size={16} color="#4A7DFF" />
+            <Ionicons name="chevron-forward" size={16} color="#AAB4C0" />
           </TouchableOpacity>
         )}
       </View>
@@ -478,7 +487,12 @@ const MessageBubble = ({
 
 const GuestInboxView = ({ navigation }: any) => (
   <View style={styles.guestContainer}>
-    <Text style={styles.guestIcon}>💬</Text>
+    <Ionicons
+      name="chatbubbles-outline"
+      size={40}
+      color="#AAB4C0"
+      style={styles.guestIcon}
+    />
     <Text style={styles.guestTitle}>Keep all conversations in one place</Text>
     <Text style={styles.guestSubtext}>
       After signing in you'll receive:{'\n'}
@@ -504,6 +518,33 @@ const GuestInboxView = ({ navigation }: any) => (
 
 const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const { isAuthenticated, user } = useAuth();
+  const isFocused = useIsFocused();
+  const entrance = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!isFocused) return;
+
+    entrance.setValue(0);
+    const animation = Animated.timing(entrance, {
+      toValue: 1,
+      duration: 180,
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [entrance, isFocused]);
+
+  const entranceStyle = {
+    opacity: entrance,
+    transform: [
+      {
+        translateY: entrance.interpolate({
+          inputRange: [0, 1],
+          outputRange: [5, 0],
+        }),
+      },
+    ],
+  };
 
   // ✅ Bottom safe-area inset — needed because the chat input row
   //    (with the Pay Now / Request buttons) sits flush against the
@@ -533,6 +574,8 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const [paymentReason, setPaymentReason] = useState('');
   const [paymentIsRequest, setPaymentIsRequest] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PaymentRequest | null>(null);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const paymentIdempotencyKeyRef = useRef(randomUUID());
 
   const flatListRef = useRef<FlatList>(null);
   const subscriptionRef = useRef<any>(null);
@@ -570,7 +613,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   const loadMyProfile = useCallback(async () => {
     if (!user?.id) return;
     try {
-      const { data } = await supabase
+      const { data } = await backendData
         .from('users')
         .select('full_name, avatar_url')
         .eq('id', user.id)
@@ -598,7 +641,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     }
 
     try {
-      const { data: allMessages, error: msgError } = await supabase
+      const { data: allMessages, error: msgError } = await backendData
         .from('messages')
         .select('*')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
@@ -637,7 +680,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         let partnerMap: Record<string, { name: string; avatarUrl: string | null }> = {};
 
         if (partnerIds.length > 0) {
-          const { data: users, error: usersError } = await supabase
+          const { data: users, error: usersError } = await backendData
             .from('users')
             .select('id, full_name, avatar_url')
             .in('id', partnerIds);
@@ -701,7 +744,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       if (!user?.id || !partnerId || !isMounted.current) return;
 
       try {
-        const { data: partnerData } = await supabase
+        const { data: partnerData } = await backendData
           .from('users')
           .select('full_name, avatar_url')
           .eq('id', partnerId)
@@ -714,7 +757,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
           });
         }
 
-        const { data: messagesData, error: messagesError } = await supabase
+        const { data: messagesData, error: messagesError } = await backendData
           .from('messages')
           .select('*')
           .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
@@ -738,7 +781,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         let paymentRequests: PaymentRequest[] = [];
 
         if (messageIds.length > 0) {
-          const { data: paymentsData, error: paymentsError } = await supabase
+          const { data: paymentsData, error: paymentsError } = await backendData
             .from('payment_requests')
             .select('*')
             .in('message_id', messageIds);
@@ -753,7 +796,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             > = {};
 
             if (userIds.length > 0) {
-              const { data: users, error: usersError } = await supabase
+              const { data: users, error: usersError } = await backendData
                 .from('users')
                 .select('id, full_name, avatar_url')
                 .in('id', userIds);
@@ -769,15 +812,24 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
               }
             }
 
-            paymentRequests = paymentsData.map((p: any) => {
+            paymentRequests = paymentsData.map((p: any): PaymentRequest => {
               const fromId = p.from_user_id;
               const toId = p.to_user_id;
 
               return {
-                ...p,
+                id: p.id,
                 created_at: p.created_at || new Date().toISOString(),
                 from_user_id: fromId,
                 to_user_id: toId,
+                amount: Number(p.amount),
+                reason: p.reason ?? null,
+                status: p.status,
+                is_request: Boolean(p.is_request),
+                transaction_id: p.transaction_id ?? null,
+                message_id: p.message_id ?? null,
+                accepted_at: p.accepted_at ?? null,
+                locked_at: p.locked_at ?? null,
+                completed_at: p.completed_at ?? null,
                 from_user: userMap[fromId] || {
                   id: fromId,
                   full_name: 'User',
@@ -802,7 +854,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
           setMessages(mergedMessages);
         }
 
-        await supabase
+        await backendData
           .from('messages')
           .update({ is_read: true })
           .eq('sender_id', partnerId)
@@ -914,114 +966,53 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   // ============================================================
 
   const createPayment = useCallback(
-    async (amount: number, reason: string, isRequest: boolean, receiverId: string) => {
+    async (
+      amount: number,
+      reason: string,
+      isRequest: boolean,
+      receiverId: string
+    ): Promise<PaymentRequest | null> => {
       if (!user?.id || !receiverId) {
         Alert.alert('Error', 'Invalid user');
         return null;
       }
 
       try {
-        const buyerId = isRequest ? receiverId : user.id;
-        const sellerId = isRequest ? user.id : receiverId;
-
-        const { data: paymentData, error: paymentError } = await supabase
-          .from('payment_requests')
-          .insert({
-            buyer_id: buyerId,
-            seller_id: sellerId,
-            from_user_id: user.id,
-            to_user_id: receiverId,
-            amount: amount,
+        const result = isRequest
+          ? await paymentsApi.create({
+            toUserId: receiverId,
+            amount,
             reason: reason || 'Payment',
-            status: 'pending',
-            is_request: isRequest,
-            currency: 'UGX',
-          } as any)
-          .select('*')
-          .single();
-
-        if (paymentError) {
-          console.error('Error creating payment:', paymentError);
-          Alert.alert('Error', 'Failed to create payment: ' + paymentError.message);
-          return null;
-        }
-
-        if (!paymentData) {
-          Alert.alert('Error', 'Failed to create payment - no data returned');
-          return null;
-        }
-
-        const paymentText = isRequest
-          ? `💰 Payment Request: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`
-          : `💰 Payment Initiated: UGX ${amount.toLocaleString()}${reason ? ` - ${reason}` : ''}`;
-
-        const { data: messageData, error: messageError } = await supabase
-          .from('messages')
-          .insert({
-            sender_id: user.id,
-            receiver_id: receiverId,
-            text: paymentText,
-            is_read: false,
+            isRequest: true,
           })
-          .select()
-          .single();
-
-        if (messageError) {
-          console.error('Error sending payment message:', messageError);
-          Alert.alert('Error', 'Failed to send payment message');
-          return null;
+          : await paymentsApi.transfer({
+            toUserId: receiverId,
+            amount,
+            reason: reason || 'Payment',
+            idempotencyKey: paymentIdempotencyKeyRef.current,
+          });
+        const { payment: paymentData, message: messageData } = result;
+        if (!paymentData || !messageData) {
+          throw new Error('Backend did not return the created payment and message.');
         }
-
-        if (paymentData && messageData) {
-          await supabase
-            .from('payment_requests')
-            .update({ message_id: messageData.id })
-            .eq('id', paymentData.id);
-        }
-
-        if (!isRequest) {
-          const { error: txError } = await supabase
-            .from('transactions')
-            .insert({
-              buyer_id: user.id,
-              seller_id: receiverId,
-              amount: amount,
-              locked_amount: amount,
-              type: 'payment',
-              status: 'locked',
-              reference: `PAY-${Date.now()}`,
-            } as any)
-            .select()
-            .single();
-
-          if (txError) {
-            console.error('Error creating transaction:', txError);
-            Alert.alert('Error', 'Failed to lock funds');
-            return null;
-          }
-
-          await supabase
-            .from('payment_requests')
-            .update({
-              status: 'locked',
-              locked_at: new Date().toISOString(),
-            })
-            .eq('id', paymentData.id);
-
-          const { data: userData } = await supabase
-            .from('users')
-            .select('wallet_balance')
-            .eq('id', user.id)
-            .single();
-
-          if (userData) {
-            await supabase
-              .from('users')
-              .update({
-                wallet_balance: (userData.wallet_balance || 0) - amount,
-              })
-              .eq('id', user.id);
-          }
+        const validStatuses: PaymentRequest['status'][] = [
+          'pending',
+          'accepted',
+          'locked',
+          'completed',
+          'cancelled',
+          'disputed',
+        ];
+        const paymentAmount = Number(paymentData.amount);
+        if (
+          typeof paymentData.id !== 'string' ||
+          typeof paymentData.from_user_id !== 'string' ||
+          typeof paymentData.to_user_id !== 'string' ||
+          !Number.isFinite(paymentAmount) ||
+          !validStatuses.includes(paymentData.status) ||
+          typeof messageData.id !== 'string'
+        ) {
+          throw new Error('Backend returned invalid payment details.');
         }
 
         const userIds = [paymentData.from_user_id, paymentData.to_user_id].filter(Boolean);
@@ -1031,7 +1022,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         > = {};
 
         if (userIds.length > 0) {
-          const { data: users, error: usersError } = await supabase
+          const { data: users, error: usersError } = await backendData
             .from('users')
             .select('id, full_name, avatar_url')
             .in('id', userIds);
@@ -1051,17 +1042,28 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         const toId = paymentData.to_user_id;
 
         return {
-          ...paymentData,
-          message_id: messageData?.id,
+          id: paymentData.id,
+          amount: paymentAmount,
+          reason: paymentData.reason ?? null,
+          status: paymentData.status,
+          is_request: Boolean(paymentData.is_request),
+          transaction_id: paymentData.transaction_id ?? null,
+          message_id: messageData.id,
           created_at: paymentData.created_at || new Date().toISOString(),
           from_user_id: fromId,
           to_user_id: toId,
+          accepted_at: paymentData.accepted_at ?? null,
+          locked_at: paymentData.locked_at ?? null,
+          completed_at: paymentData.completed_at ?? null,
           from_user: userMap[fromId] || { id: fromId, full_name: 'User', avatar_url: null },
           to_user: userMap[toId] || { id: toId, full_name: 'User', avatar_url: null },
         };
       } catch (error) {
         console.error('Error creating payment:', error);
-        Alert.alert('Error', 'Failed to create payment');
+        Alert.alert(
+          'Payment failed',
+          error instanceof Error ? error.message : 'Failed to create payment.',
+        );
         return null;
       }
     },
@@ -1076,99 +1078,30 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       }
 
       try {
-        const { data: userData, error: balanceError } = await supabase
-          .from('users')
-          .select('wallet_balance')
-          .eq('id', user.id)
-          .single();
-
-        if (balanceError) {
-          console.error('Error checking balance:', balanceError);
-          Alert.alert('Error', 'Failed to check balance');
-          return;
-        }
-
-        if ((userData?.wallet_balance || 0) < payment.amount) {
+        const { balance } = await paymentsApi.walletBalance();
+        if (balance < payment.amount) {
           Alert.alert(
             'Insufficient Balance',
-            `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(
-              userData?.wallet_balance || 0
-            ).toLocaleString()}`
+            `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${balance.toLocaleString()}`
           );
           return;
         }
 
         Alert.alert(
-          'Accept Payment',
-          `You are about to accept a payment of UGX ${payment.amount.toLocaleString()}\n\n` +
-            `From: ${payment.from_user?.full_name || 'User'}\n` +
+          'Pay seller',
+          `Pay UGX ${payment.amount.toLocaleString()} directly to ${
+            payment.from_user?.full_name || 'the seller'
+          }?\n\n` +
+            `Seller: ${payment.from_user?.full_name || 'User'}\n` +
             `Reason: ${payment.reason || 'No reason provided'}\n\n` +
-            `This amount will be locked from your wallet until you confirm the transaction.`,
+            'The payment will be transferred from your wallet immediately.',
           [
             { text: 'Cancel', style: 'cancel' },
             {
-              text: 'Accept & Lock',
+              text: 'Pay now',
               onPress: async () => {
                 try {
-                  const { data: txData, error: txError } = await supabase
-                    .from('transactions')
-                    .insert({
-                      buyer_id: user.id,
-                      seller_id: payment.from_user_id,
-                      amount: payment.amount,
-                      locked_amount: payment.amount,
-                      type: 'payment',
-                      status: 'locked',
-                      reference: `PAY-${Date.now()}`,
-                    } as any)
-                    .select()
-                    .single();
-
-                  if (txError) {
-                    console.error('Error creating transaction:', txError);
-                    Alert.alert('Error', 'Failed to lock funds');
-                    return;
-                  }
-
-                  await supabase
-                    .from('payment_requests')
-                    .update({
-                      status: 'locked',
-                      locked_at: new Date().toISOString(),
-                      accepted_at: new Date().toISOString(),
-                      transaction_id: txData.id,
-                      buyer_id: user.id,
-                      seller_id: payment.from_user_id,
-                    } as any)
-                    .eq('id', payment.id);
-
-                  const { data: userBalance } = await supabase
-                    .from('users')
-                    .select('wallet_balance')
-                    .eq('id', user.id)
-                    .single();
-
-                  if (userBalance) {
-                    await supabase
-                      .from('users')
-                      .update({
-                        wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
-                      })
-                      .eq('id', user.id);
-                  }
-
-                  const { data: msgData } = await supabase
-                    .from('messages')
-                    .insert({
-                      sender_id: user.id,
-                      receiver_id: payment.from_user_id,
-                      text: `✅ Payment accepted and locked: UGX ${payment.amount.toLocaleString()}${
-                        payment.reason ? ` - ${payment.reason}` : ''
-                      }`,
-                      is_read: false,
-                    })
-                    .select()
-                    .single();
+                  const { message: msgData } = await paymentsApi.accept(payment.id);
 
                   if (msgData) {
                     setMessages((prev) => {
@@ -1186,9 +1119,10 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   }
 
                   Alert.alert(
-                    '✅ Payment Locked',
-                    `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
-                      `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
+                    'Payment sent',
+                    `UGX ${payment.amount.toLocaleString()} was transferred to ${
+                      payment.from_user?.full_name || 'the seller'
+                    }.`
                   );
                 } catch (error) {
                   console.error('Error processing payment:', error);
@@ -1214,99 +1148,28 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       }
 
       try {
-        const { data: userData, error: balanceError } = await supabase
-          .from('users')
-          .select('wallet_balance')
-          .eq('id', user.id)
-          .single();
-
-        if (balanceError) {
-          console.error('Error checking balance:', balanceError);
-          Alert.alert('Error', 'Failed to check balance');
-          return;
-        }
-
-        if ((userData?.wallet_balance || 0) < payment.amount) {
+        const { balance } = await paymentsApi.walletBalance();
+        if (balance < payment.amount) {
           Alert.alert(
             'Insufficient Balance',
-            `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${(
-              userData?.wallet_balance || 0
-            ).toLocaleString()}`
+            `You need UGX ${payment.amount.toLocaleString()} but you have UGX ${balance.toLocaleString()}`
           );
           return;
         }
 
         Alert.alert(
-          'Pay Request',
+          'Pay request',
           `You are about to pay UGX ${payment.amount.toLocaleString()}\n\n` +
             `To: ${payment.from_user?.full_name || 'User'}\n` +
             `Reason: ${payment.reason || 'No reason provided'}\n\n` +
-            `This amount will be locked from your wallet until you confirm the transaction.`,
+            'The amount will be transferred directly from your wallet.',
           [
             { text: 'Cancel', style: 'cancel' },
             {
               text: 'Pay Now',
               onPress: async () => {
                 try {
-                  const { data: txData, error: txError } = await supabase
-                    .from('transactions')
-                    .insert({
-                      buyer_id: user.id,
-                      seller_id: payment.from_user_id,
-                      amount: payment.amount,
-                      locked_amount: payment.amount,
-                      type: 'payment',
-                      status: 'locked',
-                      reference: `PAY-${Date.now()}`,
-                    } as any)
-                    .select()
-                    .single();
-
-                  if (txError) {
-                    console.error('Error creating transaction:', txError);
-                    Alert.alert('Error', 'Failed to lock funds');
-                    return;
-                  }
-
-                  await supabase
-                    .from('payment_requests')
-                    .update({
-                      status: 'locked',
-                      locked_at: new Date().toISOString(),
-                      accepted_at: new Date().toISOString(),
-                      transaction_id: txData.id,
-                      buyer_id: user.id,
-                      seller_id: payment.from_user_id,
-                    } as any)
-                    .eq('id', payment.id);
-
-                  const { data: userBalance } = await supabase
-                    .from('users')
-                    .select('wallet_balance')
-                    .eq('id', user.id)
-                    .single();
-
-                  if (userBalance) {
-                    await supabase
-                      .from('users')
-                      .update({
-                        wallet_balance: (userBalance.wallet_balance || 0) - payment.amount,
-                      })
-                      .eq('id', user.id);
-                  }
-
-                  const { data: msgData } = await supabase
-                    .from('messages')
-                    .insert({
-                      sender_id: user.id,
-                      receiver_id: payment.from_user_id,
-                      text: `✅ Payment locked: UGX ${payment.amount.toLocaleString()}${
-                        payment.reason ? ` - ${payment.reason}` : ''
-                      }`,
-                      is_read: false,
-                    })
-                    .select()
-                    .single();
+                  const { message: msgData } = await paymentsApi.accept(payment.id);
 
                   if (msgData) {
                     setMessages((prev) => {
@@ -1324,9 +1187,10 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   }
 
                   Alert.alert(
-                    '✅ Payment Locked',
-                    `UGX ${payment.amount.toLocaleString()} has been locked from your wallet.\n\n` +
-                      `The seller will deliver the product/service, and you can confirm the payment in the Pay Screen.`
+                    'Payment sent',
+                    `UGX ${payment.amount.toLocaleString()} was transferred to ${
+                      payment.from_user?.full_name || 'the seller'
+                    }.`
                   );
                 } catch (error) {
                   console.error('Error processing payment:', error);
@@ -1362,23 +1226,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   return;
                 }
 
-                await supabase
-                  .from('payment_requests')
-                  .update({ status: 'cancelled' })
-                  .eq('id', payment.id);
-
-                const { data: msgData } = await supabase
-                  .from('messages')
-                  .insert({
-                    sender_id: currentUserId,
-                    receiver_id: payment.is_request
-                      ? payment.to_user_id
-                      : payment.from_user_id,
-                    text: `❌ Payment ${payment.is_request ? 'request' : ''} cancelled`,
-                    is_read: false,
-                  })
-                  .select()
-                  .single();
+                const { message: msgData } = await paymentsApi.cancel(payment.id);
 
                 if (msgData) {
                   setMessages((prev) => {
@@ -1395,7 +1243,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   loadMessages(selectedConversation.id);
                 }
 
-                Alert.alert('✅ Cancelled', 'Payment has been cancelled.');
+                Alert.alert('Cancelled', 'Payment has been cancelled.');
               } catch (error) {
                 console.error('Error cancelling payment:', error);
                 Alert.alert('Error', 'Failed to cancel payment.');
@@ -1426,23 +1274,10 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   return;
                 }
 
-                await supabase
-                  .from('payment_requests')
-                  .update({ status: 'cancelled' })
-                  .eq('id', payment.id);
-
-                const { data: msgData } = await supabase
-                  .from('messages')
-                  .insert({
-                    sender_id: currentUserId,
-                    receiver_id: payment.from_user_id,
-                    text: `❌ ${
-                      payment.is_request ? 'Payment request' : 'Payment'
-                    } rejected`,
-                    is_read: false,
-                  })
-                  .select()
-                  .single();
+                const { message: msgData } = await paymentsApi.cancel(
+                  payment.id,
+                  'reject'
+                );
 
                 if (msgData) {
                   setMessages((prev) => {
@@ -1459,7 +1294,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   loadMessages(selectedConversation.id);
                 }
 
-                Alert.alert('✅ Rejected', 'Payment has been rejected.');
+                Alert.alert('Rejected', 'Payment has been rejected.');
               } catch (error) {
                 console.error('Error rejecting payment:', error);
                 Alert.alert('Error', 'Failed to reject payment.');
@@ -1501,7 +1336,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     const receiverId = selectedConversation.id;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('messages')
         .insert({
           sender_id: user.id,
@@ -1563,6 +1398,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
   // ============================================================
 
   const handleSendPayment = useCallback(async () => {
+    if (paymentSubmitting) return;
     if (!selectedConversation?.id || !user?.id) {
       Alert.alert('Error', 'Please select a conversation');
       return;
@@ -1575,16 +1411,14 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     }
 
     if (editingPayment) {
+      setPaymentSubmitting(true);
       try {
-        await supabase
-          .from('payment_requests')
-          .update({
+        await paymentsApi.update(editingPayment.id, {
             amount: amountNum,
             reason:
               paymentReason ||
               (editingPayment.is_request ? 'Payment Request' : 'Payment'),
-          })
-          .eq('id', editingPayment.id);
+          });
 
         if (selectedConversation?.id) {
           loadMessages(selectedConversation.id);
@@ -1595,7 +1429,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         setPaymentReason('');
         setEditingPayment(null);
         Alert.alert(
-          '✅ Updated',
+          'Updated',
           editingPayment.is_request
             ? 'Payment request has been updated.'
             : 'Payment has been updated.'
@@ -1603,31 +1437,43 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         return;
       } catch (error) {
         console.error('Error updating payment:', error);
-        Alert.alert('Error', 'Failed to update payment.');
+        Alert.alert(
+          'Update failed',
+          error instanceof Error ? error.message : 'Failed to update payment.',
+        );
         return;
+      } finally {
+        setPaymentSubmitting(false);
       }
     }
 
-    const result = await createPayment(
-      amountNum,
-      paymentReason || (paymentIsRequest ? 'Payment Request' : 'Payment'),
-      paymentIsRequest,
-      selectedConversation.id
-    );
+    setPaymentSubmitting(true);
+    let result: PaymentRequest | null = null;
+    try {
+      result = await createPayment(
+        amountNum,
+        paymentReason || (paymentIsRequest ? 'Payment Request' : 'Payment'),
+        paymentIsRequest,
+        selectedConversation.id
+      );
+    } finally {
+      setPaymentSubmitting(false);
+    }
 
     if (result) {
       setShowPaymentModal(false);
       setPaymentAmount('');
       setPaymentReason('');
       setEditingPayment(null);
+      paymentIdempotencyKeyRef.current = randomUUID();
 
       Alert.alert(
-        paymentIsRequest ? '💰 Payment Request Sent' : '💰 Payment Initiated',
+        paymentIsRequest ? 'Payment request sent' : 'Payment sent',
         paymentIsRequest
           ? `UGX ${amountNum.toLocaleString()} payment request sent to ${
               selectedConversation.name
             }.`
-          : `UGX ${amountNum.toLocaleString()} has been locked from your wallet.`
+          : `UGX ${amountNum.toLocaleString()} was transferred to ${selectedConversation.name}.`
       );
 
       if (selectedConversation?.id) {
@@ -1643,6 +1489,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
     editingPayment,
     createPayment,
     loadMessages,
+    paymentSubmitting,
   ]);
 
   // ============================================================
@@ -1664,7 +1511,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       .toString(36)
       .slice(2)}`;
 
-    const channel = supabase.channel(channelName);
+    const channel = backendData.channel(channelName);
 
     // ✅ Build → attach listeners → subscribe, in that order.
     channel
@@ -1841,7 +1688,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
               <Text style={styles.chatHeaderStatus}>Online</Text>
             </View>
             <TouchableOpacity style={styles.chatHeaderIcon}>
-              <Ionicons name="ellipsis-vertical" size={20} color="#4A7DFF" />
+              <Ionicons name="ellipsis-vertical" size={20} color="#AAB4C0" />
             </TouchableOpacity>
           </View>
 
@@ -1879,7 +1726,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             )}
             ListEmptyComponent={
               <View style={styles.emptyChatContainer}>
-                <Ionicons name="chatbubbles-outline" size={48} color="#8A8AAE" />
+                <Ionicons name="chatbubbles-outline" size={48} color="#AAB4C0" />
                 <Text style={styles.emptyChatTitle}>No messages yet</Text>
                 <Text style={styles.emptyChatSubtitle}>Say hello to start the conversation</Text>
               </View>
@@ -1896,13 +1743,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
           >
             <View style={styles.chatInputRow}>
               <TouchableOpacity style={styles.attachButton}>
-                <Ionicons name="add-circle-outline" size={24} color="#4A7DFF" />
+                <Ionicons name="add-circle-outline" size={24} color="#AAB4C0" />
               </TouchableOpacity>
 
               <TextInput
                 style={styles.chatInput}
                 placeholder="Type a message..."
-                placeholderTextColor="#8A8AAE"
+                placeholderTextColor="#8F98A3"
                 value={newMessage}
                 onChangeText={setNewMessage}
                 multiline
@@ -1916,7 +1763,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 <Ionicons
                   name="send"
                   size={20}
-                  color={newMessage.trim() ? '#FFFFFF' : '#8A8AAE'}
+                  color={newMessage.trim() ? '#FFFFFF' : '#929AA4'}
                 />
               </TouchableOpacity>
             </View>
@@ -1929,12 +1776,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   setPaymentAmount('');
                   setPaymentReason('');
                   setEditingPayment(null);
+                  paymentIdempotencyKeyRef.current = randomUUID();
                   setShowPaymentModal(true);
                 }}
                 activeOpacity={0.7}
               >
                 <LinearGradient
-                  colors={['#4A7DFF', '#6B94FF']}
+                  colors={['#536B88', '#647D9E']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.paymentChatGradient}
@@ -1951,12 +1799,13 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   setPaymentAmount('');
                   setPaymentReason('');
                   setEditingPayment(null);
+                  paymentIdempotencyKeyRef.current = randomUUID();
                   setShowPaymentModal(true);
                 }}
                 activeOpacity={0.7}
               >
                 <LinearGradient
-                  colors={['#F1C40F', '#F39C12']}
+                  colors={['#88764B', '#A38E5D']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.paymentChatGradient}
@@ -2018,7 +1867,7 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 setEditingPayment(null);
               }}
             >
-              <Ionicons name="close" size={24} color="#8A8AAE" />
+              <Ionicons name="close" size={24} color="#A0A5AC" />
             </TouchableOpacity>
           </View>
 
@@ -2051,26 +1900,34 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
             <Text style={styles.modalHelperText}>
               {editingPayment
                 ? editingPayment.is_request
-                  ? `✏️ Editing payment request to ${selectedConversation?.name}`
-                  : `✏️ Editing payment to ${selectedConversation?.name}`
+                  ? `Editing payment request to ${selectedConversation?.name}`
+                  : `Editing payment to ${selectedConversation?.name}`
                 : paymentIsRequest
-                ? `💰 You are requesting payment from ${selectedConversation?.name}`
-                : `💳 You are sending payment to ${selectedConversation?.name}`}
-              {'\n\n'}⚠️ Funds will be locked when the recipient accepts.
+                ? `You are requesting payment from ${selectedConversation?.name}`
+                : `UGX ${Number(paymentAmount || 0).toLocaleString()} will be transferred directly to ${
+                    selectedConversation?.name
+                  } from your wallet.`}
+              {paymentIsRequest && !editingPayment
+                ? '\n\nThe recipient can pay this request directly from their wallet.'
+                : null}
             </Text>
 
             <TouchableOpacity
-              style={styles.modalSendButton}
+              style={[
+                styles.modalSendButton,
+                paymentSubmitting && styles.modalSendButtonDisabled,
+              ]}
               onPress={handleSendPayment}
+              disabled={paymentSubmitting}
               activeOpacity={0.8}
             >
               <LinearGradient
                 colors={
                   editingPayment
-                    ? ['#F39C12', '#E67E22']
+                    ? ['#83704B', '#9B8354']
                     : paymentIsRequest
-                    ? ['#F1C40F', '#F39C12']
-                    : ['#4A7DFF', '#6B94FF']
+                    ? ['#88764B', '#A38E5D']
+                    : ['#536B88', '#647D9E']
                 }
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
@@ -2078,7 +1935,9 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
               >
                 <Ionicons
                   name={
-                    editingPayment
+                    paymentSubmitting
+                      ? 'hourglass-outline'
+                      : editingPayment
                       ? 'pencil-outline'
                       : paymentIsRequest
                       ? 'cash-outline'
@@ -2088,7 +1947,9 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                   color="#FFFFFF"
                 />
                 <Text style={styles.modalSendText}>
-                  {editingPayment
+                  {paymentSubmitting
+                    ? 'Processing...'
+                    : editingPayment
                     ? editingPayment.is_request
                       ? 'Update Request'
                       : 'Update Payment'
@@ -2116,8 +1977,8 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
 
   if (isDesktop) {
     return (
-      <View style={styles.desktopContainer}>
-        <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+      <Animated.View style={[styles.desktopContainer, entranceStyle]}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
 
         <View style={styles.desktopHeader}>
           <Text style={styles.desktopHeaderTitle}>Inbox</Text>
@@ -2127,11 +1988,11 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         <View style={styles.desktopGrid}>
           <View style={styles.desktopLeftColumn}>
             <View style={styles.searchContainer}>
-              <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+              <Ionicons name="search-outline" size={20} color="#A0A5AC" />
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search conversations..."
-                placeholderTextColor="#8A8AAE"
+                placeholderTextColor="#8F98A3"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
@@ -2178,8 +2039,8 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
 
             {loading ? (
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                <ActivityIndicator size="large" color="#4A7DFF" />
-                <Text style={{ color: '#8A8AAE', marginTop: 10 }}>Loading conversations...</Text>
+                <ActivityIndicator size="large" color="#D6DCE3" />
+                <Text style={{ color: '#A0A5AC', marginTop: 10 }}>Loading conversations...</Text>
               </View>
             ) : (
               <FlatList
@@ -2208,7 +2069,12 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
                 contentContainerStyle={styles.conversationsList}
                 ListEmptyComponent={
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyIcon}>💬</Text>
+                    <Ionicons
+                      name="chatbubbles-outline"
+                      size={36}
+                      color="#AAB4C0"
+                      style={styles.emptyIcon}
+                    />
                     <Text style={styles.emptyTitle}>No conversations</Text>
                     <Text style={styles.emptySubtext}>
                       Your messages and updates will appear here
@@ -2224,7 +2090,12 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
               renderChatView()
             ) : (
               <View style={styles.desktopEmptyChat}>
-                <Text style={styles.desktopEmptyChatIcon}>💬</Text>
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={42}
+                  color="#AAB4C0"
+                  style={styles.desktopEmptyChatIcon}
+                />
                 <Text style={styles.desktopEmptyChatTitle}>Select a conversation</Text>
                 <Text style={styles.desktopEmptyChatSubtext}>
                   Choose a conversation from the list to start chatting
@@ -2235,14 +2106,15 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
         </View>
 
         {renderPaymentModal()}
-      </View>
+      </Animated.View>
     );
   }
 
   // Mobile View
   return (
-    <SafeAreaView style={styles.mobileContainer} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#1A2A4F" />
+    <Animated.View style={[styles.mobileEntrance, entranceStyle]}>
+      <SafeAreaView style={styles.mobileContainer} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor="#0B0B0D" />
 
       <View style={styles.mobileHeader}>
         <Text style={styles.mobileHeaderTitle}>Inbox</Text>
@@ -2265,11 +2137,11 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
 
       {showSearch && (
         <View style={styles.searchContainer}>
-          <Ionicons name="search-outline" size={20} color="#8A8AAE" />
+          <Ionicons name="search-outline" size={20} color="#A0A5AC" />
           <TextInput
             style={styles.searchInput}
             placeholder="Search conversations..."
-            placeholderTextColor="#8A8AAE"
+            placeholderTextColor="#8F98A3"
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
@@ -2321,12 +2193,17 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
 
         {loading ? (
           <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#4A7DFF" />
-            <Text style={{ color: '#8A8AAE', marginTop: 10 }}>Loading conversations...</Text>
+            <ActivityIndicator size="large" color="#D6DCE3" />
+            <Text style={{ color: '#A0A5AC', marginTop: 10 }}>Loading conversations...</Text>
           </View>
         ) : filteredConversations.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>💬</Text>
+            <Ionicons
+              name="chatbubbles-outline"
+              size={36}
+              color="#AAB4C0"
+              style={styles.emptyIcon}
+            />
             <Text style={styles.emptyTitle}>No conversations</Text>
             <Text style={styles.emptySubtext}>Your messages and updates will appear here</Text>
           </View>
@@ -2369,7 +2246,8 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
       </Modal>
 
       {renderPaymentModal()}
-    </SafeAreaView>
+      </SafeAreaView>
+    </Animated.View>
   );
 };
 
@@ -2379,11 +2257,18 @@ const InboxContent = ({ navigation, route, isDesktop = false }: any) => {
 
 export const InboxScreen = ({ navigation, route }: any) => {
   const { isDesktop } = useBreakpoint();
+  const {
+    searchPanelOpen,
+    searchPanelContent,
+    onNavigate,
+  } = useSidebarSearch(navigation, isDesktop);
 
   return (
     <ResponsiveLayout
-      currentRoute="Inbox"
-      onNavigate={(route) => navigation?.navigate(route)}
+      currentRoute={searchPanelOpen ? 'Search' : 'Inbox'}
+      onNavigate={onNavigate}
+      searchPanelOpen={searchPanelOpen}
+      searchPanelContent={searchPanelContent}
       floatingActions={null}
       hideContextPanel={true}
       fullWidth={true}
@@ -2398,10 +2283,13 @@ export const InboxScreen = ({ navigation, route }: any) => {
 // ============================================================
 
 const styles = StyleSheet.create({
+  mobileEntrance: {
+    flex: 1,
+  },
   // Mobile Container
   mobileContainer: {
     flex: 1,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#0B0B0D',
   },
   mobileHeader: {
     flexDirection: 'row',
@@ -2410,47 +2298,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 12,
-    backgroundColor: 'rgba(31, 47, 95, 0.9)',
+    backgroundColor: 'rgba(18,19,21,0.94)',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: 'rgba(255,255,255,0.08)',
   },
   mobileHeaderTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#FFFFFF',
   },
 
   // Desktop Container
   desktopContainer: {
     flex: 1,
-    backgroundColor: '#1A2A4F',
+    backgroundColor: '#0B0B0D',
     padding: 24,
   },
   desktopHeader: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   desktopHeaderTitle: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: 'bold',
+    color: '#F3F4F6',
+    fontSize: 28,
+    fontWeight: '600',
   },
   desktopHeaderSubtitle: {
-    color: '#8A8AAE',
-    fontSize: 16,
+    color: '#A0A5AC',
+    fontSize: 14,
     marginTop: 4,
   },
   desktopGrid: {
     flexDirection: 'row',
-    gap: 24,
-    maxWidth: 1200,
+    gap: 16,
+    maxWidth: 1240,
     width: '100%',
     alignSelf: 'center',
     flex: 1,
   },
   desktopLeftColumn: {
     flex: 1,
-    minWidth: 350,
-    maxWidth: 450,
+    minWidth: 300,
+    maxWidth: 420,
   },
   desktopRightColumn: {
     flex: 2,
@@ -2458,24 +2346,23 @@ const styles = StyleSheet.create({
   },
   desktopChatContainer: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: 'rgba(255,255,255,0.035)',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     overflow: 'hidden',
   },
   desktopEmptyChat: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: 'rgba(255,255,255,0.035)',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     padding: 40,
   },
   desktopEmptyChatIcon: {
-    fontSize: 48,
     marginBottom: 16,
   },
   desktopEmptyChatTitle: {
@@ -2484,7 +2371,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   desktopEmptyChatSubtext: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 14,
     marginTop: 4,
     textAlign: 'center',
@@ -2496,14 +2383,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerIcon: {
-    padding: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.045)',
     marginHorizontal: 16,
     marginTop: 8,
     marginBottom: 8,
@@ -2511,7 +2403,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   searchInput: {
     flex: 1,
@@ -2533,28 +2425,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
-    backgroundColor: '#1F2F5F',
+    backgroundColor: '#0B0B0D',
   },
   guestIcon: {
-    fontSize: 48,
     marginBottom: 16,
   },
   guestTitle: {
     color: '#FFFFFF',
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '600',
     textAlign: 'center',
     marginBottom: 8,
   },
   guestSubtext: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 22,
   },
   guestButton: {
-    backgroundColor: '#4A7DFF',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 12,
     paddingVertical: 14,
     paddingHorizontal: 40,
@@ -2562,6 +2453,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 300,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   guestButtonText: {
     color: '#FFFFFF',
@@ -2569,7 +2462,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   guestContinueText: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 14,
   },
 
@@ -2587,23 +2480,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.045)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     marginRight: 6,
     gap: 4,
   },
   filterChipActive: {
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
-    borderColor: '#4A7DFF',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.2)',
   },
   filterChipText: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 12,
     fontWeight: '500',
   },
   filterChipTextActive: {
-    color: '#4A7DFF',
+    color: '#F3F4F6',
   },
   filterBadge: {
     backgroundColor: '#E74C3C',
@@ -2625,7 +2518,6 @@ const styles = StyleSheet.create({
     paddingVertical: 60,
   },
   emptyIcon: {
-    fontSize: 48,
     marginBottom: 12,
   },
   emptyTitle: {
@@ -2634,7 +2526,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   emptySubtext: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 14,
     marginTop: 4,
   },
@@ -2645,12 +2537,12 @@ const styles = StyleSheet.create({
   },
   conversationCard: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderRadius: 14,
     padding: 12,
-    marginBottom: 8,
+    marginBottom: 7,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.075)',
   },
   conversationAvatar: {
     position: 'relative',
@@ -2660,7 +2552,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   avatarCircle: {
     width: 48,
@@ -2668,10 +2560,10 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   avatarText: {
-    color: '#4A7DFF',
+    color: '#D5D9DE',
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -2706,7 +2598,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   conversationTime: {
-    color: '#8A8AAE',
+    color: '#8F98A3',
     fontSize: 11,
   },
   conversationFooter: {
@@ -2716,7 +2608,7 @@ const styles = StyleSheet.create({
   },
   conversationMessage: {
     flex: 1,
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 13,
     marginRight: 8,
   },
@@ -2728,11 +2620,11 @@ const styles = StyleSheet.create({
   // Chat View
   chatContainer: {
     flex: 1,
-    backgroundColor: '#1A2A4F',
+    backgroundColor: '#0B0B0D',
   },
   chatContainerFull: {
     flex: 1,
-    backgroundColor: '#1A2A4F',
+    backgroundColor: '#0B0B0D',
   },
   chatHeader: {
     flexDirection: 'row',
@@ -2740,16 +2632,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: 'rgba(255,255,255,0.035)',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: 'rgba(255,255,255,0.08)',
   },
   chatHeaderAvatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
     marginLeft: 12,
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   chatHeaderInfo: {
     flex: 1,
@@ -2761,13 +2653,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   chatHeaderStatus: {
-    color: '#8A8AAE',
+    color: '#8F98A3',
     fontSize: 12,
   },
   chatHeaderIcon: {
-    padding: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.055)',
   },
   messagesList: {
     paddingHorizontal: 16,
@@ -2789,7 +2681,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     marginRight: 6,
-    backgroundColor: 'rgba(74, 125, 255, 0.15)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   messageAvatarText: {
     color: '#FFFFFF',
@@ -2803,14 +2695,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   messageMe: {
-    backgroundColor: '#4A7DFF',
+    backgroundColor: '#42556F',
     borderBottomRightRadius: 4,
   },
   messageThem: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.045)',
     borderBottomLeftRadius: 4,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.075)',
   },
   messageText: {
     fontSize: 14,
@@ -2831,19 +2723,19 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.6)',
   },
   messageTimeThem: {
-    color: '#8A8AAE',
+    color: '#8F98A3',
   },
 
   // Payment Card
   paymentCard: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
     padding: 12,
     marginVertical: 4,
     borderLeftWidth: 4,
-    borderLeftColor: '#4A7DFF',
+    borderLeftColor: '#A6B7CC',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     maxWidth: '85%',
   },
   paymentCardHeader: {
@@ -2853,7 +2745,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   paymentCardIcon: {
-    fontSize: 16,
     marginRight: 6,
   },
   paymentCardTitle: {
@@ -2876,17 +2767,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   paymentCardAmount: {
-    color: '#4A7DFF',
+    color: '#E1E5EA',
     fontSize: 18,
     fontWeight: 'bold',
   },
   paymentCardReason: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 12,
     marginTop: 2,
   },
   paymentCardUser: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 11,
     marginTop: 2,
   },
@@ -2929,15 +2820,15 @@ const styles = StyleSheet.create({
   paymentCardView: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   paymentCardViewText: {
-    color: '#4A7DFF',
+    color: '#D5D9DE',
     fontSize: 11,
     fontWeight: '500',
     marginRight: 4,
@@ -2947,9 +2838,9 @@ const styles = StyleSheet.create({
   chatInputContainer: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    backgroundColor: 'rgba(15,16,18,0.92)',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
+    borderTopColor: 'rgba(255,255,255,0.08)',
   },
   chatInputRow: {
     flexDirection: 'row',
@@ -2969,8 +2860,8 @@ const styles = StyleSheet.create({
   },
   chatInput: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 8,
     color: '#FFFFFF',
@@ -2998,7 +2889,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   sendButton: {
-    backgroundColor: '#4A7DFF',
+    backgroundColor: '#536B88',
     padding: 8,
     borderRadius: 20,
     justifyContent: 'center',
@@ -3016,11 +2907,11 @@ const styles = StyleSheet.create({
   emptyChatTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#8A8AAE',
+    color: '#D5D9DE',
   },
   emptyChatSubtitle: {
     fontSize: 13,
-    color: '#8A8AAE',
+    color: '#A0A5AC',
   },
 
   // Payment Modal
@@ -3038,7 +2929,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: '#17191C',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -3067,14 +2958,14 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   modalInput: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.045)',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
     color: '#FFFFFF',
     fontSize: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
     marginBottom: 16,
   },
   modalTextArea: {
@@ -3082,13 +2973,16 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   modalHelperText: {
-    color: '#8A8AAE',
+    color: '#A0A5AC',
     fontSize: 12,
     marginBottom: 16,
   },
   modalSendButton: {
     borderRadius: 12,
     overflow: 'hidden',
+  },
+  modalSendButtonDisabled: {
+    opacity: 0.6,
   },
   modalSendGradient: {
     flexDirection: 'row',

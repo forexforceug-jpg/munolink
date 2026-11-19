@@ -1,6 +1,7 @@
 // src/services/feed.service.ts
 
-import { supabase } from '../lib/supabase';
+import { backendData } from '../lib/backendData';
+import { getStoredSession } from '../lib/sessionStorage';
 
 // ============================================================
 // TYPE DEFINITIONS
@@ -119,7 +120,7 @@ export const feedService = {
     try {
       console.log('🔄 Fetching opportunities from catalog...');
 
-      const { data: catalogPosts, error: catalogError } = await supabase
+      const { data: catalogPosts, error: catalogError } = await backendData
         .from('catalog')
         .select('*')
         .eq('status', 'active')
@@ -139,9 +140,9 @@ export const feedService = {
 
       // Get user info including location
       const userIds = catalogPosts
-        .map((post) => post.user_id)
+        .map((post: Record<string, any>) => post.user_id)
         .filter(
-          (id): id is string => id !== null && id !== undefined && id !== ''
+          (id: unknown): id is string => typeof id === 'string' && id !== ''
         );
 
       let userMap: Record<
@@ -156,7 +157,7 @@ export const feedService = {
       > = {};
 
       if (userIds.length > 0) {
-        const { data: users, error: usersError } = await supabase
+        const { data: users, error: usersError } = await backendData
           .from('users')
           .select('id, full_name, avatar_url, latitude, longitude, phone_number')
           .in('id', userIds);
@@ -181,7 +182,7 @@ export const feedService = {
       let saveCounts: Record<string, { count: number; isSaved: boolean }> = {};
 
       try {
-        const { data: saveData, error: saveError } = await supabase
+        const { data: saveData, error: saveError } = await backendData
           .from('saves')
           .select('post_id, user_id')
           .in(
@@ -194,8 +195,7 @@ export const feedService = {
         } else if (saveData) {
           const saveMap: Record<string, { count: number; userSaved: boolean }> =
             {};
-          const { data: authData } = await supabase.auth.getUser();
-          const currentUserId = authData?.user?.id;
+          const currentUserId = (await getStoredSession())?.user.id;
 
           saveData.forEach((s: any) => {
             if (!saveMap[s.post_id]) {
@@ -223,7 +223,7 @@ export const feedService = {
       let commentCounts: Record<string, number> = {};
 
       try {
-        const { data: commentData, error: commentError } = await supabase
+        const { data: commentData, error: commentError } = await backendData
           .from('comments')
           .select('post_id')
           .in(
@@ -371,7 +371,7 @@ export const feedService = {
    */
   incrementShareCount: async (postId: string): Promise<boolean> => {
     try {
-      const { data: post, error: fetchError } = await supabase
+      const { data: post, error: fetchError } = await backendData
         .from('catalog')
         .select('share_count')
         .eq('id', postId)
@@ -385,7 +385,7 @@ export const feedService = {
       const currentCount = post?.share_count || 0;
       const newCount = currentCount + 1;
 
-      const { error: updateError } = await supabase
+      const { error: updateError } = await backendData
         .from('catalog')
         .update({ share_count: newCount })
         .eq('id', postId);
@@ -411,7 +411,7 @@ export const feedService = {
     userId: string
   ): Promise<{ saved: boolean; count: number }> => {
     try {
-      const { data: existing, error: checkError } = await supabase
+      const { data: existing, error: checkError } = await backendData
         .from('saves')
         .select('id')
         .eq('user_id', userId)
@@ -423,7 +423,7 @@ export const feedService = {
         return { saved: false, count: 0 };
       }
 
-      const { data: post } = await supabase
+      const { data: post } = await backendData
         .from('catalog')
         .select('save_count')
         .eq('id', postId)
@@ -432,7 +432,7 @@ export const feedService = {
       let currentCount = post?.save_count || 0;
 
       if (existing) {
-        const { error: deleteError } = await supabase
+        const { error: deleteError } = await backendData
           .from('saves')
           .delete()
           .eq('id', existing.id);
@@ -443,14 +443,14 @@ export const feedService = {
         }
 
         const newCount = Math.max(0, currentCount - 1);
-        await supabase
+        await backendData
           .from('catalog')
           .update({ save_count: newCount })
           .eq('id', postId);
 
         return { saved: false, count: newCount };
       } else {
-        const { error: insertError } = await supabase
+        const { error: insertError } = await backendData
           .from('saves')
           .insert({ user_id: userId, post_id: postId });
 
@@ -460,7 +460,7 @@ export const feedService = {
         }
 
         const newCount = currentCount + 1;
-        await supabase
+        await backendData
           .from('catalog')
           .update({ save_count: newCount })
           .eq('id', postId);
@@ -478,7 +478,7 @@ export const feedService = {
    */
   isSaved: async (postId: string, userId: string): Promise<boolean> => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('saves')
         .select('id')
         .eq('user_id', userId)
@@ -504,7 +504,7 @@ export const feedService = {
     userLocation?: { latitude: number; longitude: number }
   ): Promise<Opportunity | null> => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('catalog')
         .select('*')
         .eq('id', id)
@@ -518,7 +518,7 @@ export const feedService = {
       if (!data) return null;
       if (!data.user_id) return null;
 
-      const { data: userData } = await supabase
+      const { data: userData } = await backendData
         .from('users')
         .select('full_name, avatar_url, latitude, longitude, phone_number')
         .eq('id', data.user_id)
@@ -544,7 +544,7 @@ export const feedService = {
       // ✅ Get comment count for this single post
       let commentCount = data.comment_count || 0;
       try {
-        const { count } = await supabase
+        const { count } = await backendData
           .from('comments')
           .select('*', { count: 'exact', head: true })
           .eq('post_id', id);

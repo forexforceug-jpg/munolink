@@ -1,10 +1,6 @@
 // src/utils/share.ts
 import { Share, Platform } from 'react-native';
 
-const SUPABASE_URL =
-  process.env.EXPO_PUBLIC_SUPABASE_URL ||
-  'https://ffbjvrwkvnwocuyapajo.supabase.co';
-
 /**
  * Public URL that serves OG meta tags for a given catalog post.
  * WhatsApp/Facebook scrape this URL to build the preview card.

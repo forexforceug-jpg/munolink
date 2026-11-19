@@ -31,7 +31,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { supabase } from '../../lib/supabase';
+import { useSidebarSearch } from '../search/useSidebarSearch';
+import { backendData } from '../../lib/backendData';
 import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
@@ -41,7 +42,6 @@ import { StyledAlert } from '../feed/components/StyledAlert';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import * as FileSystem from 'expo-file-system/legacy';
 import { Opportunity, calculateDistance } from '../../services/feed.service';
 import { locationService } from '../../services/location.service';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -109,61 +109,20 @@ async function uploadLocalFile(
   contentType: string
 ): Promise<{ publicUrl: string | null; error: string | null }> {
   try {
-    if (Platform.OS === 'web') {
-      const blob = await uriToBlob(uri);
-      if (!blob || blob.size === 0) {
-        return { publicUrl: null, error: 'File is empty' };
-      }
-      const { error } = await supabase.storage
-        .from('catalog-images')
-        .upload(destinationPath, blob, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: blob.type || contentType,
-        });
-      if (error) return { publicUrl: null, error: error.message };
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from('catalog-images').getPublicUrl(destinationPath);
-      return { publicUrl, error: null };
+    const blob = await uriToBlob(uri);
+    if (!blob || blob.size === 0) {
+      return { publicUrl: null, error: 'File is empty' };
     }
-
-    const supabaseUrl =
-      process.env.EXPO_PUBLIC_SUPABASE_URL ||
-      'https://ffbjvrwkvnwocuyapajo.supabase.co';
-    const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-
-    if (!anonKey) {
-      return { publicUrl: null, error: 'Missing Supabase anon key' };
-    }
-
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/catalog-images/${destinationPath}`;
-
-    const result = await FileSystem.uploadAsync(uploadUrl, uri, {
-      httpMethod: 'POST',
-      uploadType: (FileSystem as any).FileSystemUploadType?.BINARY_CONTENT
-        ? (FileSystem as any).FileSystemUploadType.BINARY_CONTENT
-        : 0,
-      headers: {
-        Authorization: `Bearer ${anonKey}`,
-        apikey: anonKey,
-        'Content-Type': contentType,
-        'x-upsert': 'false',
-      },
-    });
-
-    if (result.status < 200 || result.status >= 300) {
-      console.error('❌ Upload failed with status:', result.status, result.body);
-      return {
-        publicUrl: null,
-        error: `Upload failed (HTTP ${result.status}): ${result.body}`,
-      };
-    }
-
+    const { error } = await backendData.storage
+      .from('catalog-images')
+      .upload(destinationPath, blob, {
+        upsert: false,
+        contentType: blob.type || contentType,
+      });
+    if (error) return { publicUrl: null, error: error.message };
     const {
       data: { publicUrl },
-    } = supabase.storage.from('catalog-images').getPublicUrl(destinationPath);
-
+    } = backendData.storage.from('catalog-images').getPublicUrl(destinationPath);
     return { publicUrl, error: null };
   } catch (err: any) {
     console.error('❌ uploadLocalFile error:', err);
@@ -177,12 +136,9 @@ async function deleteStorageFileFromPublicUrl(
   if (!publicUrl) return;
 
   try {
-    const marker = '/storage/v1/object/public/catalog-images/';
-    const idx = publicUrl.indexOf(marker);
-    if (idx === -1) return;
-
-    const path = publicUrl.substring(idx + marker.length);
-    const { error } = await supabase.storage
+    const path = new URL(publicUrl).searchParams.get('path');
+    if (!path) return;
+    const { error } = await backendData.storage
       .from('catalog-images')
       .remove([path]);
     if (error) {
@@ -512,6 +468,7 @@ interface FullscreenItemProps {
   onSave: (item: CatalogItem) => void;
   onLike: (item: CatalogItem) => void;
   onInbox: (item: CatalogItem) => void;
+  onCheckout: (item: CatalogItem) => void;
   onMediaLoadStateChange: (isLoading: boolean) => void;
   onUserPress: (item: CatalogItem) => void;
   onReviewsPress: (item: CatalogItem) => void;
@@ -544,6 +501,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onSave,
   onLike,
   onInbox,
+  onCheckout,
   onMediaLoadStateChange,
   onUserPress,
   onReviewsPress,
@@ -631,9 +589,11 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         onShowMore={() => onShowMore(item)}
         onShare={onShare}
         onSave={() => onSave(item)}
-        onPrimaryAction={() => onInbox(item)}
+        onCheckoutPress={
+          item.user_id && !isMine ? () => onCheckout(item) : undefined
+        }
         onInboxPress={() => onInbox(item)}
-        showInboxButton={true}
+        showInboxButton={!isMine}
         onMediaLoadStateChange={onMediaLoadStateChange}
         onSceneChange={(idx, source) => {
           if (__DEV__) console.log('Scene changed:', idx, source);
@@ -951,7 +911,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
 
       let commentCounts: Record<string, number> = {};
       try {
-        const { data: commentData, error: commentError } = await supabase
+        const { data: commentData, error: commentError } = await backendData
           .from('comments')
           .select('post_id')
           .in(
@@ -969,7 +929,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
 
       let saveCounts: Record<string, number> = {};
       try {
-        const { data: saveData, error: saveError } = await supabase
+        const { data: saveData, error: saveError } = await backendData
           .from('saves')
           .select('post_id')
           .in(
@@ -1048,7 +1008,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
     if (!user?.id) return null;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('users')
         .select('*')
         .eq('id', user.id)
@@ -1107,7 +1067,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
       if (!user?.id) return [];
 
       try {
-        const { data, error } = await supabase
+        const { data, error } = await backendData
           .from('catalog')
           .select('*')
           .eq('user_id', user.id)
@@ -1128,7 +1088,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
     if (!user?.id) return [];
 
     try {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await (backendData as any)
         .from('saves')
         .select(
           `
@@ -1157,7 +1117,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
     if (!user?.id) return [];
 
     try {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await (backendData as any)
         .from('likes')
         .select(
           `
@@ -1186,12 +1146,12 @@ const AccountContent: React.FC<AccountContentProps> = ({
     if (!user?.id) return { followers: 0, following: 0 };
 
     try {
-      const { count: followersCount } = await supabase
+      const { count: followersCount } = await backendData
         .from('follows')
         .select('*', { count: 'exact', head: true })
         .eq('following_id', user.id);
 
-      const { count: followingCount } = await supabase
+      const { count: followingCount } = await backendData
         .from('follows')
         .select('*', { count: 'exact', head: true })
         .eq('follower_id', user.id);
@@ -1211,7 +1171,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
       if (!user?.id || myCatalogIds.length === 0) return 0;
 
       try {
-        const { count, error } = await (supabase as any)
+        const { count, error } = await (backendData as any)
           .from('likes')
           .select('*', { count: 'exact', head: true })
           .in('post_id', myCatalogIds);
@@ -1310,7 +1270,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await (supabase as any)
+        const { data, error } = await (backendData as any)
           .from('likes')
           .select('post_id')
           .eq('user_id', user.id)
@@ -1405,7 +1365,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
       .toString(36)
       .slice(2)}.${fileExt}`;
 
-    const { error } = await supabase.storage
+    const { error } = await backendData.storage
       .from('catalog-images')
       .upload(fileName, blob, {
         cacheControl: '3600',
@@ -1417,7 +1377,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
 
     const {
       data: { publicUrl },
-    } = supabase.storage.from('catalog-images').getPublicUrl(fileName);
+    } = backendData.storage.from('catalog-images').getPublicUrl(fileName);
 
     return publicUrl;
   };
@@ -1457,7 +1417,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
 
           const avatarUrl = await uploadProfileImage(asset.uri, 'avatars');
 
-          const { error: updateError } = await supabase
+          const { error: updateError } = await backendData
             .from('users')
             .update({ avatar_url: avatarUrl })
             .eq('id', user.id);
@@ -1607,7 +1567,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
       if (avatarUrl) updateData.avatar_url = avatarUrl;
       if (coverUrl) updateData.cover_url = coverUrl;
 
-      const { error } = await supabase
+      const { error } = await backendData
         .from('users')
         .update(updateData)
         .eq('id', user.id);
@@ -1715,7 +1675,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
                   filesToRemove.map((u) => deleteStorageFileFromPublicUrl(u))
                 );
 
-                const { error } = await supabase
+                const { error } = await backendData
                   .from('catalog')
                   .delete()
                   .eq('id', item.id)
@@ -2209,7 +2169,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
         video_size: videoSize,
       };
 
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('catalog')
         .update(updateData)
         .eq('id', editingPostId)
@@ -2347,12 +2307,12 @@ const AccountContent: React.FC<AccountContentProps> = ({
 
       try {
         if (nextLiked) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .insert({ user_id: user.id, post_id: opportunity.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .delete()
             .eq('user_id', user.id)
@@ -3421,6 +3381,22 @@ const AccountContent: React.FC<AccountContentProps> = ({
                       userName: userProfile?.full_name || 'User',
                     });
                   }}
+                  onCheckout={(p) => {
+                    if (!p.user_id || p.user_id === user?.id) return;
+                    navigation.navigate('MainTabs', {
+                      screen: 'Pay',
+                      params: {
+                        checkout: {
+                          sellerId: p.user_id,
+                          sellerName: userProfile?.full_name || 'User',
+                          title: p.name || 'Listing',
+                          unitPrice: getPriceFromItem(p) || 0,
+                          currency: 'UGX',
+                          priceType: getPriceTypeFromItem(p),
+                        },
+                      },
+                    });
+                  }}
                   onMediaLoadStateChange={(isLoading) =>
                     handleMediaLoadStateChange(item.id, isLoading)
                   }
@@ -3776,6 +3752,11 @@ const AccountContent: React.FC<AccountContentProps> = ({
 // ============================================================
 export const AccountScreen = ({ navigation }: any) => {
   const { isDesktop } = useBreakpoint();
+  const {
+    searchPanelOpen,
+    searchPanelContent,
+    onNavigate,
+  } = useSidebarSearch(navigation, isDesktop);
 
   const [viewMode, setViewMode] = useState<'grid' | 'fullscreen'>('grid');
 
@@ -3934,7 +3915,10 @@ export const AccountScreen = ({ navigation }: any) => {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0D0D1A' }}>
       <BottomSheetModalProvider>
         <ResponsiveLayout
-          currentRoute="Account"
+          currentRoute={searchPanelOpen ? 'Search' : 'Account'}
+          onNavigate={onNavigate}
+          searchPanelOpen={searchPanelOpen}
+          searchPanelContent={searchPanelContent}
           fullWidth={isGrid}
           hideContextPanel={isGrid}
           desktopActionRail={renderDesktopActionRail()}

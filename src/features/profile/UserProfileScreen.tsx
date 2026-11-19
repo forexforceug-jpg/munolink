@@ -29,7 +29,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { ResponsiveLayout } from '../../layouts/ResponsiveLayout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { supabase } from '../../lib/supabase';
+import { backendData } from '../../lib/backendData';
 import { SceneRenderer } from '../opportunity/renderer/SceneRenderer';
 import { FloatingActionRail } from '../feed/components/FloatingActionRail';
 import { ReviewsBottomSheet } from '../feed/components/ReviewsBottomSheet';
@@ -379,6 +379,7 @@ interface FullscreenItemProps {
   cardHeight: number;
   userProfile: UserProfileData | null;
   userId: string | undefined;
+  currentUserId: string | undefined;
   isSaved: boolean;
   isLiked: boolean;
   likeCount: number;
@@ -388,6 +389,7 @@ interface FullscreenItemProps {
   onSave: (item: UserPost) => void;
   onLike: (item: UserPost) => void;
   onInbox: () => void;
+  onCheckout: (item: UserPost) => void;
   onMediaLoadStateChange: (isLoading: boolean) => void;
   onUserPress: () => void;
   onReviewsPress: (item: UserPost) => void;
@@ -409,6 +411,8 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   cardHeight,
   userProfile,
   isSaved,
+  userId,
+  currentUserId,
   isLiked,
   likeCount,
   isItemLoading,
@@ -417,6 +421,7 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
   onSave,
   onLike,
   onInbox,
+  onCheckout,
   onMediaLoadStateChange,
   onUserPress,
   onReviewsPress,
@@ -499,9 +504,9 @@ const FullscreenItem: React.FC<FullscreenItemProps> = ({
         onShowMore={() => onShowMore(item)}
         onShare={onShare}
         onSave={() => onSave(item)}
-        onPrimaryAction={onInbox}
+        onCheckoutPress={userId ? () => onCheckout(item) : undefined}
         onInboxPress={onInbox}
-        showInboxButton={true}
+        showInboxButton={userId !== currentUserId}
         onMediaLoadStateChange={onMediaLoadStateChange}
         onSceneChange={(idx, source) => {
           if (__DEV__) console.log('Scene changed:', idx, source);
@@ -740,7 +745,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
     if (!userId) return;
 
     try {
-      const { data: userData, error: userError } = await supabase
+      const { data: userData, error: userError } = await backendData
         .from('users')
         .select('*')
         .eq('id', userId)
@@ -751,7 +756,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
       const isOwn = currentUser?.id === userId;
       setIsOwnProfile(isOwn);
 
-      const { count: postsCount } = await supabase
+      const { count: postsCount } = await backendData
         .from('catalog')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
@@ -763,7 +768,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
       let totalLikes = 0;
 
       try {
-        const { count } = await supabase
+        const { count } = await backendData
           .from('follows')
           .select('*', { count: 'exact', head: true })
           .eq('following_id', userId);
@@ -771,7 +776,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
       } catch {}
 
       try {
-        const { count } = await supabase
+        const { count } = await backendData
           .from('follows')
           .select('*', { count: 'exact', head: true })
           .eq('follower_id', userId);
@@ -780,7 +785,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
 
       if (currentUser && !isOwn) {
         try {
-          const { data: followData } = await supabase
+          const { data: followData } = await backendData
             .from('follows')
             .select('*')
             .eq('follower_id', currentUser.id)
@@ -791,7 +796,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
       }
 
       try {
-        const { data: myPostIds } = await supabase
+        const { data: myPostIds } = await backendData
           .from('catalog')
           .select('id')
           .eq('user_id', userId)
@@ -800,7 +805,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
         const postIds = (myPostIds || []).map((r: any) => r.id);
 
         if (postIds.length > 0) {
-          const { count, error: likeErr } = await (supabase as any)
+          const { count, error: likeErr } = await (backendData as any)
             .from('likes')
             .select('*', { count: 'exact', head: true })
             .in('post_id', postIds);
@@ -859,7 +864,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
     setPostsLoading(true);
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await backendData
         .from('catalog')
         .select('*')
         .eq('user_id', userId)
@@ -872,7 +877,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
 
       let commentCounts: Record<string, number> = {};
       try {
-        const { data: commentData, error: commentError } = await supabase
+        const { data: commentData, error: commentError } = await backendData
           .from('comments')
           .select('post_id')
           .in(
@@ -888,7 +893,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
 
       let saveCounts: Record<string, number> = {};
       try {
-        const { data: saveData, error: saveError } = await supabase
+        const { data: saveData, error: saveError } = await backendData
           .from('saves')
           .select('post_id')
           .in(
@@ -999,7 +1004,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await (supabase as any)
+        const { data, error } = await (backendData as any)
           .from('likes')
           .select('post_id')
           .eq('user_id', currentUser.id)
@@ -1061,7 +1066,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
 
     try {
       if (isFollowing) {
-        const { error } = await supabase
+        const { error } = await backendData
           .from('follows')
           .delete()
           .eq('follower_id', currentUser.id)
@@ -1071,7 +1076,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
         setFollowersCount((prev) => Math.max(0, prev - 1));
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } else {
-        const { error } = await supabase
+        const { error } = await backendData
           .from('follows')
           .insert({ follower_id: currentUser.id, following_id: userId });
         if (error) throw error;
@@ -1129,12 +1134,12 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
 
       try {
         if (nextLiked) {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .insert({ user_id: currentUser.id, post_id: item.id });
           if (error && (error as any).code !== '23505') throw error;
         } else {
-          const { error } = await (supabase as any)
+          const { error } = await (backendData as any)
             .from('likes')
             .delete()
             .eq('user_id', currentUser.id)
@@ -1547,6 +1552,7 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
                   cardHeight={isDesktop ? itemHeight : height}
                   userProfile={userProfile}
                   userId={userId}
+                  currentUserId={currentUser?.id}
                   isSaved={savedItemsMap[item.id] || false}
                   isLiked={likedItemsMap[item.id] || false}
                   likeCount={likeCountMap[item.id] ?? item.like_count ?? 0}
@@ -1581,6 +1587,22 @@ const UserProfileContent: React.FC<UserProfileContentProps> = ({
                     handleLikePress(p);
                   }}
                   onInbox={handleInboxPress}
+                  onCheckout={(item) => {
+                    if (!userId || userId === currentUser?.id) return;
+                    navigation.navigate('MainTabs', {
+                      screen: 'Pay',
+                      params: {
+                        checkout: {
+                          sellerId: userId,
+                          sellerName: userProfile?.full_name || 'User',
+                          title: item.name || 'Listing',
+                          unitPrice: extractPriceFromSpecifications(item),
+                          currency: 'UGX',
+                          priceType: resolvePostPriceType(item),
+                        },
+                      },
+                    });
+                  }}
                   onMediaLoadStateChange={(isLoading) =>
                     handleMediaLoadStateChange(item.id, isLoading)
                   }

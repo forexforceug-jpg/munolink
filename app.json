@@ -2,13 +2,19 @@
   "expo": {
     "name": "Munolink",
     "slug": "munolink",
-    "platforms": ["ios", "android", "web"],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/favicon1.png",
     "scheme": "munolink",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.munolink.app"
@@ -41,6 +47,7 @@
         }
       ],
       "expo-video",
+      "expo-secure-store",
       [
         "expo-location",
         {
@@ -61,7 +68,8 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-image"
     ],
     "updates": {
       "url": "https://u.expo.dev/66c0b4ea-66a4-4ad2-ac43-656091693882",
